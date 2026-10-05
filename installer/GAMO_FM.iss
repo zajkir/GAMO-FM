@@ -1,5 +1,5 @@
 #define MyAppName "GAMO FM"
-#define MyAppVersion "9.0.0"
+#define MyAppVersion "9.0.0.1"
 #define MyAppPublisher "GAMO"
 #define MyAppExeName "GAMO_FM.exe"
 
