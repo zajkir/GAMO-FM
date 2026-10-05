@@ -30,7 +30,7 @@ def _version_tuple(value):
     for p in str(value).split('.'):
         digits = ''.join(c for c in p if c.isdigit())
         parts.append(int(digits or 0))
-    return tuple((parts + [0, 0, 0])[:3])
+    return tuple((parts + [0, 0, 0, 0])[:4])
 
 
 def check_for_update():
