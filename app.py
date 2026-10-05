@@ -6,7 +6,7 @@ BASE=os.path.dirname(os.path.abspath(__file__))
 if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
 else:
-    DATA_DIR=os.path.join(BASE,'data')
+    DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
 app=Flask(__name__); app.secret_key='gamo-fm-desktop-v8'; DB=os.path.join(DATA_DIR,'gamo.db')
 def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
