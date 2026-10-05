@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "manifest_url": "https://raw.githubusercontent.com/zajkir/GAMO-FM/main/update.json",
+  "check_timeout_seconds": 4
+}
