@@ -1,13 +1,14 @@
-from flask import Flask,render_template,request,redirect,url_for,jsonify,flash
+from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session
 from sqlite3 import IntegrityError
-import sqlite3, os
+import sqlite3, os, json
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta
 BASE=os.path.dirname(os.path.abspath(__file__))
 if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
 else:
     DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
-app=Flask(__name__); app.secret_key='gamo-fm-desktop-v8'; DB=os.path.join(DATA_DIR,'gamo.db')
+app=Flask(__name__); app.secret_key=os.environ.get('GAMO_SECRET_KEY','gamo-fm-local-desktop-9'); app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax'); DB=os.path.join(DATA_DIR,'gamo.db')
 def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def q(sql,a=()):
@@ -20,6 +21,9 @@ def init():
  os.makedirs(DATA_DIR,exist_ok=True)
  with con() as c:
   c.executescript("""CREATE TABLE IF NOT EXISTS buildings(id INTEGER PRIMARY KEY,code TEXT UNIQUE,name TEXT,address TEXT,manager TEXT,status TEXT DEFAULT 'Aktívna');CREATE TABLE IF NOT EXISTS floors(id INTEGER PRIMARY KEY,building_id INTEGER REFERENCES buildings(id) ON DELETE CASCADE,code TEXT,name TEXT);CREATE TABLE IF NOT EXISTS rooms(id INTEGER PRIMARY KEY,floor_id INTEGER REFERENCES floors(id) ON DELETE CASCADE,code TEXT,name TEXT,area REAL,tenant TEXT,zone TEXT);CREATE TABLE IF NOT EXISTS assets(id INTEGER PRIMARY KEY,asset_id TEXT UNIQUE,name TEXT,building_id INTEGER,floor_id INTEGER,room_id INTEGER,profession TEXT,grp TEXT,type TEXT,manufacturer TEXT,model TEXT,serial TEXT,system_id TEXT,parent_id INTEGER,status TEXT,criticality TEXT,service_months INTEGER,revision_months INTEGER,purchase_price REAL,installed TEXT,warranty TEXT,ip TEXT,protocol TEXT,notes TEXT);CREATE TABLE IF NOT EXISTS workorders(id INTEGER PRIMARY KEY,asset_id INTEGER,title TEXT,kind TEXT,priority TEXT,status TEXT,due TEXT,supplier TEXT,technician TEXT,cost REAL,description TEXT);CREATE TABLE IF NOT EXISTS incidents(id INTEGER PRIMARY KEY,asset_id INTEGER,title TEXT,severity TEXT,status TEXT,reported TEXT,impact TEXT,cause TEXT,cost REAL);CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,name TEXT,email TEXT,role TEXT,status TEXT);CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT);""")
+  cols=[r[1] for r in c.execute("pragma table_info(users)").fetchall()]
+  if 'password_hash' not in cols: c.execute("alter table users add column password_hash TEXT")
+  if 'last_login' not in cols: c.execute("alter table users add column last_login TEXT")
   if not c.execute('select count(*) n from buildings').fetchone()['n']:
    c.execute("insert into buildings(code,name,address,manager) values('A','GAMO Centrum – Budova A','Kyjevské námestie 6, Banská Bystrica','Facility Management')"); c.execute("insert into buildings(code,name,address,manager) values('B','GAMO Centrum – Budova B','Banská Bystrica','Facility Management')")
    a=c.execute("select id from buildings where code='A'").fetchone()[0]; b=c.execute("select id from buildings where code='B'").fetchone()[0]
@@ -29,10 +33,36 @@ def init():
    c.execute("insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,system_id,parent_id,status,criticality,purchase_price) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",('HVAC-000002','VRV vnútorná jednotka A005',a,f1,r1,'HVAC','VRV systém','VRV-IN','Daikin','FXZQ25','HVAC-A-VRV-01',p,'Prevádzka','B',1450));c.execute("insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,system_id,parent_id,status,criticality,purchase_price) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",('HVAC-000003','VRV vnútorná jednotka A008',a,f1,r2,'HVAC','VRV systém','VRV-IN','Daikin','FXZQ25','HVAC-A-VRV-01',p,'Prevádzka','B',1450));c.execute("insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,system_id,status,criticality,purchase_price,ip,protocol) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",('SLB-000001','Core switch serverovne',a,f2,r3,'SLB','LAN/WAN','Switch','Cisco','Catalyst','SLB-A-LAN-01','Prevádzka','A',3200,'10.0.1.2','SNMP'))
    c.execute("insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)",(p,'Preventívny servis VRV','PM','Stredná','Plánované',str(date.today()+timedelta(days=12)),'Servis HVAC s.r.o.','Ján Technik',350,'Kontrola systému a filtrov'))
    c.execute("insert into incidents(asset_id,title,severity,status,reported,impact,cost) values(?,?,?,?,?,?,?)",(p,'Kolísanie tlaku VRV','Porucha','Otvorená',str(date.today()),'A005, A008 – znížený komfort',0))
-   c.execute("insert into users(name,email,role,status) values('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny')")
+   c.execute("insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)",('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!'))))
 init()
+with con() as c:
+ c.execute("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?",(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
+
+@app.before_request
+def require_login():
+ if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
+ if not session.get('user_id'): return redirect(url_for('login',next=request.path))
+
+@app.route('/login',methods=['GET','POST'])
+def login():
+ if session.get('user_id'): return redirect('/')
+ error=None
+ if request.method=='POST':
+  email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''
+  u=one('select * from users where lower(email)=?',(email,))
+  if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
+   session.clear(); session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']
+   x("update users set last_login=datetime('now') where id=?",(u['id'],))
+   return redirect(request.args.get('next') or '/')
+  error='Nesprávny e-mail alebo heslo.'
+ return render_template('login.html',error=error)
+
+@app.get('/logout')
+def logout():
+ session.clear(); return redirect('/login')
+
 @app.context_processor
-def ctx(): return dict(today=date.today())
+def ctx(): return dict(today=date.today(),current_user={'name':session.get('user_name',''),'role':session.get('user_role','')})
 @app.route('/')
 def dashboard():
  s={'assets':one('select count(*) n from assets')['n'],'buildings':one('select count(*) n from buildings')['n'],'rooms':one('select count(*) n from rooms')['n'],'open':one("select count(*) n from incidents where status!='Ukončená'")['n'],'critical':one("select count(*) n from assets where criticality='A'")['n'],'orders':one("select count(*) n from workorders where status!='Ukončené'")['n']}
@@ -68,7 +98,9 @@ def add(what):
    else: x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes'])); flash('Asset bol vytvorený.','success')
   elif what=='workorder': x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description'])); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident': x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost'])); flash('Incident bol zaevidovaný.','success')
-  elif what=='user': x('insert into users(name,email,role,status) values(?,?,?,?)',(f['name'],f['email'],f['role'],f['status'])); flash('Používateľ bol vytvorený.','success')
+  elif what=='user':
+   pwd=f.get('password') or 'GamoFM2026!'
+   x('insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)',(f['name'],f['email'].strip().lower(),f['role'],f['status'],generate_password_hash(pwd))); flash('Používateľ bol vytvorený.','success')
  except (IntegrityError,ValueError):
   flash('Záznam sa nepodarilo uložiť. Skontroluj duplicity a zadané hodnoty.','error')
  except Exception:
