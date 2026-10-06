@@ -30,3 +30,18 @@ document.addEventListener('DOMContentLoaded',()=>{
   const map={tech:0,service:1,faults:2,docs:3,links:4}; if(buttons[map[name]]) assetTab(name,buttons[map[name]]);
  }
 });
+
+function manageUser(u){
+ const m=document.querySelector('#userManageModal'); if(!m)return;
+ document.querySelector('#userEditForm').action='/user/'+u.id+'/update';
+ document.querySelector('#editUserName').value=u.name||'';
+ document.querySelector('#editUserEmail').value=u.email||'';
+ document.querySelector('#editUserRole').value=u.role||'Viewer';
+ document.querySelector('#editUserStatus').value=u.status||'Aktívny';
+ document.querySelector('#editUserAvatar').textContent=(u.name||'U').split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase();
+ document.querySelector('#editUserMeta').textContent=(u.email||'')+' · ID '+u.id;
+ document.querySelector('#editUserLastLogin').textContent=u.last_login||'Zatiaľ bez prihlásenia';
+ document.querySelector('#editUserState').textContent=u.status||'—';
+ m.classList.add('show');
+}
+function closeUserManage(){document.querySelector('#userManageModal')?.classList.remove('show')}
