@@ -70,3 +70,31 @@ function manageUser(u){
  m.classList.add('show');
 }
 function closeUserManage(){document.querySelector('#userManageModal')?.classList.remove('show')}
+
+async function checkSystemHealth(){
+ const global=document.querySelector('#globalSystemStatus');
+ const control=document.querySelector('#systemControlStatus');
+ try{
+  const started=performance.now();
+  const res=await fetch('/api/health',{cache:'no-store',headers:{'Accept':'application/json'}});
+  const data=await res.json();
+  const browserMs=Math.round(performance.now()-started);
+  const online=res.ok&&data.status==='online'&&data.database==='online'&&data.api==='online';
+  const text=online?'● SYSTÉM ONLINE':'● SYSTÉM PROBLÉM';
+  [global,control].forEach(el=>{if(el){el.textContent=text;el.classList.toggle('health-offline',!online);el.classList.toggle('health-online',online)}});
+  const db=document.querySelector('#healthDb'),api=document.querySelector('#healthApi'),lat=document.querySelector('#healthLatency'),sys=document.querySelector('#healthSystem');
+  if(db) db.innerHTML='<i>'+(data.database==='online'?'✓':'!')+'</i> Databáza <b>'+(data.database==='online'?'Online':'Chyba')+'</b>';
+  if(api) api.innerHTML='<i>'+(data.api==='online'?'✓':'!')+'</i> API server <b>'+(data.api==='online'?'Online':'Chyba')+'</b>';
+  if(lat) lat.innerHTML='<i>↗</i> Odozva <b>'+browserMs+' ms</b>';
+  if(sys) sys.innerHTML='<i>'+(online?'✓':'!')+'</i> Systém <b>'+(online?'Online':'Problém')+'</b>';
+  const score=online?(browserMs<800?100:browserMs<2000?98:95):45;
+  const scoreEl=document.querySelector('#healthScore'),grade=document.querySelector('#healthGrade');
+  if(scoreEl)scoreEl.textContent=score;if(grade)grade.textContent=online?'A+':'!';
+  const gauge=document.querySelector('#healthGauge');if(gauge)gauge.classList.toggle('health-offline',!online);
+ }catch(e){
+  [global,control].forEach(el=>{if(el){el.textContent='● SYSTÉM OFFLINE';el.classList.add('health-offline');el.classList.remove('health-online')}});
+  const scoreEl=document.querySelector('#healthScore'),grade=document.querySelector('#healthGrade');
+  if(scoreEl)scoreEl.textContent='0';if(grade)grade.textContent='!';
+ }
+}
+document.addEventListener('DOMContentLoaded',()=>{checkSystemHealth();setInterval(checkSystemHealth,30000)});
