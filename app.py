@@ -177,6 +177,31 @@ def api_search():
  for r in q('select id,code,name,address from buildings where code like ? or name like ? or address like ? limit 5',(like,like,like)):
   out.append({'kind':'Budova','title':f"{r['code']} · {r['name']}",'subtitle':r['address'] or '','url':f"/building/{r['id']}"})
  return jsonify(out[:12])
+@app.get('/api/health')
+def api_health():
+ started=time.time()
+ db_ok=False; db_ms=None; counts={}
+ try:
+  t=time.time()
+  row=one('select 1 as ok')
+  db_ms=round((time.time()-t)*1000,1)
+  db_ok=bool(row and row['ok']==1)
+  if db_ok:
+   counts={'buildings':one('select count(*) n from buildings')['n'],'assets':one('select count(*) n from assets')['n']}
+ except Exception:
+  db_ok=False
+ ok=db_ok
+ return jsonify({
+  'status':'online' if ok else 'degraded',
+  'database':'online' if db_ok else 'offline',
+  'api':'online',
+  'database_ms':db_ms,
+  'response_ms':round((time.time()-started)*1000,1),
+  'version':'9.0.0.4',
+  'counts':counts,
+  'checked_at':datetime.now().isoformat(timespec='seconds')
+ }), (200 if ok else 503)
+
 @app.get('/api/notifications')
 def api_notifications():
  out=[]
