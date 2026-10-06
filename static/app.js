@@ -104,3 +104,33 @@ async function checkSystemHealth(){
  }
 }
 document.addEventListener('DOMContentLoaded',()=>{checkSystemHealth();setInterval(checkSystemHealth,30000)});
+
+function buildingTab(name,btn){
+ document.querySelectorAll('.building-tab-panel').forEach(p=>p.classList.remove('active'));
+ document.querySelectorAll('.building-tabs button').forEach(b=>b.classList.remove('active'));
+ const panel=document.querySelector('#building-'+name);if(panel)panel.classList.add('active');
+ if(btn)btn.classList.add('active');
+ try{history.replaceState(null,'','#'+name)}catch(e){}
+}
+function updateFacilityHealth(){
+ const el=document.querySelector('#facilityHealth');if(!el)return;
+ const open=Number(el.dataset.open||0),high=Number(el.dataset.high||0),overdue=Number(el.dataset.overdue||0),critical=Number(el.dataset.critical||0);
+ let score=100-Math.min(35,high*12)-Math.min(20,Math.max(0,open-high)*4)-Math.min(20,overdue*5)-Math.min(10,critical*1.5);
+ score=Math.max(0,Math.round(score*10)/10);
+ const value=document.querySelector('#facilityHealthValue'),label=document.querySelector('#facilityHealthText');
+ if(value)value.textContent=score.toFixed(1)+'%';
+ let text='↑ stabilná prevádzka',state='good';
+ if(high>0){text='! '+high+' závažné incidenty vyžadujú zásah';state='bad'}
+ else if(open>0){text='• '+open+' otvorené incidenty';state='warn'}
+ else if(overdue>0){text='• '+overdue+' servisné úlohy po termíne';state='warn'}
+ if(label)label.textContent=text;
+ el.classList.remove('facility-warn','facility-bad');if(state==='warn')el.classList.add('facility-warn');if(state==='bad')el.classList.add('facility-bad');
+}
+document.addEventListener('DOMContentLoaded',()=>{
+ updateFacilityHealth();
+ const n=(location.hash||'').replace('#','');
+ if(['overview','spaces','technology','documents'].includes(n)){
+  const buttons=[...document.querySelectorAll('.building-tabs button')],map={overview:0,spaces:1,technology:2,documents:3};
+  if(buttons[map[n]])buildingTab(n,buttons[map[n]]);
+ }
+});
