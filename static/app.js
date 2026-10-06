@@ -15,3 +15,18 @@ function toggleNotifications(){let p=document.querySelector('#notifications');p.
 let searchTimer;function globalSearch(v){clearTimeout(searchTimer);let box=document.querySelector('#globalSearchResults');if(v.trim().length<2){box.innerHTML='<div class="empty">Začni písať aspoň 2 znaky.</div>';return}searchTimer=setTimeout(()=>fetch('/api/search?q='+encodeURIComponent(v)).then(r=>r.json()).then(items=>{box.innerHTML=items.length?items.map(x=>`<a class="searchitem" href="${x.url}"><b>${x.title}</b><small>${x.subtitle}</small><span>${x.kind}</span></a>`).join(''):'<div class="empty">Nenašli sa žiadne výsledky.</div>'}),180)}
 function configModal(title,desc){document.querySelector('#configTitle').textContent=title;document.querySelector('#configDesc').textContent=desc;document.querySelector('#configSection').value=title;document.querySelector('#configValue').value='';fetch('/api/setting?section='+encodeURIComponent(title)).then(r=>r.json()).then(x=>document.querySelector('#configValue').value=x.value||'');document.querySelector('#configModal').classList.add('show')}
 function closeConfig(){document.querySelector('#configModal').classList.remove('show')}
+
+function assetTab(name,btn){
+ document.querySelectorAll('.asset-tab-panel').forEach(p=>p.classList.remove('active'));
+ document.querySelectorAll('.asset-tabs button').forEach(b=>b.classList.remove('active'));
+ const panel=document.querySelector('#asset-'+name); if(panel) panel.classList.add('active');
+ if(btn) btn.classList.add('active');
+ try{history.replaceState(null,'','#'+name)}catch(e){}
+}
+document.addEventListener('DOMContentLoaded',()=>{
+ const name=(location.hash||'').replace('#','');
+ if(['tech','service','faults','docs','links'].includes(name)){
+  const buttons=[...document.querySelectorAll('.asset-tabs button')];
+  const map={tech:0,service:1,faults:2,docs:3,links:4}; if(buttons[map[name]]) assetTab(name,buttons[map[name]]);
+ }
+});
