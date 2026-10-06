@@ -1,6 +1,6 @@
-from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session
+from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort
 from sqlite3 import IntegrityError
-import sqlite3, os, json
+import sqlite3, os, json, secrets, time\nfrom functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta
 BASE=os.path.dirname(os.path.abspath(__file__))
@@ -8,7 +8,13 @@ if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
 else:
     DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
-app=Flask(__name__); app.secret_key=os.environ.get('GAMO_SECRET_KEY','gamo-fm-local-desktop-9'); app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax'); DB=os.path.join(DATA_DIR,'gamo.db')
+app=Flask(__name__)
+app.secret_key=os.environ.get('GAMO_SECRET_KEY') or secrets.token_hex(32)
+app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8),MAX_CONTENT_LENGTH=16*1024*1024)
+DB=os.path.join(DATA_DIR,'gamo.db')
+LOGIN_WINDOW=300
+LOGIN_MAX_ATTEMPTS=6
+_login_attempts={}
 def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def q(sql,a=()):
@@ -24,6 +30,7 @@ def init():
   cols=[r[1] for r in c.execute("pragma table_info(users)").fetchall()]
   if 'password_hash' not in cols: c.execute("alter table users add column password_hash TEXT")
   if 'last_login' not in cols: c.execute("alter table users add column last_login TEXT")
+  c.execute("""CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY,created TEXT DEFAULT CURRENT_TIMESTAMP,user_id INTEGER,user_name TEXT,action TEXT,detail TEXT,ip TEXT);""")
   if not c.execute('select count(*) n from buildings').fetchone()['n']:
    c.execute("insert into buildings(code,name,address,manager) values('A','GAMO Centrum – Budova A','Kyjevské námestie 6, Banská Bystrica','Facility Management')"); c.execute("insert into buildings(code,name,address,manager) values('B','GAMO Centrum – Budova B','Banská Bystrica','Facility Management')")
    a=c.execute("select id from buildings where code='A'").fetchone()[0]; b=c.execute("select id from buildings where code='B'").fetchone()[0]
@@ -51,10 +58,10 @@ def login():
   email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''
   u=one('select * from users where lower(email)=?',(email,))
   if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
-   session.clear(); session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']
+   _login_attempts.pop(key,None); session.clear(); session.permanent=True; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['csrf']=secrets.token_urlsafe(32)
    x("update users set last_login=datetime('now') where id=?",(u['id'],))
    return redirect(request.args.get('next') or '/')
-  error='Nesprávny e-mail alebo heslo.'
+  attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
  return render_template('login.html',error=error)
 
 @app.get('/logout')
@@ -62,7 +69,7 @@ def logout():
  session.clear(); return redirect('/login')
 
 @app.context_processor
-def ctx(): return dict(today=date.today(),current_user={'name':session.get('user_name',''),'role':session.get('user_role','')})
+def ctx(): return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role','')})
 @app.route('/')
 def dashboard():
  s={'assets':one('select count(*) n from assets')['n'],'buildings':one('select count(*) n from buildings')['n'],'rooms':one('select count(*) n from rooms')['n'],'open':one("select count(*) n from incidents where status!='Ukončená'")['n'],'critical':one("select count(*) n from assets where criticality='A'")['n'],'orders':one("select count(*) n from workorders where status!='Ukončené'")['n']}
@@ -96,8 +103,14 @@ def add(what):
    aid=f.get('asset_id','').strip().upper()
    if one('select id from assets where upper(asset_id)=?',(aid,)): flash(f'Asset ID {aid} už existuje.','error')
    else: x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes'])); flash('Asset bol vytvorený.','success')
-  elif what=='workorder': x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description'])); flash('Pracovný príkaz bol vytvorený.','success')
-  elif what=='incident': x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost'])); flash('Incident bol zaevidovaný.','success')
+  elif what=='workorder':
+   allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
+   if f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind: raise ValueError()
+   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description'])); audit('WORKORDER_CREATE',f.get('title','')); flash('Pracovný príkaz bol vytvorený.','success')
+  elif what=='incident':
+   allowed_severity={'Nízka','Stredná','Vysoká','Kritická','Havária'}; allowed_status={'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'}
+   if f.get('severity') not in allowed_severity or f.get('status') not in allowed_status: raise ValueError()
+   x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost'])); audit('INCIDENT_CREATE',f.get('title','')); flash('Incident bol zaevidovaný.','success')
   elif what=='user':
    pwd=f.get('password') or 'GamoFM2026!'
    x('insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)',(f['name'],f['email'].strip().lower(),f['role'],f['status'],generate_password_hash(pwd))); flash('Používateľ bol vytvorený.','success')
