@@ -1,6 +1,6 @@
-from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort
+from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time
+import sqlite3, os, json, secrets, time, io
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta,datetime
@@ -37,6 +37,7 @@ def init():
   if 'password_hash' not in cols: c.execute("alter table users add column password_hash TEXT")
   if 'last_login' not in cols: c.execute("alter table users add column last_login TEXT")
   c.execute("""CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY,created TEXT DEFAULT CURRENT_TIMESTAMP,user_id INTEGER,user_name TEXT,action TEXT,detail TEXT,ip TEXT);""")
+  c.execute("""CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY,building_id INTEGER REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size INTEGER,uploaded TEXT DEFAULT CURRENT_TIMESTAMP,data BLOB);""")
   if not c.execute('select count(*) n from buildings').fetchone()['n']:
    c.execute("insert into buildings(code,name,address,manager) values('A','GAMO Centrum – Budova A','Kyjevské námestie 6, Banská Bystrica','Facility Management')"); c.execute("insert into buildings(code,name,address,manager) values('B','GAMO Centrum – Budova B','Banská Bystrica','Facility Management')")
    a=c.execute("select id from buildings where code='A'").fetchone()[0]; b=c.execute("select id from buildings where code='B'").fetchone()[0]
@@ -87,7 +88,33 @@ def dashboard():
 @app.route('/buildings')
 def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b'))
 @app.route('/building/<int:i>')
-def building(i): return render_template('index.html',page='building',b=one('select * from buildings where id=?',(i,)),floors=q('select * from floors where building_id=?',(i,)),rooms=q('select r.*,f.code floor from rooms r join floors f on f.id=r.floor_id where f.building_id=?',(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)))
+def building(i): return render_template('index.html',page='building',b=one('select * from buildings where id=?',(i,)),floors=q('select * from floors where building_id=?',(i,)),rooms=q('select r.*,f.code floor from rooms r join floors f on f.id=r.floor_id where f.building_id=?',(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
+@app.post('/building/<int:i>/document')
+def upload_building_document(i):
+ if not one('select id from buildings where id=?',(i,)): abort(404)
+ f=request.files.get('document'); category=(request.form.get('category') or 'Technická').strip()
+ if not f or not f.filename:
+  flash('Vyber dokument na nahratie.','error'); return redirect(f'/building/{i}#documents')
+ allowed={'.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.txt'}; ext=os.path.splitext(f.filename)[1].lower()
+ if ext not in allowed:
+  flash('Nepodporovaný typ súboru.','error'); return redirect(f'/building/{i}#documents')
+ data=f.read()
+ x('insert into documents(building_id,name,category,mime,size,data) values(?,?,?,?,?,?)',(i,os.path.basename(f.filename),category,f.mimetype or 'application/octet-stream',len(data),data))
+ audit('DOCUMENT_UPLOAD',f.filename); flash('Dokument bol nahratý.','success'); return redirect(f'/building/{i}#documents')
+
+@app.get('/document/<int:i>/download')
+def download_document(i):
+ d=one('select * from documents where id=?',(i,))
+ if not d: abort(404)
+ return send_file(io.BytesIO(d['data']),mimetype=d['mime'] or 'application/octet-stream',as_attachment=True,download_name=d['name'])
+
+@app.post('/document/<int:i>/delete')
+def delete_document(i):
+ d=one('select building_id,name from documents where id=?',(i,))
+ if not d: abort(404)
+ x('delete from documents where id=?',(i,)); audit('DOCUMENT_DELETE',d['name']); flash('Dokument bol odstránený.','success')
+ return redirect(f"/building/{d['building_id']}#documents")
+
 @app.route('/assets')
 def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a left join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id order by a.asset_id'))
 @app.route('/asset/<int:i>')
