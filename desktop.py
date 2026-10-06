@@ -38,11 +38,11 @@ def _update_before_start():
             return False
         root = tk.Tk(); root.withdraw()
         notes = str(manifest.get('notes', '')).strip()
-        msg = f"Je dostupná nová verzia GAMO FM {manifest['version']} (máš {current_version()})."
+        msg = f"Je dostupná nová verzia GAMO a.s. {manifest['version']} (máš {current_version()})."
         if notes:
             msg += f"\n\n{notes}"
         msg += "\n\nStiahnuť a nainštalovať aktualizáciu teraz?"
-        yes = messagebox.askyesno('GAMO FM – aktualizácia', msg, parent=root)
+        yes = messagebox.askyesno('GAMO a.s. – aktualizácia', msg, parent=root)
         if yes:
             installer = download_update(manifest)
             launch_installer(installer)
@@ -57,11 +57,11 @@ def _update_before_start():
 def main():
     if _update_before_start():
         return
-    threading.Thread(target=run_server, daemon=True, name='GAMO-FM-Server').start()
+    threading.Thread(target=run_server, daemon=True, name='GAMO-Server').start()
     if not wait_for_server():
-        raise RuntimeError('GAMO FM server sa nepodarilo spustiť.')
+        raise RuntimeError('GAMO a.s. server sa nepodarilo spustiť.')
     webview.create_window(
-        f'GAMO FM {current_version()} — Facility Management',
+        f'GAMO a.s. {current_version()} — Facility Management',
         f'http://{HOST}:{PORT}',
         width=1500,
         height=920,
