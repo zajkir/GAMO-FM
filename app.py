@@ -1,6 +1,7 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time\nfrom functools import wraps
+import sqlite3, os, json, secrets, time
+from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta
 BASE=os.path.dirname(os.path.abspath(__file__))
@@ -15,6 +16,11 @@ DB=os.path.join(DATA_DIR,'gamo.db')
 LOGIN_WINDOW=300
 LOGIN_MAX_ATTEMPTS=6
 _login_attempts={}
+def audit(action,detail=''):
+ try:
+  x("insert into audit_log(user_id,user_name,action,detail,ip) values(?,?,?,?,?)",(session.get('user_id'),session.get('user_name','Systém'),action,detail,request.headers.get('X-Forwarded-For',request.remote_addr or '')))
+ except Exception:
+  pass
 def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def q(sql,a=()):
@@ -56,6 +62,10 @@ def login():
  error=None
  if request.method=='POST':
   email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''
+  key=(request.headers.get('X-Forwarded-For',request.remote_addr or '')+'|'+email)
+  now=time.time(); attempts=[t for t in _login_attempts.get(key,[]) if now-t<LOGIN_WINDOW]
+  if len(attempts)>=LOGIN_MAX_ATTEMPTS:
+   return render_template('login.html',error='Príliš veľa neúspešných pokusov. Skús to znova o pár minút.'),429
   u=one('select * from users where lower(email)=?',(email,))
   if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
    _login_attempts.pop(key,None); session.clear(); session.permanent=True; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['csrf']=secrets.token_urlsafe(32)
@@ -87,7 +97,7 @@ def maintenance(): return render_template('index.html',page='maintenance',orders
 @app.route('/incidents')
 def incidents(): return render_template('index.html',page='incidents',incidents=q('select i.*,a.asset_id,a.name asset from incidents i join assets a on a.id=i.asset_id order by i.id desc'))
 @app.route('/admin')
-def admin(): return render_template('index.html',page='admin',users=q('select * from users'),buildings=q('select * from buildings'))
+def admin(): return render_template('index.html',page='admin',users=q('select * from users'),buildings=q('select * from buildings'),audit_rows=q('select * from audit_log order by id desc limit 20'))
 @app.post('/add/<what>')
 def add(what):
  f=request.form
