@@ -1,5 +1,5 @@
 #define MyAppName "GAMO a.s."
-#define MyAppVersion "9.0.0.6"
+#define MyAppVersion "9.0.0.4"
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
 
@@ -17,7 +17,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=lowest\nPrivilegesRequiredOverridesAllowed=dialog\nSetupLogging=yes\nUsePreviousAppDir=yes\nDisableProgramGroupPage=yes
+PrivilegesRequired=lowest
 CloseApplications=yes
 RestartApplications=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
