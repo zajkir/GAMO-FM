@@ -95,6 +95,12 @@ async function checkSystemHealth(){
   [global,control].forEach(el=>{if(el){el.textContent='● SYSTÉM OFFLINE';el.classList.add('health-offline');el.classList.remove('health-online')}});
   const scoreEl=document.querySelector('#healthScore'),grade=document.querySelector('#healthGrade');
   if(scoreEl)scoreEl.textContent='0';if(grade)grade.textContent='!';
+  const db=document.querySelector('#healthDb'),api=document.querySelector('#healthApi'),lat=document.querySelector('#healthLatency'),sys=document.querySelector('#healthSystem');
+  if(db)db.innerHTML='<i>!</i> Databáza <b>Nedostupná</b>';
+  if(api)api.innerHTML='<i>!</i> API server <b>Nedostupný</b>';
+  if(lat)lat.innerHTML='<i>!</i> Odozva <b>Bez odpovede</b>';
+  if(sys)sys.innerHTML='<i>!</i> Systém <b>Offline</b>';
+  const gauge=document.querySelector('#healthGauge');if(gauge)gauge.classList.add('health-offline');
  }
 }
 document.addEventListener('DOMContentLoaded',()=>{checkSystemHealth();setInterval(checkSystemHealth,30000)});
