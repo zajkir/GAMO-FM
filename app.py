@@ -45,23 +45,61 @@ init()
 with con() as c:
  c.execute("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?",(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
 
+def audit(action,detail=''):
+ try:
+  x('insert into audit_log(user_id,user_name,action,detail,ip) values(?,?,?,?,?)',(session.get('user_id'),session.get('user_name',''),action,detail,(request.remote_addr or '')[:64]))
+ except Exception:
+  pass
+
+def admin_only(fn):
+ @wraps(fn)
+ def inner(*args,**kwargs):
+  if session.get('user_role')!='Administrator': abort(403)
+  return fn(*args,**kwargs)
+ return inner
+
+@app.after_request
+def security_headers(resp):
+ resp.headers['X-Content-Type-Options']='nosniff'
+ resp.headers['X-Frame-Options']='DENY'
+ resp.headers['Referrer-Policy']='same-origin'
+ resp.headers['Permissions-Policy']='camera=(), microphone=(), geolocation=()'
+ return resp
+
 @app.before_request
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
+ if request.method=='POST':
+  token=request.form.get('_csrf') or request.headers.get('X-CSRF-Token')
+  if not token or token!=session.get('csrf'): abort(403)
 
 @app.route('/login',methods=['GET','POST'])
 def login():
  if session.get('user_id'): return redirect('/')
  error=None
  if request.method=='POST':
-  email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''
+  email=(request.form.get('email') or '').strip().lower()
+  password=request.form.get('password') or ''
+  key=((request.remote_addr or 'local'),email)
+  now=time.time()
+  attempts=[t for t in _login_attempts.get(key,[]) if now-t<LOGIN_WINDOW]
+  if len(attempts)>=LOGIN_MAX_ATTEMPTS:
+   return render_template('login.html',error='Príliš veľa pokusov. Skús to znova o pár minút.'),429
   u=one('select * from users where lower(email)=?',(email,))
   if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
-   _login_attempts.pop(key,None); session.clear(); session.permanent=True; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['csrf']=secrets.token_urlsafe(32)
+   _login_attempts.pop(key,None)
+   session.clear()
+   session.permanent=True
+   session['user_id']=u['id']
+   session['user_name']=u['name']
+   session['user_role']=u['role']
+   session['csrf']=secrets.token_urlsafe(32)
    x("update users set last_login=datetime('now') where id=?",(u['id'],))
    return redirect(request.args.get('next') or '/')
-  attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
+  attempts.append(now)
+  _login_attempts[key]=attempts
+  error='Nesprávny e-mail alebo heslo.'
  return render_template('login.html',error=error)
 
 @app.get('/logout')
