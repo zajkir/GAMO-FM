@@ -98,8 +98,10 @@ def maintenance(): return render_template('index.html',page='maintenance',orders
 def incidents(): return render_template('index.html',page='incidents',incidents=q('select i.*,a.asset_id,a.name asset from incidents i join assets a on a.id=i.asset_id order by i.id desc'))
 @app.route('/admin')
 def admin(): return render_template('index.html',page='admin',users=q('select * from users'),buildings=q('select * from buildings'),audit_rows=q('select * from audit_log order by id desc limit 20'))
-@app.post('/add/<what>')
+@app.route('/add/<what>',methods=['GET','POST'])
 def add(what):
+ if request.method=='GET':
+  return redirect({'incident':'/incidents','workorder':'/maintenance','asset':'/assets','user':'/admin','building':'/buildings'}.get(what,'/'))
  f=request.form
  try:
   if what=='building':
@@ -128,7 +130,8 @@ def add(what):
   flash('Záznam sa nepodarilo uložiť. Skontroluj duplicity a zadané hodnoty.','error')
  except Exception:
   flash('Pri ukladaní nastala chyba. Dáta neboli poškodené.','error')
- return redirect(request.referrer or '/')
+ target={'incident':'/incidents','workorder':'/maintenance','asset':'/assets','user':'/admin','building':'/buildings'}.get(what)
+ return redirect(target or request.referrer or '/')
 @app.post('/user/<int:i>/update')
 def update_user(i):
  f=request.form
