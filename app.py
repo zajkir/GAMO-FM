@@ -129,6 +129,34 @@ def add(what):
  except Exception:
   flash('Pri ukladaní nastala chyba. Dáta neboli poškodené.','error')
  return redirect(request.referrer or '/')
+@app.post('/user/<int:i>/update')
+def update_user(i):
+ f=request.form
+ u=one('select * from users where id=?',(i,))
+ if not u:
+  abort(404)
+ name=(f.get('name') or '').strip(); email=(f.get('email') or '').strip().lower()
+ role=f.get('role') or 'Viewer'; status=f.get('status') or 'Aktívny'; pwd=f.get('password') or ''
+ allowed_roles={'Administrator','Facility Manager','Technik','Servisný technik','Viewer'}
+ if not name or not email or role not in allowed_roles or status not in {'Aktívny','Neaktívny'}:
+  flash('Skontroluj údaje používateľa.','error'); return redirect('/admin#usersAdmin')
+ if i==session.get('user_id') and status!='Aktívny':
+  flash('Aktuálne prihlásený účet nie je možné deaktivovať.','error'); return redirect('/admin#usersAdmin')
+ try:
+  duplicate=one('select id from users where lower(email)=? and id<>?',(email,i))
+  if duplicate: raise IntegrityError()
+  if pwd:
+   x('update users set name=?,email=?,role=?,status=?,password_hash=? where id=?',(name,email,role,status,generate_password_hash(pwd),i))
+  else:
+   x('update users set name=?,email=?,role=?,status=? where id=?',(name,email,role,status,i))
+  if i==session.get('user_id'):
+   session['user_name']=name; session['user_role']=role
+  audit('USER_UPDATE',f'{name} · {role} · {status}')
+  flash('Používateľ bol úspešne upravený.','success')
+ except IntegrityError:
+  flash('Tento e-mail už používa iný účet.','error')
+ return redirect('/admin#usersAdmin')
+
 @app.post('/delete/<what>/<int:i>')
 def delete(what,i):
  table={'building':'buildings','floor':'floors','room':'rooms','asset':'assets','workorder':'workorders','incident':'incidents','user':'users'}[what]; x(f'delete from {table} where id=?',(i,)); return redirect(request.referrer or '/')
