@@ -11,7 +11,7 @@ else:
     DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
 app=Flask(__name__)
 app.secret_key=os.environ.get('GAMO_SECRET_KEY') or secrets.token_hex(32)
-app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(hours=8),MAX_CONTENT_LENGTH=16*1024*1024)
+app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(days=30),MAX_CONTENT_LENGTH=16*1024*1024)
 DB=os.path.join(DATA_DIR,'gamo.db')
 LOGIN_WINDOW=300
 LOGIN_MAX_ATTEMPTS=6
@@ -62,14 +62,14 @@ def login():
  if session.get('user_id'): return redirect('/')
  error=None
  if request.method=='POST':
-  email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''
+  email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''; remember=request.form.get('remember')=='1'
   key=(request.headers.get('X-Forwarded-For',request.remote_addr or '')+'|'+email)
   now=time.time(); attempts=[t for t in _login_attempts.get(key,[]) if now-t<LOGIN_WINDOW]
   if len(attempts)>=LOGIN_MAX_ATTEMPTS:
    return render_template('login.html',error='Príliš veľa neúspešných pokusov. Skús to znova o pár minút.'),429
   u=one('select * from users where lower(email)=?',(email,))
   if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
-   _login_attempts.pop(key,None); session.clear(); session.permanent=True; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['csrf']=secrets.token_urlsafe(32)
+   _login_attempts.pop(key,None); session.clear(); session.permanent=remember; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['csrf']=secrets.token_urlsafe(32)
    x("update users set last_login=datetime('now') where id=?",(u['id'],))
    return redirect(request.args.get('next') or '/')
   attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
