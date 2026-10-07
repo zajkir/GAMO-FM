@@ -169,3 +169,15 @@ function twinZoom(delta){const s=document.querySelector('.twin-stack');if(!s)ret
 function twinExplode(){const s=document.querySelector('.twin-stack');if(!s)return;s.classList.toggle('exploded')}
 function twinReset(){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle='-18';s.dataset.tilt='58';s.dataset.zoom='1.12';s.classList.remove('exploded');twinApply()}
 document.addEventListener('wheel',e=>{const scene=e.target.closest&&e.target.closest('.twin-scene');if(!scene)return;e.preventDefault();twinZoom(e.deltaY<0?.08:-.08)},{passive:false});
+
+function filterCustomers(){
+ const q=(document.querySelector('#customerSearch')?.value||'').trim().toLowerCase();
+ const plan=document.querySelector('#customerPlanFilter')?.value||'';
+ const status=document.querySelector('#customerStatusFilter')?.value||'';
+ document.querySelectorAll('.customer-row').forEach(row=>{
+  const text=row.dataset.search||'', rowPlan=row.dataset.plan||'', license=row.dataset.license||'', org=row.dataset.orgstatus||'', expired=row.dataset.expired==='1';
+  const active=license==='Aktívna'&&org==='Aktívny'&&!expired;
+  const matchText=!q||text.includes(q), matchPlan=!plan||rowPlan===plan, matchStatus=!status||(status==='active'?active:!active);
+  row.style.display=(matchText&&matchPlan&&matchStatus)?'grid':'none';
+ });
+}
