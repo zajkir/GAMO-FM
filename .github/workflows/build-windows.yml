@@ -36,6 +36,7 @@ jobs:
         run: |
           python -m py_compile launcher.py updater.py desktop.py
           python tests/launcher_ui_static.py
+          python tests/desktop_window_static.py
           python tests/installer_regression.py
 
       - name: Build desktop application

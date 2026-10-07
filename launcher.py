@@ -83,12 +83,15 @@ class Launcher(tk.Tk):
         self.online = False
         self.update_manifest = None
         self.busy = False
+        self._fullscreen = False
 
         self.title("GAMO a.s. — Launcher")
         self.geometry("900x540")
         self.minsize(820, 500)
         self.configure(bg=BG)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<F11>", self.toggle_fullscreen)
+        self.bind("<Escape>", self.exit_fullscreen)
 
         self._center()
         self._build_styles()
@@ -101,6 +104,17 @@ class Launcher(tk.Tk):
         x = max(0, (self.winfo_screenwidth() - width) // 2)
         y = max(0, (self.winfo_screenheight() - height) // 2)
         self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def toggle_fullscreen(self, _event=None):
+        self._fullscreen = not self._fullscreen
+        self.attributes("-fullscreen", self._fullscreen)
+        return "break"
+
+    def exit_fullscreen(self, _event=None):
+        if self._fullscreen:
+            self._fullscreen = False
+            self.attributes("-fullscreen", False)
+        return "break"
 
     def _build_styles(self):
         style = ttk.Style(self)

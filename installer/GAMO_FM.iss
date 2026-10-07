@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.8"
+#define MyAppVersion "9.0.0.9"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -32,7 +32,7 @@ VersionInfoVersion={#MyAppVersion}
 
 [Files]
 Source: "..\dist\GAMO_FM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\dist_launcher\GAMO_Launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist_launcher\GAMO_Launcher.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 
 [Icons]
 Name: "{autoprograms}\GAMO a.s."; Filename: "{app}\{#MyLauncherExeName}"
@@ -46,6 +46,21 @@ Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launche
 
 
 [Code]
+procedure ForceCloseDesktop();
+var
+  ResultCode: Integer;
+begin
+  Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    '/F /T /IM "{#MyAppExeName}"',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  Sleep(600);
+end;
+
 procedure ForceCloseLauncher();
 var
   ResultCode: Integer;
@@ -62,11 +77,12 @@ begin
     ResultCode
   );
   { Give Windows time to release the executable handle before [Files] starts. }
-  Sleep(900);
+  Sleep(1800);
 end;
 
 function InitializeSetup(): Boolean;
 begin
+  ForceCloseDesktop();
   ForceCloseLauncher();
   Result := True;
 end;
@@ -74,6 +90,7 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   { Repeat immediately before file replacement as defense in depth. }
+  ForceCloseDesktop();
   ForceCloseLauncher();
   Result := '';
 end;
