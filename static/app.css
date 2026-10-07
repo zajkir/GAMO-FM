@@ -111,3 +111,11 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .twin-building-sign{position:absolute;left:47px;top:73px;z-index:30;padding:7px 10px;border-left:3px solid #ef3650;background:rgba(5,18,33,.82);color:#fff;font-size:10px;font-weight:900;letter-spacing:.12em;transform:translateZ(260px)}.twin-building-sign small{display:block;margin-top:3px;color:#77a4d7;font-size:5px;letter-spacing:.18em}.twin-lobby{position:absolute;left:154px;top:276px;width:120px;height:54px;transform:translateZ(-2px);z-index:2}.twin-lobby .door{position:absolute;left:34px;bottom:0;width:52px;height:42px;border:1px solid rgba(120,190,237,.5);background:linear-gradient(90deg,rgba(53,119,159,.8) 49%,rgba(5,20,36,.8) 50%,rgba(53,119,159,.8) 52%)}.twin-lobby .canopy{position:absolute;left:18px;top:0;width:84px;height:9px;background:#193d5c;box-shadow:0 5px 12px rgba(0,0,0,.25)}
 .twin-scene-status{position:absolute;left:20px;bottom:18px;display:flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid rgba(113,170,225,.16);border-radius:9px;background:rgba(5,19,34,.68);color:#8eacd0;font-size:8px;font-weight:900;letter-spacing:.12em;backdrop-filter:blur(8px)}.twin-scene-status i{width:7px;height:7px;border-radius:50%;background:#35d495;box-shadow:0 0 0 4px rgba(53,212,149,.1)}
 @media(max-width:900px){.twin-stack{transform:scale(.76) rotateX(61deg) rotateZ(var(--twin-angle))!important}.twin-site{transform:translateX(-50%) rotateX(67deg) scale(.8)}}
+
+/* Digital Twin camera controls — readable building view */
+.twin-stack{--twin-tilt:42deg;--twin-zoom:1;transform:scale(var(--twin-zoom)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important;transform-origin:center center;cursor:grab}
+.twin-stack:active{cursor:grabbing}
+.twin-actions button{min-height:38px;padding:0 12px;white-space:nowrap}
+.twin-scene:after{content:"Koliesko myši = zoom";position:absolute;right:18px;bottom:18px;padding:7px 10px;border:1px solid rgba(128,177,226,.14);border-radius:8px;background:rgba(4,17,31,.58);color:#7594b8;font-size:8px;letter-spacing:.06em;backdrop-filter:blur(6px)}
+.floor-label{transform:rotateX(calc(-1 * var(--twin-tilt)));transform-origin:left top;transition:transform .4s ease}
+@media(max-width:900px){.twin-stack{transform:scale(calc(var(--twin-zoom) * .76)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important}}
