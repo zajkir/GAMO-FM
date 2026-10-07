@@ -42,7 +42,18 @@ jobs:
         run: node --check static/app.js
       - name: Run SQLite smoke tests
         run: python tests/smoke_app.py
+      - name: Create non-superuser PostgreSQL app role
+        env:
+          PGPASSWORD: gamo_test
+        run: |
+          psql -h 127.0.0.1 -U gamo_test -d gamo_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE gamo_app LOGIN PASSWORD 'gamo_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+          GRANT ALL PRIVILEGES ON DATABASE gamo_test TO gamo_app;
+          ALTER DATABASE gamo_test OWNER TO gamo_app;
+          GRANT ALL ON SCHEMA public TO gamo_app;
+          ALTER SCHEMA public OWNER TO gamo_app;
+          SQL
       - name: Run PostgreSQL smoke tests
         env:
-          DATABASE_URL: postgresql://gamo_test:gamo_test@127.0.0.1:5432/gamo_test
+          DATABASE_URL: postgresql://gamo_app:gamo_app@127.0.0.1:5432/gamo_test
         run: python tests/smoke_app.py
