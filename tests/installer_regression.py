@@ -7,6 +7,8 @@ version = json.loads((root / "version.json").read_text(encoding="utf-8"))["versi
 
 assert 'CloseApplicationsFilter={#MyAppExeName};{#MyLauncherExeName}' in iss
 assert '/F /T /IM "{#MyLauncherExeName}"' in iss
+assert '/F /T /IM "{#MyAppExeName}"' in iss
+assert 'restartreplace' in iss
 assert 'function PrepareToInstall(var NeedsRestart: Boolean): String;' in iss
 assert 'ForceCloseLauncher();' in iss
 assert f'#define MyAppVersion "{version}"' in iss

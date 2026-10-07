@@ -111,6 +111,15 @@ def _show_startup_error(message):
     root.destroy()
 
 
+def _show_desktop_window(window):
+    """Open the native client maximized while keeping normal Windows controls."""
+    try:
+        if bool(CONFIG.get('start_maximized', True)):
+            window.maximize()
+    except Exception as exc:
+        print(f'Window maximize skipped: {exc}')
+
+
 def main():
     # The dedicated GAMO Launcher owns the update flow. Direct/manual launches
     # keep the legacy safety check for compatibility.
@@ -142,7 +151,7 @@ def main():
             raise RuntimeError('GAMO a.s. lokálny server sa nepodarilo spustiť.')
         target_url = f'http://{HOST}:{PORT}'
 
-    webview.create_window(
+    window = webview.create_window(
         f'GAMO a.s. {current_version()} — Facility Platform',
         target_url,
         width=1500,
@@ -152,7 +161,7 @@ def main():
         confirm_close=True,
         text_select=True,
     )
-    webview.start(debug=False)
+    webview.start(_show_desktop_window, window, debug=False)
 
 
 if __name__ == '__main__':

@@ -16,3 +16,7 @@ for node in ast.walk(tree):
     assert not forbidden, f"Tkinter Canvas.create_text does not support: {sorted(forbidden)}"
 
 print("Launcher Canvas options OK")
+
+assert 'self.bind("<F11>", self.toggle_fullscreen)' in source
+assert 'self.attributes("-fullscreen", self._fullscreen)' in source
+print("Launcher fullscreen binding OK")
