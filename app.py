@@ -10,6 +10,8 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta,datetime
 from db_migrations import run_migrations
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 BASE=os.path.dirname(os.path.abspath(__file__))
 if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
@@ -317,6 +319,77 @@ def dashboard():
  }; report['total_cost']=report['maintenance_cost']+report['incident_cost']
  profession_sql="select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0)::numeric,2) value from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? group by a.profession order by value desc limit 6" if USING_POSTGRES else "select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0),2) value from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? group by a.profession order by value desc limit 6"
  return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=q(profession_sql,(oid,)),buildings=q('select * from buildings where organization_id=?',(oid,)),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc limit 6',(oid,)),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc limit 5',(oid,)))
+@app.route('/reports')
+def reports():
+ oid=org_id()
+ stats={
+  'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'maintenance_cost':one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'incident_cost':one('select coalesce(sum(i.cost),0) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'open_incidents':one("select count(*) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and i.status!='Ukončená'",(oid,))['n'],
+  'overdue':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status!='Ukončené' and w.due is not null and w.due!='' and date(w.due)<date('now')",(oid,))['n']
+ }
+ stats['total_cost']=stats['maintenance_cost']+stats['incident_cost']
+ building_rows=q("""select b.id,b.code,b.name,
+  (select count(*) from assets a where a.building_id=b.id) assets,
+  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id) maintenance_cost,
+  (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id) incident_cost,
+  (select count(*) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.status!='Ukončená') open_incidents
+  from buildings b where b.organization_id=? order by b.name""",(oid,))
+ profession_rows=q("""select coalesce(a.profession,'Iné') profession,count(*) assets,
+  coalesce(sum(a.purchase_price),0) asset_value
+  from assets a join buildings b on b.id=a.building_id
+  where b.organization_id=? group by a.profession order by assets desc""",(oid,))
+ return render_template('index.html',page='reports',report_stats=stats,report_buildings=building_rows,report_professions=profession_rows)
+
+@app.get('/reports/export.xlsx')
+def reports_export_xlsx():
+ oid=org_id(); org=one('select * from organizations where id=?',(oid,))
+ wb=Workbook(); ws=wb.active; ws.title='Súhrn'
+ title_fill=PatternFill('solid',fgColor='17365D'); header_fill=PatternFill('solid',fgColor='DCE6F1')
+ for cell in ws[1]:
+  cell.fill=title_fill
+ ws.merge_cells('A1:D1'); ws['A1']=f"GAMO Facility Report · {org['name'] if org else ''}"; ws['A1'].font=Font(color='FFFFFF',bold=True,size=14); ws['A1'].alignment=Alignment(vertical='center')
+ ws.row_dimensions[1].height=26
+ summary=[
+  ('Generované',datetime.now().strftime('%d.%m.%Y %H:%M')),
+  ('Budovy',one('select count(*) n from buildings where organization_id=?',(oid,))['n']),
+  ('Assety',one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n']),
+  ('Náklady údržby',float(one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'] or 0)),
+  ('Náklady incidentov',float(one('select coalesce(sum(i.cost),0) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'] or 0))
+ ]
+ for r,(k,v) in enumerate(summary,3):
+  ws.cell(r,1,k).font=Font(bold=True); ws.cell(r,2,v)
+ ws.column_dimensions['A'].width=24; ws.column_dimensions['B'].width=28
+
+ def add_sheet(name,headers,rows):
+  sh=wb.create_sheet(name); sh.append(headers)
+  for cell in sh[1]:
+   cell.fill=header_fill; cell.font=Font(bold=True)
+  for row in rows: sh.append(list(row))
+  sh.freeze_panes='A2'; sh.auto_filter.ref=sh.dimensions
+  for col in sh.columns:
+   letter=col[0].column_letter
+   sh.column_dimensions[letter].width=min(45,max(12,max(len(str(x.value or '')) for x in col)+2))
+  return sh
+
+ assets_rows=q("""select a.asset_id,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price
+  from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id
+  where b.organization_id=? order by a.asset_id""",(oid,))
+ add_sheet('Assety',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],[tuple(r) for r in assets_rows])
+ wo_rows=q("""select a.asset_id,w.title,w.kind,w.priority,w.status,w.due,w.supplier,w.technician,w.cost,w.description
+  from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
+  where b.organization_id=? order by w.id desc""",(oid,))
+ add_sheet('Údržba',['Asset ID','Úloha','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],[tuple(r) for r in wo_rows])
+ inc_rows=q("""select a.asset_id,i.title,i.severity,i.status,i.reported,i.impact,i.cause,i.cost
+  from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
+  where b.organization_id=? order by i.id desc""",(oid,))
+ add_sheet('Incidenty',['Asset ID','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],[tuple(r) for r in inc_rows])
+ stream=io.BytesIO(); wb.save(stream); stream.seek(0)
+ audit('REPORT_EXPORT','XLSX management report')
+ code=(org['code'] if org else 'ORG')
+ return send_file(stream,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name=f'GAMO_report_{code}_{date.today().isoformat()}.xlsx')
+
 @app.route('/buildings')
 def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b where b.organization_id=?',(org_id(),)))
 @app.route('/building/<int:i>')
