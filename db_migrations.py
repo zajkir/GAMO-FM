@@ -247,6 +247,22 @@ def _migration_7(db, using_postgres):
             db.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
 
 
+
+
+def _migration_8(db, using_postgres):
+    """Optional TOTP MFA with one-time recovery codes."""
+    user_cols = _columns(db, "users", using_postgres)
+    additions = {
+        "mfa_secret": "TEXT",
+        "mfa_recovery_codes": "TEXT",
+        "mfa_enabled_at": "TIMESTAMPTZ" if using_postgres else "TEXT",
+        "mfa_enabled": "BOOLEAN DEFAULT FALSE" if using_postgres else "INTEGER DEFAULT 0",
+    }
+    for column, definition in additions.items():
+        if column not in user_cols:
+            db.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -255,6 +271,7 @@ MIGRATIONS = (
     (5, "customer_privacy_controls", _migration_5),
     (6, "postgres_row_level_security", _migration_6),
     (7, "temporary_password_rotation", _migration_7),
+    (8, "totp_mfa_and_recovery_codes", _migration_8),
 )
 
 
