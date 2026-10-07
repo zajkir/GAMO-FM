@@ -1,4 +1,4 @@
-from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file
+from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context
 from sqlite3 import IntegrityError
 import sqlite3, os, json, secrets, time, io, zipfile
 try:
@@ -76,6 +76,23 @@ def owns_incident(incident_id):
 def owns_user(user_id):
  return bool(org_id() and one('select id from users where id=? and organization_id=?',(user_id,org_id())))
 
+def support_access_active(org):
+ if not org or not org['support_access_enabled']: return False
+ until=org['support_access_until']
+ if not until: return True
+ try:
+  dt=datetime.fromisoformat(str(until).replace('Z','+00:00'))
+  now=datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+  return dt>=now
+ except Exception:
+  return False
+
+def customer_access(target_org_id,action,reason=''):
+ try:
+  x('insert into customer_access_log(target_organization_id,actor_user_id,actor_name,action,reason,ip) values(?,?,?,?,?,?)',(target_org_id,session.get('user_id'),session.get('user_name','Systém'),action,(reason or '')[:500],request.headers.get('X-Forwarded-For',request.remote_addr or '')))
+ except Exception:
+  pass
+
 def plan_limits(oid=None):
  oid=oid or org_id()
  org=one('select plan from organizations where id=?',(oid,)) if oid else None
@@ -107,15 +124,27 @@ DATABASE_URL=os.environ.get('DATABASE_URL','').strip()
 USING_POSTGRES=bool(DATABASE_URL)
 def _sql(sql):
  return sql.replace('datetime(\'now\')','CURRENT_TIMESTAMP').replace("date('now')",'CURRENT_DATE').replace('?','%s') if USING_POSTGRES else sql
-def con():
+def con(system=False):
  if USING_POSTGRES:
   if not psycopg: raise RuntimeError('DATABASE_URL is set but psycopg is not installed')
-  return psycopg.connect(DATABASE_URL,row_factory=dict_row)
+  db=psycopg.connect(DATABASE_URL,row_factory=dict_row)
+  if system or not has_request_context():
+   oid=''; platform_admin='1'
+  else:
+   oid=str(session.get('organization_id') or '')
+   platform_admin='1' if session.get('organization_code')=='GAMO' and session.get('user_role')=='Administrator' else '0'
+  db.execute("select set_config('gamo.organization_id',%s,false)",(oid,))
+  db.execute("select set_config('gamo.platform_admin',%s,false)",(platform_admin,))
+  return db
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def q(sql,a=()):
  with con() as c:return c.execute(_sql(sql),a).fetchall()
 def one(sql,a=()):
  with con() as c:return c.execute(_sql(sql),a).fetchone()
+def one_system(sql,a=()):
+ with con(system=True) as c:return c.execute(_sql(sql),a).fetchone()
+def q_system(sql,a=()):
+ with con(system=True) as c:return c.execute(_sql(sql),a).fetchall()
 def x(sql,a=()):
  with con() as c:
   statement=_sql(sql)
@@ -205,6 +234,8 @@ def security_headers(response):
  response.headers['Content-Security-Policy']="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
  if app.config.get('SESSION_COOKIE_SECURE'):
   response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
+ if request.path.startswith('/backup') or request.path.endswith('/backup') or request.path.startswith('/privacy'):
+  response.headers['Cache-Control']='no-store, private'
  return response
 
 @app.before_request
@@ -217,6 +248,7 @@ def require_login():
  if current['role']!=session.get('user_role'):
   session['user_role']=current['role']
  org=one('select * from organizations where id=?',(org_id(),)) if org_id() else None
+ if org: session['organization_code']=org['code']
  license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
  if not license_ok:
   session.clear()
@@ -252,15 +284,15 @@ def login():
   now=time.time(); attempts=[t for t in _login_attempts.get(key,[]) if now-t<LOGIN_WINDOW]
   if len(attempts)>=LOGIN_MAX_ATTEMPTS:
    return render_template('login.html',error='Príliš veľa neúspešných pokusov. Skús to znova o pár minút.'),429
-  u=one('select * from users where lower(email)=?',(email,))
+  u=one_system('select * from users where lower(email)=?',(email,))
   if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
-   org=one('select * from organizations where id=?',(u['organization_id'],)) if u['organization_id'] else None
+   org=one_system('select * from organizations where id=?',(u['organization_id'],)) if u['organization_id'] else None
    license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
    if not license_ok:
     error='Licencia organizácie nie je aktívna alebo jej platnosť skončila. Kontaktuj GAMO.'
    else:
     _login_attempts.pop(key,None); session.clear(); session.permanent=remember
-    session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u['organization_id']; session['csrf']=secrets.token_urlsafe(32)
+    session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u['organization_id']; session['organization_code']=org['code']; session['csrf']=secrets.token_urlsafe(32)
     x("update users set last_login=datetime('now') where id=?",(u['id'],))
     return redirect(request.args.get('next') or '/')
   else:
