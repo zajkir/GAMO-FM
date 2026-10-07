@@ -206,7 +206,11 @@ def add(what):
    code=f.get('code','').strip().upper(); name=f.get('name','').strip()
    if not code or not name: flash('Kód a názov budovy sú povinné.','error')
    elif one('select id from buildings where upper(code)=?',(code,)): flash(f'Budova s kódom {code} už existuje.','error')
-   else: x('insert into buildings(code,name,address,manager) values(?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip())); flash('Budova bola vytvorená.','success')
+   else:
+    bid=x('insert into buildings(code,name,address,manager,customer) values(?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),f.get('customer','').strip() or 'GAMO a.s.'))
+    floor_count=max(0,min(50,int(f.get('floors_count') or 0)))
+    for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
   elif what=='floor': x('insert into floors(building_id,code,name) values(?,?,?)',(f['building_id'],f['code'].strip(),f['name'].strip())); flash('Podlažie bolo pridané.','success')
   elif what=='room': x('insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)',(f['floor_id'],f['code'].strip(),f['name'].strip(),f.get('area') or 0,f.get('tenant','').strip(),f.get('zone','').strip())); flash('Miestnosť bola pridaná.','success')
   elif what=='asset':
