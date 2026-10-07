@@ -232,6 +232,42 @@ assert r.status_code in (302, 303)
 incident = app.one("select * from incidents where asset_id=? and title=?", (asset["id"], "QA incident"))
 assert incident
 
+# Regression: resolved incidents and cancelled workorders are not active,
+# overdue or notification-worthy anywhere in the application.
+r = client.post(
+    "/add/incident",
+    data={
+        "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA resolved incident",
+        "severity": "Kritická", "status": "Vyriešená", "reported": "2026-10-06",
+        "impact": "Resolved", "cause": "Resolved", "cost": "0"
+    },
+)
+assert r.status_code in (302, 303)
+r = client.post(
+    "/add/workorder",
+    data={
+        "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA cancelled overdue",
+        "kind": "PM", "priority": "Kritická", "status": "Zrušené", "due": "2020-01-01",
+        "supplier": "", "technician": "", "cost": "0", "description": "Cancelled"
+    },
+)
+assert r.status_code in (302, 303)
+active_notifications = client.get("/api/notifications").get_json()
+assert not any(x.get("title") == "QA resolved incident" for x in active_notifications)
+assert not any(x.get("title") == "QA cancelled overdue" for x in active_notifications)
+# Legacy NULL room area must not break the Digital Twin aggregation.
+null_room_id = app.x(
+    "insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",
+    (floor["id"], "NULL-AREA", "Legacy room without area", None, "GAMO", "LEGACY"),
+)
+building_page = client.get(f"/building/{building['id']}")
+assert building_page.status_code == 200
+assert b"GAMO DIGITAL TWIN" in building_page.data
+assert b'NULL-AREA' in building_page.data
+assert b'data-floor-incidents="1"' in building_page.data
+dashboard_page = client.get("/")
+assert dashboard_page.status_code == 200
+
 # ----- Facility editing regression coverage -----
 r = client.post(
     f"/edit/building/{building['id']}",
@@ -334,6 +370,54 @@ r = client.post(
 assert r.status_code in (302, 303)
 assert client.get("/api/setting?section=smoke-test").get_json()["value"] == "tenant-value"
 
+viewer_id = app.x_system(
+    "insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)",
+    ("Settings Viewer", "settings-viewer@example.test", "Viewer", "Aktívny", app.generate_password_hash("ViewerPass2026!"), gamo_org_id, False if app.USING_POSTGRES else 0),
+)
+viewer_client = app.app.test_client()
+with viewer_client.session_transaction() as sess:
+    sess["user_id"] = viewer_id
+    sess["user_name"] = "Settings Viewer"
+    sess["user_role"] = "Viewer"
+    sess["organization_id"] = gamo_org_id
+    sess["organization_code"] = "GAMO"
+    sess["must_change_password"] = False
+    sess["csrf"] = "viewer-csrf"
+r = viewer_client.post("/settings/save", data={"_csrf": "viewer-csrf", "section": "forbidden", "value": "x"})
+assert r.status_code == 403
+assert app.one_system("select v from organization_settings where organization_id=? and k=?", (gamo_org_id, "forbidden")) is None
+
+# Viewer must not be able to bypass hidden UI controls with forged POST requests.
+for path, payload in [
+    ("/add/asset", {"_csrf": "viewer-csrf"}),
+    (f"/edit/building/{building['id']}", {"_csrf": "viewer-csrf", "code": "HACK", "name": "Hacked"}),
+    (f"/status/asset/{asset['id']}", {"_csrf": "viewer-csrf", "status": "Porucha"}),
+    (f"/delete/workorder/{workorder['id']}", {"_csrf": "viewer-csrf"}),
+    (f"/delete/incident/{incident['id']}", {"_csrf": "viewer-csrf"}),
+    (f"/user/{gamo_admin['id']}/update", {
+        "_csrf": "viewer-csrf", "name": "Hacked Admin", "email": "hacked@example.test",
+        "role": "Viewer", "status": "Aktívny"
+    }),
+]:
+    denied = viewer_client.post(path, data=payload, follow_redirects=False)
+    assert denied.status_code == 403, (path, denied.status_code)
+
+denied_upload = viewer_client.post(
+    f"/building/{building['id']}/document",
+    data={"_csrf": "viewer-csrf", "category": "Technická", "document": (io.BytesIO(b"blocked"), "blocked.txt")},
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert denied_upload.status_code == 403
+denied_delete_doc = viewer_client.post(
+    f"/document/{document['id']}/delete", data={"_csrf": "viewer-csrf"}, follow_redirects=False
+)
+assert denied_delete_doc.status_code == 403
+assert app.one_system("select name from buildings where id=?", (building["id"],))["name"] == "Smoke Building Edited"
+assert app.one_system("select status from assets where id=?", (asset["id"],))["status"] == "Servis"
+assert app.one_system("select id from documents where id=?", (document["id"],))
+assert app.one_system("select name from users where id=?", (gamo_admin["id"],))["name"] == "GAMO Administrator"
+
 r = client.get("/reports/export.xlsx")
 assert r.status_code == 200
 book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
@@ -342,6 +426,14 @@ for sheet in ("Súhrn", "Assety", "Údržba", "Incidenty", "Po termíne"):
 assert book["Súhrn"]["A1"].value.startswith("GAMO FACILITY REPORT")
 assert "QA-000001" in [cell.value for row in book["Assety"].iter_rows() for cell in row]
 assert len(book["Súhrn"]._charts) >= 1
+expected_open_incidents = app.one(
+    """select count(*) n from incidents i join assets a on a.id=i.asset_id
+       where a.organization_id=? and i.status not in ('Ukončená','Vyriešená')""",
+    (gamo_org_id,),
+)["n"]
+assert book["Súhrn"]["E5"].value == expected_open_incidents
+overdue_values = [cell.value for row in book["Po termíne"].iter_rows() for cell in row]
+assert "QA cancelled overdue" not in overdue_values
 
 # ----- Create a real customer tenant (secure by default) -----
 r = client.post(
@@ -738,6 +830,11 @@ assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in customer_notificat
 customer_ticket_after_gamo = client.get(f"/ticket/{ticket['id']}")
 assert customer_ticket_after_gamo.status_code == 200
 assert b"GAMO support vid" in customer_ticket_after_gamo.data
+assert b"GAMO Support" in customer_ticket_after_gamo.data
+live_messages = client.get(f"/api/ticket/{ticket['id']}/messages?after=0").get_json()["messages"]
+support_messages = [m for m in live_messages if "GAMO support vid" in m.get("body", "")]
+assert support_messages and support_messages[-1]["support"] is True
+assert support_messages[-1]["sender_role"] == "GAMO Support"
 r = client.post(
     "/privacy/support-access",
     data={
