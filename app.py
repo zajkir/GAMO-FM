@@ -1236,7 +1236,7 @@ def platform_customer_detail(i):
   customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
   recent_orders=recent_orders,license_days=license_days,customer_limits=limits,customer_audit=customer_audit,
   customer_last_backup=(last_backup['created'] if last_backup else None),customer_last_login=(last_login['last_login'] if last_login else None),
-  support_access=support_active,customer_access_rows=access_rows,customer_security=customer_security)
+  support_access=support_active,customer_access_rows=access_rows,customer_security=customer_security,rls_enabled=USING_POSTGRES)
 
 @app.post('/platform/customer/<int:i>/reset-admin-password')
 def platform_customer_reset_admin_password(i):
