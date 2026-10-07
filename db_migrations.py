@@ -269,6 +269,26 @@ def _migration_9(db, using_postgres):
     if not using_postgres:
         return
 
+    # Refuse to apply hard constraints over inconsistent legacy data. This makes
+    # a bad historical row visible instead of silently breaking tenant privacy.
+    checks = (
+        ("buildings", "select count(*) n from buildings where organization_id is null"),
+        ("users", "select count(*) n from users where organization_id is null"),
+        ("assets", """select count(*) n from assets a
+                      left join buildings b on b.id=a.building_id
+                      where a.organization_id is null or b.id is null
+                         or a.organization_id<>b.organization_id"""),
+        ("asset parents", """select count(*) n from assets a join assets p on p.id=a.parent_id
+                             where a.parent_id is not null and a.organization_id<>p.organization_id"""),
+        ("workorders", "select count(*) n from workorders w left join assets a on a.id=w.asset_id where a.id is null"),
+        ("incidents", "select count(*) n from incidents i left join assets a on a.id=i.asset_id where a.id is null"),
+    )
+    for label, sql in checks:
+        row = db.execute(sql).fetchone()
+        count = row["n"] if isinstance(row, dict) else row[0]
+        if count:
+            raise RuntimeError(f"Tenant integrity migration blocked: {label} contains {count} inconsistent rows")
+
     # Required organization ownership after legacy rows were backfilled.
     db.execute("ALTER TABLE assets ALTER COLUMN organization_id SET NOT NULL")
     db.execute("ALTER TABLE buildings ALTER COLUMN organization_id SET NOT NULL")
