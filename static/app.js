@@ -113,7 +113,7 @@ function modal(t){
   }else if(['building','floor','room'].includes(a.type)){
    control=`<select class="location-picker" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam…</option></select>`;
   }else{
-   const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.name==='password'?'minlength="8" autocomplete="new-password"':''].filter(Boolean).join(' ');
+   const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.name==='password'?'minlength="10" autocomplete="new-password"':''].filter(Boolean).join(' ');
    control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value||'')}"${required} ${attrs}>`;
   }
   h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}</div>`;
