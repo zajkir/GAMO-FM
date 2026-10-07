@@ -150,7 +150,7 @@ def login():
    return render_template('login.html',error='Príliš veľa neúspešných pokusov. Skús to znova o pár minút.'),429
   u=one('select * from users where lower(email)=?',(email,))
   if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
-   _login_attempts.pop(key,None); session.clear(); session.permanent=remember; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['csrf']=secrets.token_urlsafe(32)
+   _login_attempts.pop(key,None); session.clear(); session.permanent=remember; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u.get('organization_id') if hasattr(u,'get') else u['organization_id']; session['csrf']=secrets.token_urlsafe(32)
    x("update users set last_login=datetime('now') where id=?",(u['id'],))
    return redirect(request.args.get('next') or '/')
   attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
@@ -161,7 +161,7 @@ def logout():
  session.clear(); return redirect('/login')
 
 @app.context_processor
-def ctx(): return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role','')},can=can)
+def ctx(): return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':session.get('organization_id')},can=can)
 @app.route('/')
 def dashboard():
  s={'assets':one('select count(*) n from assets')['n'],'buildings':one('select count(*) n from buildings')['n'],'rooms':one('select count(*) n from rooms')['n'],'open':one("select count(*) n from incidents where status!='Ukončená'")['n'],'critical':one("select count(*) n from assets where criticality='A'")['n'],'orders':one("select count(*) n from workorders where status!='Ukončené'")['n'],'high_incidents':one("select count(*) n from incidents where status!='Ukončená' and severity in ('Vysoká','Kritická','Havária')")['n'],'overdue':one("select count(*) n from workorders where status!='Ukončené' and due is not null and due!='' and date(due)<date('now')")['n']}
