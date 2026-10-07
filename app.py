@@ -34,6 +34,12 @@ def can(permission):
 def org_id():
  return session.get('organization_id')
 
+def is_gamo_admin():
+ oid=org_id()
+ if not oid or session.get('user_role')!='Administrator': return False
+ org=one('select code from organizations where id=?',(oid,))
+ return bool(org and org['code']=='GAMO')
+
 def owns_building(building_id):
  oid=org_id()
  return bool(oid and one('select id from buildings where id=? and organization_id=?',(building_id,oid)))
@@ -160,12 +166,18 @@ def login():
   if len(attempts)>=LOGIN_MAX_ATTEMPTS:
    return render_template('login.html',error='Príliš veľa neúspešných pokusov. Skús to znova o pár minút.'),429
   u=one('select * from users where lower(email)=?',(email,))
-  org=one('select * from organizations where id=?',(u['organization_id'],)) if u and u['organization_id'] else None
-  if u and org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
-   _login_attempts.pop(key,None); session.clear(); session.permanent=remember; session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u.get('organization_id') if hasattr(u,'get') else u['organization_id']; session['csrf']=secrets.token_urlsafe(32)
-   x("update users set last_login=datetime('now') where id=?",(u['id'],))
-   return redirect(request.args.get('next') or '/')
-  attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
+  if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
+   org=one('select * from organizations where id=?',(u['organization_id'],)) if u['organization_id'] else None
+   license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
+   if not license_ok:
+    error='Licencia organizácie nie je aktívna alebo jej platnosť skončila. Kontaktuj GAMO.'
+   else:
+    _login_attempts.pop(key,None); session.clear(); session.permanent=remember
+    session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u['organization_id']; session['csrf']=secrets.token_urlsafe(32)
+    x("update users set last_login=datetime('now') where id=?",(u['id'],))
+    return redirect(request.args.get('next') or '/')
+  else:
+   attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
  return render_template('login.html',error=error)
 
 @app.get('/logout')
@@ -247,34 +259,66 @@ def incidents(): return render_template('index.html',page='incidents',incidents=
 @app.route('/admin')
 def admin():
  org=one('select * from organizations where id=?',(org_id(),))
- is_gamo=bool(org and org['code']=='GAMO')
- organizations=q("select o.*,(select count(*) from users u where u.organization_id=o.id) users_count,(select count(*) from buildings b where b.organization_id=o.id) buildings_count from organizations o order by o.id") if is_gamo else []
- return render_template('index.html',page='admin',users=q('select * from users where organization_id=?',(org_id(),)),buildings=q('select * from buildings where organization_id=?',(org_id(),)),audit_rows=q('select * from audit_log order by id desc limit 20'),organizations=organizations)
+ organizations=[]
+ if is_gamo_admin():
+  organizations=q("""select o.*,
+   (select count(*) from users u where u.organization_id=o.id) users_count,
+   (select count(*) from buildings b where b.organization_id=o.id) buildings_count
+   from organizations o order by case when o.code='GAMO' then 0 else 1 end,o.name""")
+ audit_rows=q('select al.* from audit_log al join users u on u.id=al.user_id where u.organization_id=? order by al.id desc limit 20',(org_id(),))
+ return render_template('index.html',page='admin',
+  users=q('select * from users where organization_id=? order by name',(org_id(),)),
+  buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
+  audit_rows=audit_rows,organizations=organizations,current_admin_org=org)
+
 @app.post('/platform/customer')
 def platform_customer():
- org=one('select * from organizations where id=?',(org_id(),))
- if not org or org['code']!='GAMO' or session.get('user_role')!='Administrator': abort(403)
- f=request.form; code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip(); email=(f.get('email') or '').strip().lower()
- plan=f.get('plan') or 'BUSINESS'; status=f.get('license_status') or 'Aktívna'; admin_name=(f.get('admin_name') or '').strip(); password=f.get('password') or ''
- if not code or not name or not email or not admin_name or not password or plan not in {'BASIC','BUSINESS','ENTERPRISE'} or status not in {'Aktívna','Pozastavená'}:
-  flash('Vyplň všetky povinné údaje zákazníka.','error'); return redirect('/admin#customersAdmin')
+ if not is_gamo_admin(): abort(403)
+ f=request.form
+ code=(f.get('code') or '').strip().upper()
+ name=(f.get('name') or '').strip()
+ admin_name=(f.get('admin_name') or '').strip()
+ email=(f.get('email') or '').strip().lower()
+ password=f.get('password') or ''
+ plan=(f.get('plan') or 'BUSINESS').upper()
+ license_status=f.get('license_status') or 'Aktívna'
+ license_until=(f.get('license_until') or '').strip() or None
+ if not code or not name or not admin_name or not email or len(password)<8:
+  flash('Vyplň povinné údaje. Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect('/admin#customersAdmin')
+ if plan not in {'BASIC','BUSINESS','ENTERPRISE'} or license_status not in {'Aktívna','Pozastavená'}:
+  flash('Neplatný licenčný plán alebo stav.','error'); return redirect('/admin#customersAdmin')
+ if one('select id from organizations where upper(code)=?',(code,)) or one('select id from users where lower(email)=?',(email,)):
+  flash('Kód zákazníka alebo e-mail administrátora už existuje.','error'); return redirect('/admin#customersAdmin')
  try:
-  oid=x('insert into organizations(code,name,status,plan,license_status,license_until,branding_name) values(?,?,?,?,?,?,?)',(code,name,'Aktívny',plan,status,f.get('license_until') or None,name))
-  x('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',(admin_name,email,'Administrator','Aktívny',generate_password_hash(password),oid))
-  audit('CUSTOMER_CREATE',f'{code} · {name} · {plan}'); flash('Zákazník a jeho administrátorský účet boli vytvorené.','success')
- except IntegrityError:
-  flash('Kód zákazníka alebo e-mail už existuje.','error')
+  with con() as db:
+   if USING_POSTGRES:
+    row=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name) values(?,?,?,?,?,?,?) returning id'),(code,name,'Aktívny',plan,license_status,license_until,name)).fetchone()
+    oid=row['id']
+   else:
+    cur=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name) values(?,?,?,?,?,?,?)'),(code,name,'Aktívny',plan,license_status,license_until,name)); oid=cur.lastrowid
+   db.execute(_sql('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)'),(admin_name,email,'Administrator','Aktívny',generate_password_hash(password),oid))
+   db.commit()
+  audit('CUSTOMER_CREATE',f'{code} · {name} · {plan}')
+  flash('Zákazník bol vytvorený. Má vlastnú organizáciu a administrátorský účet.','success')
+ except Exception:
+  flash('Zákazníka sa nepodarilo vytvoriť. Neboli uložené neúplné dáta.','error')
  return redirect('/admin#customersAdmin')
 
-@app.post('/platform/customer/<int:i>/license')
-def platform_customer_license(i):
- org=one('select * from organizations where id=?',(org_id(),))
- if not org or org['code']!='GAMO' or session.get('user_role')!='Administrator': abort(403)
+@app.post('/platform/customer/<int:i>/update')
+def platform_customer_update(i):
+ if not is_gamo_admin(): abort(403)
  customer=one('select * from organizations where id=?',(i,))
  if not customer or customer['code']=='GAMO': abort(404)
- status=request.form.get('license_status')
- if status not in {'Aktívna','Pozastavená'}: abort(400)
- x('update organizations set license_status=? where id=?',(status,i)); audit('LICENSE_UPDATE',f"{customer['code']} · {status}"); flash('Licencia zákazníka bola aktualizovaná.','success')
+ f=request.form
+ plan=(f.get('plan') or customer['plan']).upper()
+ license_status=f.get('license_status') or customer['license_status']
+ org_status=f.get('status') or customer['status']
+ license_until=(f.get('license_until') or '').strip() or None
+ if plan not in {'BASIC','BUSINESS','ENTERPRISE'} or license_status not in {'Aktívna','Pozastavená'} or org_status not in {'Aktívny','Neaktívny'}:
+  abort(400)
+ x('update organizations set plan=?,license_status=?,license_until=?,status=? where id=?',(plan,license_status,license_until,org_status,i))
+ audit('CUSTOMER_UPDATE',f"{customer['code']} · {plan} · {license_status}")
+ flash('Nastavenia zákazníka boli uložené.','success')
  return redirect('/admin#customersAdmin')
 
 @app.route('/add/<what>',methods=['GET','POST'])
