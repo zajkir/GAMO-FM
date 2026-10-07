@@ -487,7 +487,8 @@ def add(what):
    if parent_id and not owns_asset(parent_id): raise ValueError()
    if one('select a.id from assets a join buildings b on b.id=a.building_id where upper(a.asset_id)=? and b.organization_id=?',(aid,org_id())): flash(f'Asset ID {aid} už existuje.','error')
    else:
-    new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes']))
+    values=tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes'])
+    new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values+(org_id(),))
     asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {f.get('name','')}")
     flash('Asset bol vytvorený.','success')
   elif what=='workorder':
