@@ -220,6 +220,30 @@ assert r.status_code in (302, 303)
 r = client.get(f"/platform/customer/{customer['id']}")
 assert r.status_code == 200
 assert b"Private Customer Building" in r.data
+
+r = client.post(
+    f"/platform/customer/{customer['id']}/support-enter",
+    data={"_csrf": csrf()},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+r = client.get("/buildings")
+assert r.status_code == 200
+assert b"Private Customer Building" in r.data
+assert b"Smoke Building" not in r.data
+r = client.get("/privacy")
+assert r.status_code == 403
+r = client.get(f"/asset/{asset['id']}")
+assert r.status_code == 404
+with client.session_transaction() as sess:
+    assert sess.get("organization_id") == gamo_org_id
+    assert sess.get("support_target_org_id") == customer["id"]
+
+r = client.post("/support/exit", data={"_csrf": csrf()}, follow_redirects=False)
+assert r.status_code in (302, 303)
+with client.session_transaction() as sess:
+    assert sess.get("support_target_org_id") is None
+
 r = client.get(f"/platform/customer/{customer['id']}/backup")
 assert r.status_code == 200 and r.mimetype == "application/zip"
 access = app.one_system(
