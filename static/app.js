@@ -1,47 +1,124 @@
 const APP_BRAND=(window.GAMO_CONTEXT&&window.GAMO_CONTEXT.brandName)||'GAMO a.s.';
 const APP_ORG_CODE=(window.GAMO_CONTEXT&&window.GAMO_CONTEXT.orgCode)||'GAMO';
 const defs={
-building:[['customer','Zákazník / vlastník',APP_BRAND],['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adresa',''],['manager','Správca','Facility Management'],['floors_count','Počet podlaží pre 3D model','3']],
-floor:[['building_id','ID budovy','1'],['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
-room:[['floor_id','ID podlažia','1'],['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],['area','Plocha m²','25'],['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
-asset:[['asset_id','Asset ID','HVAC-000010'],['name','Názov zariadenia',''],['building_id','ID budovy','1'],['floor_id','ID podlažia','1'],['room_id','ID miestnosti','1'],['profession','Profesia','HVAC'],['grp','Skupina','VRV systém'],['type','Typ','VRV-IN'],['manufacturer','Výrobca',''],['model','Model',''],['serial','Výrobné číslo',''],['system_id','System ID',''],['parent_id','Parent Asset ID',''],{name:'status',label:'Stav',type:'select',options:['Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'],value:'Prevádzka'},{name:'criticality',label:'Kritickosť',type:'select',options:['A','B','C'],value:'B'},['service_months','Servis interval mes.','6'],['revision_months','Revízia interval mes.','12'],['purchase_price','Cena €','0'],['ip','IP adresa',''],['protocol','Protokol',''],['notes','Poznámka','']],
-workorder:[{name:'asset_id',label:'Asset',type:'asset',value:currentAsset||''},{name:'title',label:'Názov pracovného príkazu',type:'select',options:['Preventívna údržba','Pravidelná revízia','Oprava poruchy','Havarijný zásah','Výmena zariadenia','Diagnostika','Kontrola zariadenia'],value:'Preventívna údržba'},{name:'kind',label:'Typ zásahu',type:'select',options:['PM','REV','OPR','VYM'],value:'PM'},{name:'priority',label:'Priorita',type:'select',options:['Nízka','Stredná','Vysoká','Kritická'],value:'Stredná'},{name:'status',label:'Stav',type:'select',options:['Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'],value:'Plánované'},['due','Termín',''],['supplier','Dodávateľ',''],['technician','Technik',''],['cost','Náklad €','0'],['description','Popis','']],
-incident:[{name:'asset_id',label:'Asset',type:'asset',value:currentAsset||''},['title','Názov incidentu',''],{name:'severity',label:'Závažnosť',type:'select',options:['Nízka','Stredná','Vysoká','Kritická','Havária'],value:'Stredná'},{name:'status',label:'Stav',type:'select',options:['Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'],value:'Otvorená'},['reported','Nahlásené',''],['impact','Dopad',''],['cause','Príčina',''],['cost','Náklad €','0']],
-user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'select',options:['Administrator','Facility Manager','Technik','Servisný technik','Viewer'],value:'Technik'},{name:'status',label:'Stav používateľa',type:'select',options:['Aktívny','Neaktívny'],value:'Aktívny'},['password','Dočasné heslo','']]
-};
-function fieldDef(a){return Array.isArray(a)?{name:a[0],label:a[1],value:a[2],type:(a[0]=='password'?'password':'text')} : a}
-function loadAssetOptions(select,preferred){
- select.disabled=true;select.innerHTML='<option>Načítavam assety…</option>';
- fetch('/api/assets/options',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('asset options');return r.json()}).then(items=>{
-  if(!items.length){
-   select.innerHTML='<option value="">Najprv vytvor asset v Asset registri</option>';select.disabled=true;
-   const note=document.createElement('small');note.className='asset-picker-note';note.innerHTML='V organizácii zatiaľ nie je žiadny asset. <a href="/assets">Otvoriť Asset register →</a>';select.parentElement.appendChild(note);return;
-  }
-  select.disabled=false;
-  select.innerHTML='<option value="">Vyber zariadenie…</option>'+items.map(x=>{
-   const location=[x.building,x.room].filter(Boolean).join(' / ');
-   const label=[x.asset_id,x.name,location].filter(Boolean).join(' · ');
-   return '<option value="'+x.id+'" '+(String(x.id)===String(preferred)?'selected':'')+'>'+escapeHtml(label)+'</option>';
-  }).join('');
- }).catch(()=>{select.innerHTML='<option value="">Assety sa nepodarilo načítať</option>';select.disabled=true});
+building:[['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adresa',''],['manager','Správca','Facility Management'],{name:'floors_count',label:'Počet podlaží pre 3D model',type:'number',value:'3',min:'0',max:'50'}],
+floor:[{name:'building_id',label:'Budova',type:'building',required:true},['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
+room:[{name:'floor_id',label:'Podlažie',type:'floor',required:true},['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],{name:'area',label:'Plocha m²',type:'number',value:'25',step:'0.01',min:'0'},['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
+asset:[
+ ['asset_id','Asset ID','HVAC-000010'],['name','Názov zariadenia',''],
+ {name:'building_id',label:'Budova',type:'building',required:true},
+ {name:'floor_id',label:'Podlažie',type:'floor',required:true},
+ {name:'room_id',label:'Miestnosť',type:'room',required:true},
+ {name:'profession',label:'Profesia',value:'HVAC',required:true},
+ {name:'grp',label:'Skupina',value:'VRV systém',required:true},
+ {name:'type',label:'Typ',value:'VRV-IN',required:true},
+ ['manufacturer','Výrobca',''],['model','Model',''],['serial','Výrobné číslo',''],['system_id','System ID',''],
+ {name:'parent_id',label:'Parent Asset',type:'asset',value:'',required:false,optionalLabel:'Bez parent assetu'},
+ {name:'status',label:'Stav',type:'select',options:['Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'],value:'Prevádzka',required:true},
+ {name:'criticality',label:'Kritickosť',type:'select',options:['A','B','C'],value:'B',required:true},
+ {name:'service_months',label:'Servis interval mes.',type:'number',value:'6',min:'0'},
+ {name:'revision_months',label:'Revízia interval mes.',type:'number',value:'12',min:'0'},
+ {name:'purchase_price',label:'Cena €',type:'number',value:'0',min:'0',step:'0.01'},
+ ['ip','IP adresa',''],['protocol','Protokol',''],['notes','Poznámka','']
+],
+workorder:[
+ {name:'asset_id',label:'Asset',type:'asset',value:currentAsset||'',required:true},
+ {name:'title',label:'Názov pracovného príkazu',type:'select',options:['Preventívna údržba','Pravidelná revízia','Oprava poruchy','Havarijný zásah','Výmena zariadenia','Diagnostika','Kontrola zariadenia'],value:'Preventívna údržba',required:true},
+ {name:'kind',label:'Typ zásahu',type:'select',options:['PM','REV','OPR','VYM'],value:'PM',required:true},
+ {name:'priority',label:'Priorita',type:'select',options:['Nízka','Stredná','Vysoká','Kritická'],value:'Stredná',required:true},
+ {name:'status',label:'Stav',type:'select',options:['Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'],value:'Plánované',required:true},
+ {name:'due',label:'Termín',type:'date',value:''},['supplier','Dodávateľ',''],['technician','Technik',''],
+ {name:'cost',label:'Náklad €',type:'number',value:'0',min:'0',step:'0.01'},['description','Popis','']
+],
+incident:[
+ {name:'asset_id',label:'Asset',type:'asset',value:currentAsset||'',required:true},['title','Názov incidentu',''],
+ {name:'severity',label:'Závažnosť',type:'select',options:['Nízka','Stredná','Vysoká','Kritická','Havária'],value:'Stredná',required:true},
+ {name:'status',label:'Stav',type:'select',options:['Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'],value:'Otvorená',required:true},
+ {name:'reported',label:'Nahlásené',type:'date',value:new Date().toISOString().slice(0,10)},['impact','Dopad',''],['cause','Príčina',''],
+ {name:'cost',label:'Náklad €',type:'number',value:'0',min:'0',step:'0.01'}
+],
+user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'select',options:['Administrator','Facility Manager','Technik','Servisný technik','Viewer'],value:'Technik',required:true},{name:'status',label:'Stav používateľa',type:'select',options:['Aktívny','Neaktívny'],value:'Aktívny',required:true},{name:'password',label:'Dočasné heslo',type:'password',value:'',required:true}]
 }
+function fieldDef(a){return Array.isArray(a)?{name:a[0],label:a[1],value:a[2],type:(a[0]=='password'?'password':'text')} : a}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
+async function fetchJson(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(url);return r.json()}
+function setPicker(select,items,preferred,placeholder,labelFn,optional=false){
+ select.disabled=false;
+ const first=optional?'<option value="">'+escapeHtml(placeholder)+'</option>':'<option value="">'+escapeHtml(placeholder)+'</option>';
+ select.innerHTML=first+items.map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(preferred)?'selected':'')+'>'+escapeHtml(labelFn(x))+'</option>').join('');
+ if(!items.length){select.innerHTML='<option value="">Žiadne dostupné záznamy</option>';select.disabled=true}
+}
+async function loadBuildingOptions(select,preferred=''){
+ select.disabled=true;select.innerHTML='<option>Načítavam budovy…</option>';
+ try{const items=await fetchJson('/api/buildings/options');setPicker(select,items,preferred,'Vyber budovu…',x=>[x.code,x.name].filter(Boolean).join(' · '))}
+ catch(e){select.innerHTML='<option value="">Budovy sa nepodarilo načítať</option>';select.disabled=true}
+}
+async function loadFloorOptions(select,preferred=''){
+ select.disabled=true;select.innerHTML='<option>Načítavam podlažia…</option>';
+ try{const items=await fetchJson('/api/floors/options');setPicker(select,items,preferred,'Vyber podlažie…',x=>[x.building_code,x.code,x.name].filter(Boolean).join(' · '))}
+ catch(e){select.innerHTML='<option value="">Podlažia sa nepodarilo načítať</option>';select.disabled=true}
+}
+async function loadFloorsForBuilding(select,buildingId,preferred=''){
+ if(!buildingId){select.innerHTML='<option value="">Najprv vyber budovu</option>';select.disabled=true;return}
+ select.disabled=true;select.innerHTML='<option>Načítavam podlažia…</option>';
+ try{const items=await fetchJson('/api/floors/'+buildingId);setPicker(select,items,preferred,'Vyber podlažie…',x=>[x.code,x.name].filter(Boolean).join(' · '))}
+ catch(e){select.innerHTML='<option value="">Podlažia sa nepodarilo načítať</option>';select.disabled=true}
+}
+async function loadRoomsForFloor(select,floorId,preferred=''){
+ if(!floorId){select.innerHTML='<option value="">Najprv vyber podlažie</option>';select.disabled=true;return}
+ select.disabled=true;select.innerHTML='<option>Načítavam miestnosti…</option>';
+ try{const items=await fetchJson('/api/rooms/'+floorId);setPicker(select,items,preferred,'Vyber miestnosť…',x=>[x.code,x.name,(x.area?x.area+' m²':'')].filter(Boolean).join(' · '))}
+ catch(e){select.innerHTML='<option value="">Miestnosti sa nepodarilo načítať</option>';select.disabled=true}
+}
+async function loadAssetOptions(select,preferred='',optional=false){
+ select.disabled=true;select.innerHTML='<option>Načítavam assety…</option>';
+ try{
+  const items=await fetchJson('/api/assets/options');
+  setPicker(select,items,preferred,optional?'Bez parent assetu':'Vyber zariadenie…',x=>{
+   const location=[x.building,x.room].filter(Boolean).join(' / ');
+   return [x.asset_id,x.name,location].filter(Boolean).join(' · ')
+  },optional);
+  if(!items.length){
+   const note=document.createElement('small');note.className='asset-picker-note';note.innerHTML='V organizácii zatiaľ nie je žiadny asset. <a href="/assets">Otvoriť Asset register →</a>';select.parentElement.appendChild(note)
+  }
+ }catch(e){select.innerHTML='<option value="">Assety sa nepodarilo načítať</option>';select.disabled=true}
+}
+async function wireRecordPickers(host){
+ const building=host.querySelector('select[name="building_id"]');
+ const floor=host.querySelector('select[name="floor_id"]');
+ const room=host.querySelector('select[name="room_id"]');
+ const assets=[...host.querySelectorAll('select[data-picker="asset"]')];
+ if(building&&floor){
+  await loadBuildingOptions(building,building.dataset.preferred||'');
+  await loadFloorsForBuilding(floor,building.value,floor.dataset.preferred||'');
+  if(room)await loadRoomsForFloor(room,floor.value,room.dataset.preferred||'');
+  building.addEventListener('change',async()=>{await loadFloorsForBuilding(floor,building.value);if(room)await loadRoomsForFloor(room,floor.value)});
+  if(room)floor.addEventListener('change',()=>loadRoomsForFloor(room,floor.value));
+ }else if(building){
+  await loadBuildingOptions(building,building.dataset.preferred||'');
+ }else if(floor){
+  await loadFloorOptions(floor,floor.dataset.preferred||'');
+ }
+ for(const s of assets)await loadAssetOptions(s,s.dataset.preferred||'',s.dataset.optional==='1');
+}
 function modal(t){
- const f=defs[t], host=document.querySelector('#fields'); let h='<div class="formgrid">';
+ const f=defs[t],host=document.querySelector('#fields');let h='<div class="formgrid">';
  f.forEach((raw,i)=>{
   const a=fieldDef(raw),full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;
+  const required=(a.required===true||((a.required!==false)&&i<2))?' required':'';
   if(a.type==='select'){
-   control=`<select name="${a.name}" ${i<2?'required':''}>${a.options.map(o=>`<option value="${escapeHtml(o)}" ${o===a.value?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
+   control=`<select name="${a.name}"${required}>${a.options.map(o=>`<option value="${escapeHtml(o)}" ${o===a.value?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
   }else if(a.type==='asset'){
-   control=`<select class="asset-picker" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}" required><option>Načítavam assety…</option></select>`;
+   control=`<select class="asset-picker" data-picker="asset" data-optional="${a.required===false?'1':'0'}" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam assety…</option></select>`;
+  }else if(['building','floor','room'].includes(a.type)){
+   control=`<select class="location-picker" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam…</option></select>`;
   }else{
-   const extra=a.name==='password'?' minlength="8" autocomplete="new-password"':'';
-   control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value||'')}" ${i<2?'required':''}${extra}>`;
+   const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.name==='password'?'minlength="8" autocomplete="new-password"':''].filter(Boolean).join(' ');
+   control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value||'')}"${required} ${attrs}>`;
   }
   h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}</div>`;
  });
- h+='</div>';host.innerHTML=h;
- host.querySelectorAll('.asset-picker').forEach(s=>loadAssetOptions(s,s.dataset.preferred));
+ h+='</div>';host.innerHTML=h;wireRecordPickers(host);
  const form=document.querySelector('#mform');form.action='/add/'+t;form.method='post';
  const titles={user:'Nový používateľ',incident:'Nahlásiť nový incident',workorder:'Nový pracovný príkaz',asset:'Nový asset',building:'Nová budova',floor:'Nové podlažie',room:'Nová miestnosť'};
  const meta={asset:['◇','ASSET REGISTER','Evidencia technického zariadenia, jeho umiestnenia, väzieb a servisných parametrov.'],building:['▦','FACILITY STRUCTURE','Vytvorenie nového objektu v portfóliu '+APP_BRAND],floor:['▤','FACILITY STRUCTURE','Nové podlažie a jeho zaradenie do objektu.'],room:['□','SPACE MANAGEMENT','Nová miestnosť, plocha, nájomca a prevádzková zóna.'],workorder:['✓','MAINTENANCE CONTROL','Naplánovanie údržby, revízie, opravy alebo servisného zásahu na konkrétnom zariadení.'],incident:['!','INCIDENT CONTROL','Evidencia poruchy alebo havárie na konkrétnom zariadení.'],user:['⌾','IDENTITY & ACCESS','Vytvorenie používateľského účtu, roly a prístupu do platformy.']};
