@@ -378,15 +378,15 @@ def reports_export_xlsx():
  assets_rows=q("""select a.asset_id,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price
   from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id
   where b.organization_id=? order by a.asset_id""",(oid,))
- add_sheet('Assety',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],[tuple(r) for r in assets_rows])
+ add_sheet('Assety',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],[[r[k] for k in ['asset_id','name','building','floor','room','profession','grp','type','manufacturer','model','serial','system_id','status','criticality','purchase_price']] for r in assets_rows])
  wo_rows=q("""select a.asset_id,w.title,w.kind,w.priority,w.status,w.due,w.supplier,w.technician,w.cost,w.description
   from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? order by w.id desc""",(oid,))
- add_sheet('Údržba',['Asset ID','Úloha','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],[tuple(r) for r in wo_rows])
+ add_sheet('Údržba',['Asset ID','Úloha','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],[[r[k] for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description']] for r in wo_rows])
  inc_rows=q("""select a.asset_id,i.title,i.severity,i.status,i.reported,i.impact,i.cause,i.cost
   from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? order by i.id desc""",(oid,))
- add_sheet('Incidenty',['Asset ID','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],[tuple(r) for r in inc_rows])
+ add_sheet('Incidenty',['Asset ID','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],[[r[k] for k in ['asset_id','title','severity','status','reported','impact','cause','cost']] for r in inc_rows])
  stream=io.BytesIO(); wb.save(stream); stream.seek(0)
  audit('REPORT_EXPORT','XLSX management report')
  code=(org['code'] if org else 'ORG')
