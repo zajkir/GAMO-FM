@@ -547,67 +547,152 @@ def update_user(i):
 
 @app.post('/delete/<what>/<int:i>')
 def delete(what,i):
- table={'building':'buildings','floor':'floors','room':'rooms','asset':'assets','workorder':'workorders','incident':'incidents','user':'users'}[what]; x(f'delete from {table} where id=?',(i,)); return redirect(request.referrer or '/')
+ ownership={
+  'building':owns_building,'floor':owns_floor,'room':owns_room,'asset':owns_asset,
+  'workorder':owns_workorder,'incident':owns_incident,'user':owns_user
+ }
+ if what not in ownership: abort(404)
+ if not ownership[what](i): abort(404)
+ if what=='building':
+  if one('select id from assets where building_id=? limit 1',(i,)):
+   flash('Budovu nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(request.referrer or '/buildings')
+  x('delete from buildings where id=?',(i,)); audit('BUILDING_DELETE',str(i))
+ elif what=='floor':
+  if one('select id from assets where floor_id=? limit 1',(i,)):
+   flash('Podlažie nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(request.referrer or '/buildings')
+  x('delete from floors where id=?',(i,)); audit('FLOOR_DELETE',str(i))
+ elif what=='room':
+  if one('select id from assets where room_id=? limit 1',(i,)):
+   flash('Miestnosť nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(request.referrer or '/buildings')
+  x('delete from rooms where id=?',(i,)); audit('ROOM_DELETE',str(i))
+ elif what=='asset':
+  if one('select id from assets where parent_id=? limit 1',(i,)) or one('select id from workorders where asset_id=? limit 1',(i,)) or one('select id from incidents where asset_id=? limit 1',(i,)):
+   flash('Asset nie je možné odstrániť, kým má podriadené assety, servisnú históriu alebo incidenty.','error'); return redirect(request.referrer or '/assets')
+  x('delete from assets where id=?',(i,)); audit('ASSET_DELETE',str(i))
+ elif what=='workorder':
+  row=one('select asset_id,title from workorders where id=?',(i,))
+  x('delete from workorders where id=?',(i,))
+  if row: asset_event(row['asset_id'],'WORKORDER_DELETE','Pracovný príkaz odstránený',row['title'] or '')
+  audit('WORKORDER_DELETE',str(i))
+ elif what=='incident':
+  row=one('select asset_id,title from incidents where id=?',(i,))
+  x('delete from incidents where id=?',(i,))
+  if row: asset_event(row['asset_id'],'INCIDENT_DELETE','Incident odstránený',row['title'] or '')
+  audit('INCIDENT_DELETE',str(i))
+ elif what=='user':
+  if i==session.get('user_id'):
+   flash('Aktuálne prihlásený účet nie je možné odstrániť.','error'); return redirect('/admin#usersAdmin')
+  u=one('select role,name from users where id=?',(i,))
+  if u and u['role']=='Administrator' and one("select count(*) n from users where organization_id=? and role='Administrator' and status='Aktívny'",(org_id(),))['n']<=1:
+   flash('Posledného aktívneho administrátora organizácie nie je možné odstrániť.','error'); return redirect('/admin#usersAdmin')
+  x('delete from users where id=?',(i,)); audit('USER_DELETE',u['name'] if u else str(i))
+ flash('Záznam bol bezpečne odstránený.','success')
+ return redirect(request.referrer or '/')
+
 @app.post('/status/<what>/<int:i>')
 def status(what,i):
- table={'asset':'assets','workorder':'workorders','incident':'incidents'}[what]; x(f'update {table} set status=? where id=?',(request.form['status'],i)); return redirect(request.referrer or '/')
+ allowed={
+  'asset':({'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'},owns_asset),
+  'workorder':({'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'},owns_workorder),
+  'incident':({'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'},owns_incident)
+ }
+ if what not in allowed: abort(404)
+ statuses,owner_check=allowed[what]
+ if not owner_check(i): abort(404)
+ new_status=request.form.get('status')
+ if new_status not in statuses: abort(400)
+ if what=='asset':
+  x('update assets set status=? where id=?',(new_status,i)); asset_event(i,'STATUS_CHANGE','Zmena stavu assetu',new_status)
+ elif what=='workorder':
+  row=one('select asset_id,title from workorders where id=?',(i,)); x('update workorders set status=? where id=?',(new_status,i))
+  if row: asset_event(row['asset_id'],'WORKORDER_STATUS','Zmena stavu pracovného príkazu',f"{row['title']} → {new_status}")
+ else:
+  row=one('select asset_id,title from incidents where id=?',(i,)); x('update incidents set status=? where id=?',(new_status,i))
+  if row: asset_event(row['asset_id'],'INCIDENT_STATUS','Zmena stavu incidentu',f"{row['title']} → {new_status}")
+ audit('STATUS_CHANGE',f'{what}:{i} → {new_status}')
+ return redirect(request.referrer or '/')
+
 @app.route('/api/floors/<int:b>')
-def api_floors(b): return jsonify([dict(r) for r in q('select * from floors where building_id=?',(b,))])
+def api_floors(b):
+ if not owns_building(b): abort(404)
+ return jsonify([dict(r) for r in q('select * from floors where building_id=? order by id',(b,))])
+
 @app.route('/api/rooms/<int:f>')
-def api_rooms(f): return jsonify([dict(r) for r in q('select * from rooms where floor_id=?',(f,))])
+def api_rooms(f):
+ if not owns_floor(f): abort(404)
+ return jsonify([dict(r) for r in q('select * from rooms where floor_id=? order by id',(f,))])
+
+@app.get('/api/assets/options')
+def api_asset_options():
+ rows=q("""select a.id,a.asset_id,a.name,a.profession,b.code building,r.code room
+  from assets a join buildings b on b.id=a.building_id
+  left join rooms r on r.id=a.room_id
+  where b.organization_id=? order by a.asset_id""",(org_id(),))
+ return jsonify([dict(r) for r in rows])
+
 @app.get('/api/search')
 def api_search():
  term=(request.args.get('q') or '').strip()
  if len(term)<2:return jsonify([])
- like=f'%{term}%'; out=[]
- for r in q('select id,asset_id,name,profession from assets where asset_id like ? or name like ? or manufacturer like ? limit 8',(like,like,like)):
-  out.append({'kind':'Asset','title':f"{r['asset_id']} · {r['name']}",'subtitle':r['profession'] or '','url':f"/asset/{r['id']}"})
- for r in q('select id,code,name,address from buildings where code like ? or name like ? or address like ? limit 5',(like,like,like)):
+ like=f'%{term}%'; out=[]; oid=org_id()
+ for r in q("""select a.id,a.asset_id,a.name,a.profession,b.code building,r.code room
+  from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
+  where b.organization_id=? and (a.asset_id like ? or a.name like ? or a.manufacturer like ?)
+  order by a.asset_id limit 8""",(oid,like,like,like)):
+  location=' / '.join(x for x in [r['building'],r['room']] if x)
+  out.append({'kind':'Asset','title':f"{r['asset_id']} · {r['name']}",'subtitle':f"{r['profession'] or ''} · {location}".strip(' ·'),'url':f"/asset/{r['id']}"})
+ for r in q("""select id,code,name,address from buildings
+  where organization_id=? and (code like ? or name like ? or address like ?)
+  order by name limit 5""",(oid,like,like,like)):
   out.append({'kind':'Budova','title':f"{r['code']} · {r['name']}",'subtitle':r['address'] or '','url':f"/building/{r['id']}"})
  return jsonify(out[:12])
+
 @app.get('/api/health')
 def api_health():
- started=time.time()
- db_ok=False; db_ms=None; counts={}
+ started=time.time(); db_ok=False; db_ms=None; counts={}; oid=org_id()
  try:
-  t=time.time()
-  row=one('select 1 as ok')
-  db_ms=round((time.time()-t)*1000,1)
-  db_ok=bool(row and row['ok']==1)
-  if db_ok:
-   counts={'buildings':one('select count(*) n from buildings')['n'],'assets':one('select count(*) n from assets')['n']}
+  t=time.time(); row=one('select 1 as ok'); db_ms=round((time.time()-t)*1000,1); db_ok=bool(row and row['ok']==1)
+  if db_ok and oid:
+   counts={
+    'buildings':one('select count(*) n from buildings where organization_id=?',(oid,))['n'],
+    'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n']
+   }
  except Exception:
   db_ok=False
  ok=db_ok
  return jsonify({
-  'status':'online' if ok else 'degraded',
-  'database':'online' if db_ok else 'offline',
-  'api':'online',
-  'database_ms':db_ms,
-  'response_ms':round((time.time()-started)*1000,1),
-  'version':'9.0.0.5',
-  'counts':counts,
-  'database_engine':'PostgreSQL' if USING_POSTGRES else 'SQLite',
-  'checked_at':datetime.now().isoformat(timespec='seconds')
+  'status':'online' if ok else 'degraded','database':'online' if db_ok else 'offline','api':'online',
+  'database_ms':db_ms,'response_ms':round((time.time()-started)*1000,1),'version':'9.0.0.5','counts':counts,
+  'database_engine':'PostgreSQL' if USING_POSTGRES else 'SQLite','checked_at':datetime.now().isoformat(timespec='seconds')
  }), (200 if ok else 503)
 
 @app.get('/api/notifications')
 def api_notifications():
- out=[]
- for r in q("select i.id,i.title,i.status,i.reported,a.id aid,a.asset_id from incidents i join assets a on a.id=i.asset_id where i.status!='Ukončená' order by i.id desc limit 6"):
+ out=[]; oid=org_id()
+ for r in q("""select i.id,i.title,i.status,i.reported,a.id aid,a.asset_id from incidents i
+  join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
+  where b.organization_id=? and i.status!='Ukončená' order by i.id desc limit 6""",(oid,)):
   out.append({'key':f"incident:{r['id']}",'title':r['title'],'subtitle':r['asset_id'],'status':r['status'],'level':'red','url':f"/asset/{r['aid']}",'created_at':r['reported'] or ''})
- for r in q("select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w join assets a on a.id=w.asset_id where w.status!='Ukončené' order by w.id desc limit 6"):
-  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':r['status'],'level':'blue','url':f"/asset/{r['aid']}",'created_at':''})
+ for r in q("""select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w
+  join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
+  where b.organization_id=? and w.status!='Ukončené' order by w.id desc limit 6""",(oid,)):
+  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':r['status'],'level':'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
  return jsonify(out[:10])
+
 @app.get('/api/setting')
 def api_setting():
- section=request.args.get('section',''); r=one('select v from settings where k=?',(section,)); return jsonify({'value':r['v'] if r else ''})
+ section=(request.args.get('section') or '').strip()
+ r=one('select v from organization_settings where organization_id=? and k=?',(org_id(),section))
+ return jsonify({'value':r['v'] if r else ''})
+
 @app.post('/settings/save')
 def save_setting():
  section=(request.form.get('section') or '').strip(); value=(request.form.get('value') or '').strip()
- if not section: flash('Chýba názov konfiguračnej sekcie.','error')
+ if not section:
+  flash('Chýba názov konfiguračnej sekcie.','error')
  else:
-  x('insert into settings(k,v) values(?,?) on conflict(k) do update set v=excluded.v',(section,value)); flash(f'Konfigurácia „{section}“ bola uložená.','success')
+  x('insert into organization_settings(organization_id,k,v) values(?,?,?) on conflict(organization_id,k) do update set v=excluded.v',(org_id(),section,value))
+  audit('SETTING_UPDATE',section); flash(f'Konfigurácia „{section}“ bola uložená pre tvoju organizáciu.','success')
  return redirect('/admin')
 
 if __name__=='__main__': app.run(debug=False,port=5050)
