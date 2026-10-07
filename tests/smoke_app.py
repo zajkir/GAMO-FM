@@ -34,6 +34,62 @@ for path in ("/", "/assets", "/buildings", "/maintenance", "/incidents", "/admin
 r = client.get("/api/assets/options")
 assert r.status_code == 200 and isinstance(r.get_json(), list)
 
+# Invalid building input must not leave a partially-created record behind.
+before_buildings = app.one("select count(*) n from buildings where organization_id=?", (app.org_id(),))["n"] if False else None
+with client.session_transaction() as sess:
+    gamo_org_id = sess["organization_id"]
+before_buildings = app.one("select count(*) n from buildings where organization_id=?", (gamo_org_id,))["n"]
+r = client.post("/add/building", data={
+    "_csrf": csrf(), "code": "BROKEN", "name": "Broken building", "floors_count": "not-a-number"
+})
+assert r.status_code in (302, 303)
+after_buildings = app.one("select count(*) n from buildings where organization_id=?", (gamo_org_id,))["n"]
+assert before_buildings == after_buildings
+
+# Full facility hierarchy + operational records.
+r = client.post("/add/building", data={
+    "_csrf": csrf(), "code": "SMK", "name": "Smoke Building", "address": "Test 1",
+    "manager": "QA", "floors_count": "1"
+})
+assert r.status_code in (302, 303)
+building = app.one("select * from buildings where organization_id=? and code=?", (gamo_org_id, "SMK"))
+assert building
+floor = app.one("select * from floors where building_id=?", (building["id"],))
+assert floor
+
+r = client.post("/add/room", data={
+    "_csrf": csrf(), "floor_id": str(floor["id"]), "code": "R01", "name": "QA Room",
+    "area": "42.5", "tenant": "GAMO", "zone": "QA"
+})
+assert r.status_code in (302, 303)
+room = app.one("select * from rooms where floor_id=? and code=?", (floor["id"], "R01"))
+assert room
+
+r = client.post("/add/asset", data={
+    "_csrf": csrf(), "asset_id": "QA-000001", "name": "Smoke Asset",
+    "building_id": str(building["id"]), "floor_id": str(floor["id"]), "room_id": str(room["id"]),
+    "profession": "ELE", "grp": "QA", "type": "TEST", "status": "Prevádzka", "criticality": "B",
+    "service_months": "6", "revision_months": "12", "purchase_price": "1250.50"
+})
+assert r.status_code in (302, 303)
+asset = app.one("select * from assets where asset_id=? and organization_id=?", ("QA-000001", gamo_org_id))
+assert asset
+
+r = client.post("/add/workorder", data={
+    "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA servis", "kind": "PM",
+    "priority": "Stredná", "status": "Plánované", "due": "2026-01-01",
+    "supplier": "QA servis", "technician": "Technik", "cost": "99.90", "description": "Smoke"
+})
+assert r.status_code in (302, 303)
+r = client.post("/add/incident", data={
+    "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA incident", "severity": "Vysoká",
+    "status": "Otvorená", "reported": "2026-10-07", "impact": "Test", "cause": "Smoke", "cost": "10.10"
+})
+assert r.status_code in (302, 303)
+
+r = client.get("/settings/save")
+assert r.status_code in (405, 302)
+
 r = client.post(
     "/settings/save",
     data={"_csrf": csrf(), "section": "smoke-test", "value": "tenant-value"},
@@ -49,6 +105,9 @@ book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
 for sheet in ("Súhrn", "Assety", "Údržba", "Incidenty", "Po termíne"):
     assert sheet in book.sheetnames, book.sheetnames
 assert book["Súhrn"]["A1"].value.startswith("GAMO FACILITY REPORT")
+asset_values = [cell.value for row in book["Assety"].iter_rows() for cell in row]
+assert "QA-000001" in asset_values
+assert len(book["Súhrn"]._charts) >= 1
 
 r = client.post(
     "/platform/customer",
