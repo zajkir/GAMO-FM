@@ -843,16 +843,27 @@ def api_health():
 
 @app.get('/api/notifications')
 def api_notifications():
- out=[]; oid=org_id()
- for r in q("""select i.id,i.title,i.status,i.reported,a.id aid,a.asset_id from incidents i
+ out=[]; oid=org_id(); today_iso=date.today().isoformat()
+ for r in q("""select i.id,i.title,i.status,i.reported,i.severity,a.id aid,a.asset_id from incidents i
   join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? and i.status!='Ukončená' order by i.id desc limit 6""",(oid,)):
-  out.append({'key':f"incident:{r['id']}",'title':r['title'],'subtitle':r['asset_id'],'status':r['status'],'level':'red','url':f"/asset/{r['aid']}",'created_at':r['reported'] or ''})
+  critical=r['severity'] in {'Vysoká','Kritická','Havária'}
+  out.append({'key':f"incident:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · {r['severity']}",'status':r['status'],'level':'red' if critical else 'orange','url':f"/asset/{r['aid']}",'created_at':r['reported'] or ''})
  for r in q("""select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w
   join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
-  where b.organization_id=? and w.status!='Ukončené' order by w.id desc limit 6""",(oid,)):
-  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':r['status'],'level':'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
- return jsonify(out[:10])
+  where b.organization_id=? and w.status!='Ukončené' order by w.id desc limit 8""",(oid,)):
+  overdue=bool(r['due'] and str(r['due'])[:10]<today_iso)
+  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':'Po termíne' if overdue else r['status'],'level':'red' if overdue else 'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
+ if session.get('user_role')=='Administrator':
+  org=one('select license_until,plan from organizations where id=?',(oid,))
+  if org and org['license_until']:
+   try:
+    days=(datetime.strptime(str(org['license_until'])[:10],'%Y-%m-%d').date()-date.today()).days
+    if days<=30:
+     out.insert(0,{'key':f'license:{oid}:{org["license_until"]}','title':'Platnosť licencie GAMO','subtitle':('Licencia exspirovala' if days<0 else f'Zostáva {days} dní'),'status':org['plan'],'level':'red' if days<7 else 'orange','url':'/admin','created_at':str(org['license_until'])})
+   except Exception:
+    pass
+ return jsonify(out[:12])
 
 @app.get('/api/setting')
 def api_setting():
