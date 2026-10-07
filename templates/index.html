@@ -52,6 +52,12 @@
  <div><span>✓</span><small>ÚLOHY</small><b>{{customer_stats.open_orders}}</b><em>otvorených</em></div>
  <div><span>€</span><small>NÁKLADY</small><b>{{'%.2f'|format(customer_stats.total_cost)}} €</b><em>servis + incidenty</em></div>
 </div>
+<div class="customer-ops-strip">
+ <div><small>POSLEDNÉ PRIHLÁSENIE</small><b>{{customer_last_login or '—'}}</b></div>
+ <div><small>POSLEDNÝ BACKUP EXPORT</small><b>{{customer_last_backup or 'Zatiaľ nevytvorený'}}</b></div>
+ <div><small>ODDELENIE DÁT</small><b>Organization ID {{customer.id}}</b></div>
+ <div><small>PLATFORMA</small><b>GAMO Cloud</b></div>
+</div>
 
 <div class="customer-detail-grid">
  <section class="customer-detail-card">
@@ -87,9 +93,10 @@
 </div>
 
 <div class="customer-detail-grid wide">
- <section class="customer-detail-card">
+ <section class="customer-detail-card" id="customerUsers">
   <div class="customer-detail-card-head"><div><span class="admin-kicker">IDENTITY & ACCESS</span><h3>Používatelia zákazníka</h3><p>Účty existujú iba v organizácii {{customer.name}}.</p></div><b class="detail-count">{{customer_users|length}}</b></div>
   <div class="customer-detail-list customer-users-list">{% for u in customer_users %}<div><span class="adm-avatar">{{u.name[:2]|upper}}</span><p><b>{{u.name}}</b><small>{{u.email}}</small></p><label class="role-pill">{{u.role}}</label><span class="customer-status {{'ok' if u.status=='Aktívny' else 'bad'}}">● {{u.status}}</span><time>{{u.last_login or 'bez prihlásenia'}}</time></div>{% else %}<div class="customer-empty-row">Žiadne používateľské účty.</div>{% endfor %}</div>
+  <details class="admin-reset-box"><summary>Obnoviť heslo hlavného administrátora</summary><form method="post" action="/platform/customer/{{customer.id}}/reset-admin-password"><input type="hidden" name="_csrf" value="{{csrf_token}}"><div class="field"><label>Nové dočasné heslo</label><input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="min. 8 znakov"></div><button class="admin-primary">Nastaviť nové heslo</button></form></details>
  </section>
  <section class="customer-detail-card">
   <div class="customer-detail-card-head"><div><span class="admin-kicker">FACILITY PORTFOLIO</span><h3>Budovy zákazníka</h3><p>Objekty a technické dáta patriace iba tejto organizácii.</p></div><b class="detail-count">{{customer_buildings|length}}</b></div>
@@ -107,6 +114,10 @@
   <div class="customer-activity-list">{% for w in recent_orders %}<div><span class="activity-icon service-icon">✓</span><p><b>{{w.title}}</b><small>{{w.asset_id}} · {{w.building}} · {{w.kind}}</small></p><label>{{w.status}}</label></div>{% else %}<div class="customer-empty-row">Bez evidovaných servisných úloh.</div>{% endfor %}</div>
  </section>
 </div>
+<section class="customer-detail-card customer-audit-card">
+ <div class="customer-detail-card-head"><div><span class="admin-kicker">CUSTOMER AUDIT</span><h3>Posledná aktivita organizácie</h3><p>Administrátorské a prevádzkové udalosti zaznamenané pre tohto zákazníka.</p></div></div>
+ <div class="customer-audit-stream">{% for e in customer_audit %}<div><span>{{e.action}}</span><p><b>{{e.user_name or 'Systém'}}</b><small>{{e.detail or '—'}}</small></p><time>{{e.created}}</time></div>{% else %}<div class="customer-empty-row">Zatiaľ bez auditných udalostí.</div>{% endfor %}</div>
+</section>
 {% else %}<div class="admin-v2-top"><div><span class="admin-kicker">{{brand_name}} / ADMINISTRATION</span><h2>Riadiace centrum systému</h2><p>Kompletná správa používateľov, dátového modelu, automatizácie a bezpečnosti.</p></div><div class="admin-version"><small>DESKTOP BUILD</small><b>9.0.0.5</b><span>● ONLINE</span></div></div>
 <div class="admin-v2-nav"><button class="active">Prehľad</button>{% if is_gamo_admin %}<button onclick="document.querySelector('#customersAdmin').scrollIntoView({behavior:'smooth'})">Zákazníci</button>{% endif %}<button onclick="document.querySelector('#usersAdmin').scrollIntoView({behavior:'smooth'})">Používatelia</button><button onclick="document.querySelector('#systemAdmin').scrollIntoView({behavior:'smooth'})">Konfigurácia</button><button onclick="document.querySelector('#securityAdmin').scrollIntoView({behavior:'smooth'})">Bezpečnosť</button><button onclick="document.querySelector('#systemTools').scrollIntoView({behavior:'smooth'})">Systém</button></div>
 <div class="admin-v2-metrics">
