@@ -664,7 +664,7 @@ def admin():
  org=one('select * from organizations where id=?',(org_id(),))
  organizations=[]; customer_stats={'total':0,'active':0,'paused':0,'users':0,'buildings':0}
  if is_gamo_admin():
-  organizations=q("""select o.*,
+  organizations=q_system("""select o.*,
    (select count(*) from users u where u.organization_id=o.id) users_count,
    (select count(*) from buildings b where b.organization_id=o.id) buildings_count,
    (select u.name from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_name,
