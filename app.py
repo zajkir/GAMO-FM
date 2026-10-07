@@ -467,7 +467,7 @@ def admin():
    'users':sum(int(o['users_count'] or 0) for o in organizations),
    'buildings':sum(int(o['buildings_count'] or 0) for o in organizations)
   }
- audit_rows=q('select al.* from audit_log al join users u on u.id=al.user_id where u.organization_id=? order by al.id desc limit 20',(org_id(),))
+ audit_rows=q('select * from audit_log where organization_id=? order by id desc limit 20',(org_id(),))
  return render_template('index.html',page='admin',
   users=q('select * from users where organization_id=? order by name',(org_id(),)),
   buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
@@ -554,10 +554,14 @@ def platform_customer_detail(i):
  recent_orders=q("""select w.*,a.asset_id,a.name asset,b.name building from workorders w
   join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? order by w.id desc limit 6""",(i,))
+ customer_audit=q('select * from audit_log where organization_id=? order by id desc limit 10',(i,))
+ last_backup=one("select created from audit_log where organization_id=? and action='BACKUP_EXPORT' order by id desc limit 1",(i,))
+ last_login=one("select max(last_login) last_login from users where organization_id=?",(i,))
  limits=plan_limits(i)
  return render_template('index.html',page='customer',customer=customer,customer_stats=customer_stats,
   customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
-  recent_orders=recent_orders,license_days=license_days,customer_limits=limits)
+  recent_orders=recent_orders,license_days=license_days,customer_limits=limits,customer_audit=customer_audit,
+  customer_last_backup=(last_backup['created'] if last_backup else None),customer_last_login=(last_login['last_login'] if last_login else None))
 
 @app.post('/platform/customer/<int:i>/branding')
 def platform_customer_branding(i):
