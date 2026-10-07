@@ -20,3 +20,8 @@ print("Launcher Canvas options OK")
 assert 'self.bind("<F11>", self.toggle_fullscreen)' in source
 assert 'self.attributes("-fullscreen", self._fullscreen)' in source
 print("Launcher fullscreen binding OK")
+
+assert 'self.geometry("1020x640")' in source
+assert 'font=("Segoe UI", 10, "bold")' in source
+assert 'F11 · celá obrazovka' in source
+print("Launcher readable layout checks OK")
