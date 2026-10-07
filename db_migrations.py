@@ -482,6 +482,99 @@ def _migration_9(db, using_postgres):
     )
 
 
+
+def _migration_10(db, using_postgres):
+    """Security policy, authentication telemetry and GDPR request registry."""
+    org_cols = _columns(db, "organizations", using_postgres)
+    org_additions = {
+        "mfa_required": "BOOLEAN DEFAULT FALSE" if using_postgres else "INTEGER DEFAULT 0",
+        "retention_last_run": "TIMESTAMPTZ" if using_postgres else "TEXT",
+        "backup_last_verified_at": "TIMESTAMPTZ" if using_postgres else "TEXT",
+        "backup_last_verified_status": "TEXT",
+    }
+    for column, definition in org_additions.items():
+        if column not in org_cols:
+            db.execute(f"ALTER TABLE organizations ADD COLUMN {column} {definition}")
+
+    user_cols = _columns(db, "users", using_postgres)
+    if "erased_at" not in user_cols:
+        db.execute(
+            "ALTER TABLE users ADD COLUMN erased_at TIMESTAMPTZ"
+            if using_postgres
+            else "ALTER TABLE users ADD COLUMN erased_at TEXT"
+        )
+
+    if using_postgres:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS auth_events(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+                user_id BIGINT,
+                event TEXT NOT NULL,
+                success BOOLEAN DEFAULT FALSE,
+                detail TEXT,
+                ip TEXT,
+                user_agent TEXT,
+                created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS privacy_requests(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                subject_user_id BIGINT,
+                request_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'COMPLETED',
+                requested_by BIGINT,
+                note TEXT,
+                requested_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMPTZ
+            )"""
+        )
+    else:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS auth_events(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+                user_id INTEGER,
+                event TEXT NOT NULL,
+                success INTEGER DEFAULT 0,
+                detail TEXT,
+                ip TEXT,
+                user_agent TEXT,
+                created TEXT DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS privacy_requests(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                subject_user_id INTEGER,
+                request_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'COMPLETED',
+                requested_by INTEGER,
+                note TEXT,
+                requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT
+            )"""
+        )
+
+    db.execute("CREATE INDEX IF NOT EXISTS idx_auth_events_org_created ON auth_events(organization_id,created)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_privacy_requests_org_created ON privacy_requests(organization_id,requested_at)")
+
+    if using_postgres:
+        platform = "current_setting('gamo.platform_admin', true) = '1'"
+        tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+        for table in ("auth_events", "privacy_requests"):
+            db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+            db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+            db.execute(f"DROP POLICY IF EXISTS gamo_tenant_{table} ON {table}")
+            db.execute(
+                f"""CREATE POLICY gamo_tenant_{table} ON {table}
+                    USING ({platform} OR organization_id={tenant})
+                    WITH CHECK ({platform} OR organization_id={tenant})"""
+            )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -492,6 +585,7 @@ MIGRATIONS = (
     (7, "temporary_password_rotation", _migration_7),
     (8, "totp_mfa_and_recovery_codes", _migration_8),
     (9, "tenant_referential_integrity", _migration_9),
+    (10, "customer_security_gdpr_controls", _migration_10),
 )
 
 

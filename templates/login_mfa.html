@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="sk">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MFA · GAMO a.s.</title><link rel="stylesheet" href="/static/app.css"></head>
+<body class="security-auth-page">
+ <main class="security-auth-card">
+  <div class="security-auth-brand"><span>G</span><div><b>GAMO a.s.</b><small>SECURE SIGN-IN</small></div></div>
+  <div class="security-auth-icon">⌾</div>
+  <span class="admin-kicker">SECOND FACTOR</span><h1>Overenie prihlásenia</h1><p>Ahoj {{user_name}}. Zadaj 6-miestny kód z autentifikátora alebo jeden recovery kód.</p>
+  {% if error %}<div class="mfa-error">{{error}}</div>{% endif %}
+  <form method="post" class="mfa-login-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><label>Overovací kód</label><input name="code" autocomplete="one-time-code" inputmode="numeric" autofocus required placeholder="123456 alebo recovery kód"><button type="submit">Overiť a pokračovať →</button></form>
+  <a class="security-auth-back" href="/login">← Späť na prihlásenie</a>
+ </main>
+</body></html>

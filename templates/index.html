@@ -41,45 +41,88 @@
 {% elif page=='incidents' %}<section class="ops-hero incidents-hero"><div><span class="eyebrow">INCIDENT CONTROL</span><h2>Poruchy a havárie pod kontrolou.</h2><p>Rýchla evidencia udalostí, závažnosti, dopadu a stavu riešenia naprieč technológiami.</p></div><div class="ops-hero-art incident-art"><span>!</span><i></i><i></i><i></i></div>{% if can('incident_write') %}<button onclick="modal('incident')" class="danger">＋ Nahlásiť incident</button>{% endif %}</section><section class="card tablecard"><table><tr><th>ASSET</th><th>INCIDENT</th><th>ZÁVAŽNOSŤ</th><th>NAHLÁSENÉ</th><th>DOPAD</th><th>NÁKLAD</th><th>STAV</th></tr>{% for r in incidents %}<tr><td><b>{{r.asset_id}}</b><small>{{r.asset}}</small></td><td>{{r.title}}</td><td><span class="badge red">{{r.severity}}</span></td><td>{{r.reported}}</td><td>{{r.impact}}</td><td>{{r.cost}} €</td><td><form method="post" action="/status/incident/{{r.id}}"><input type="hidden" name="_csrf" value="{{csrf_token}}"><select name="status" onchange="this.form.submit()"><option>{{r.status}}</option><option>Otvorená</option><option>Pridelená</option><option>Rieši sa</option><option>Čaká na diel</option><option>Vyriešená</option><option>Ukončená</option></select></form></td></tr>{% endfor %}</table></section>
 {% elif page=='privacy' %}
 <section class="privacy-hero">
- <div><span class="eyebrow">CUSTOMER PRIVACY CENTER</span><h2>Tvoje dáta.<br><em>Pod tvojou kontrolou.</em></h2><p>Prehľad izolácie dát, support prístupu GAMO, exportov a histórie prístupov k organizácii.</p></div>
- <div class="privacy-shield"><b>◈</b><span>{{'RLS + TENANT' if rls_enabled else 'TENANT ISOLATION'}}</span><small>{{privacy_org.data_region or 'Hosting region neuvedený'}}</small></div>
+ <div><span class="eyebrow">CUSTOMER PRIVACY & SECURITY CENTER</span><h2>Tvoje dáta.<br><em>Tvoja kontrola.</em></h2><p>Izolácia organizácie, MFA, support consent, GDPR nástroje, backup integrity a transparentný audit na jednom mieste.</p></div>
+ <div class="privacy-score-orb"><small>SECURITY SCORE</small><b>{{security.score}}</b><span>/ 100</span></div>
 </section>
 <div class="privacy-kpis">
- <div><small>DATABÁZOVÁ IZOLÁCIA</small><b>{{'PostgreSQL RLS' if rls_enabled else 'Aplikačná izolácia'}}</b><span>{{'databáza blokuje cudzie riadky' if rls_enabled else 'lokálny/desktop režim'}}</span></div>
- <div><small>GAMO SUPPORT</small><b>{{'POVOLENÝ' if support_active else 'VYPNUTÝ'}}</b><span>{{privacy_org.support_access_until or 'bez aktívneho okna'}}</span></div>
- <div><small>HOSTING REGIÓN</small><b>{{privacy_org.data_region or '—'}}</b><span>aktuálna infraštruktúra organizácie</span></div>
- <div><small>RETENCIA</small><b>{{privacy_org.retention_days or 3650}} dní</b><span>nastavenie uchovávania prevádzkových dát</span></div>
+ <div><small>DATABÁZOVÁ IZOLÁCIA</small><b>{{'PostgreSQL RLS' if rls_enabled else 'Aplikačná izolácia'}}</b><span>{{'tenant policy v databáze' if rls_enabled else 'desktop / SQLite režim'}}</span></div>
+ <div><small>MFA COVERAGE</small><b>{{security.mfa_coverage}} %</b><span>{{security.mfa_users}} / {{security.active_users}} aktívnych používateľov</span></div>
+ <div><small>GAMO SUPPORT</small><b>{{'AKTÍVNY' if support_active else 'VYPNUTÝ'}}</b><span>{{privacy_org.support_access_until or 'bez aktívneho okna'}}</span></div>
+ <div><small>BACKUP INTEGRITY</small><b>{{'OVERENÁ' if security.backup_ok else 'NEOVERENÁ'}}</b><span>{{security.backup_verified_at or 'spusti kontrolu backupu'}}</span></div>
 </div>
+
+{% if security.warnings %}
+<section class="security-warning-strip"><span>!</span><div><b>Bezpečnostné odporúčania</b><p>{{security.warnings|join(' · ')}}</p></div></section>
+{% endif %}
+
 <div class="privacy-grid">
  <section class="privacy-card">
-  <div class="privacy-card-head"><div><span class="admin-kicker">SUPPORT ACCESS</span><h3>Prístup GAMO podpory</h3><p>GAMO support nevidí zákaznícky obsah cez Customer 360, kým mu ho administrátor firmy dočasne nepovolí.</p></div><span class="customer-status {{'ok' if not support_active else 'bad'}}">● {{'VYPNUTÝ' if not support_active else 'AKTÍVNY'}}</span></div>
+  <div class="privacy-card-head"><div><span class="admin-kicker">SUPPORT CONSENT</span><h3>Prístup GAMO podpory</h3><p>GAMO support nevidí zákaznícky obsah, kým ho administrátor organizácie výslovne a dočasne nepovolí.</p></div><span class="customer-status {{'bad' if support_active else 'ok'}}">● {{'AKTÍVNY' if support_active else 'VYPNUTÝ'}}</span></div>
   {% if privacy_org.code!='GAMO' %}
-  {% if support_active %}
-  <div class="privacy-access-active"><span>!</span><div><b>Dočasný support prístup je aktívny</b><small>Platnosť: {{privacy_org.support_access_until or 'bez expirácie'}}. Môžeš ho okamžite odvolať.</small></div></div>
-  <form method="post" action="/privacy/support-access" class="privacy-action-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="revoke"><div class="field"><label>Dôvod / poznámka</label><input name="reason" placeholder="Voliteľné"></div><button class="danger" type="submit">Odvolať prístup GAMO</button></form>
-  {% else %}
-  <form method="post" action="/privacy/support-access" class="privacy-action-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="grant"><div class="field"><label>Dĺžka prístupu</label><select name="hours"><option value="1">1 hodina</option><option value="24" selected>24 hodín</option><option value="168">7 dní</option></select></div><div class="field wide"><label>Dôvod / ticket</label><input name="reason" placeholder="Napr. riešenie incidentu INC-2026-014"></div><button class="admin-primary" type="submit">Povoliť dočasný support prístup</button></form>
-  {% endif %}
+   {% if support_active %}
+   <div class="privacy-access-active"><span>!</span><div><b>Dočasný support prístup je aktívny</b><small>Platnosť: {{privacy_org.support_access_until or 'bez expirácie'}}.</small></div></div>
+   <form method="post" action="/privacy/support-access" class="privacy-action-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="revoke"><div class="field"><label>Poznámka k odvolaniu</label><input name="reason" placeholder="Voliteľné"></div><button class="danger" type="submit">Okamžite odvolať prístup GAMO</button></form>
+   {% else %}
+   <form method="post" action="/privacy/support-access" class="privacy-action-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="grant"><div class="field"><label>Dĺžka prístupu</label><select name="hours"><option value="1">1 hodina</option><option value="24" selected>24 hodín</option><option value="168">7 dní</option></select></div><div class="field wide"><label>Dôvod / ticket</label><input name="reason" required minlength="5" placeholder="Napr. INC-2026-014 – diagnostika"></div><button class="admin-primary" type="submit">Povoliť dočasný support prístup</button></form>
+   {% endif %}
   {% endif %}
  </section>
+
  <section class="privacy-card">
-  <div class="privacy-card-head"><div><span class="admin-kicker">DATA PORTABILITY</span><h3>Export organizácie</h3><p>Stiahni kompletný zákaznícky balík: objekty, assety, servis, incidenty, nastavenia, audit a dokumentáciu.</p></div></div>
-  <div class="privacy-export-box"><span>⇩</span><div><b>GAMO Organization Backup V2</b><small>ZIP · bez hesiel používateľov · iba dáta tvojej organizácie</small></div><a href="/backup/my">Stiahnuť export</a></div>
-  <div class="privacy-export-box compact"><span>≡</span><div><b>História prístupov GAMO</b><small>JSON · transparentný audit support prístupov a exportov</small></div><a href="/privacy/access-log.json">Exportovať log</a></div>
-  <div class="privacy-note">Exporty sú označené ako súkromný obsah a odpoveď používa <b>Cache-Control: no-store</b>.</div>
+  <div class="privacy-card-head"><div><span class="admin-kicker">BACKUP & PORTABILITY</span><h3>Export a kontrola integrity</h3><p>Backup V3 obsahuje SHA-256 checksumy a nikdy neobsahuje heslá, TOTP secret ani recovery kódy.</p></div></div>
+  <div class="privacy-export-box"><span>⇩</span><div><b>GAMO Organization Backup V3</b><small>ZIP · tenant-only · checksum manifest</small></div><a href="/backup/my">Stiahnuť backup</a></div>
+  <form method="post" action="/privacy/backup/verify" class="privacy-inline-action"><input type="hidden" name="_csrf" value="{{csrf_token}}"><button type="submit">✓ Overiť integritu nového backupu</button><small>Posledná kontrola: {{privacy_org.backup_last_verified_at or 'nikdy'}} · {{privacy_org.backup_last_verified_status or '—'}}</small></form>
+  <div class="privacy-export-box compact"><span>≡</span><div><b>História prístupov GAMO</b><small>JSON · audit support consent a exportov</small></div><a href="/privacy/access-log.json">Exportovať log</a></div>
  </section>
 </div>
+
 <div class="privacy-grid">
  <section class="privacy-card">
-  <div class="privacy-card-head"><div><span class="admin-kicker">PRIVACY SETTINGS</span><h3>Kontaktné a retenčné nastavenia</h3><p>Údaje pre správu súkromia zákazníckej organizácie.</p></div></div>
-  <form method="post" action="/privacy/settings" class="privacy-settings-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><div class="field"><label>Kontakt pre súkromie / DPO</label><input name="privacy_contact" value="{{privacy_org.privacy_contact or ''}}" placeholder="privacy@firma.sk"></div><div class="field"><label>Retencia dát</label><select name="retention_days"><option value="365" {{'selected' if privacy_org.retention_days==365}}>1 rok</option><option value="1095" {{'selected' if privacy_org.retention_days==1095}}>3 roky</option><option value="1825" {{'selected' if privacy_org.retention_days==1825}}>5 rokov</option><option value="3650" {{'selected' if not privacy_org.retention_days or privacy_org.retention_days==3650}}>10 rokov</option></select></div><button class="admin-primary">Uložiť nastavenia</button></form>
+  <div class="privacy-card-head"><div><span class="admin-kicker">SECURITY POLICY</span><h3>MFA, retencia a privacy kontakt</h3><p>Bezpečnostná politika platná pre celú organizáciu.</p></div></div>
+  <form method="post" action="/privacy/settings" class="privacy-settings-form">
+   <input type="hidden" name="_csrf" value="{{csrf_token}}">
+   <div class="field"><label>Kontakt pre súkromie / DPO</label><input name="privacy_contact" value="{{privacy_org.privacy_contact or ''}}" placeholder="privacy@firma.sk"></div>
+   <div class="field"><label>Retencia bezpečnostných logov</label><select name="retention_days"><option value="365" {{'selected' if privacy_org.retention_days==365}}>1 rok</option><option value="1095" {{'selected' if privacy_org.retention_days==1095}}>3 roky</option><option value="1825" {{'selected' if privacy_org.retention_days==1825}}>5 rokov</option><option value="3650" {{'selected' if not privacy_org.retention_days or privacy_org.retention_days==3650}}>10 rokov</option></select></div>
+   <label class="security-toggle"><input type="checkbox" name="mfa_required" value="1" {{'checked' if privacy_org.mfa_required}}><span></span><p><b>Vyžadovať MFA pre všetkých</b><small>Používateľ bez MFA sa po prihlásení dostane iba do zabezpečenia účtu.</small></p></label>
+   <button class="admin-primary">Uložiť bezpečnostnú politiku</button>
+  </form>
+  <form method="post" action="/privacy/retention/run" class="privacy-inline-action"><input type="hidden" name="_csrf" value="{{csrf_token}}"><button type="submit">Spustiť retenciu teraz</button><small>Posledné vykonanie: {{privacy_org.retention_last_run or 'nikdy'}}</small></form>
  </section>
+
  <section class="privacy-card">
-  <div class="privacy-card-head"><div><span class="admin-kicker">TRANSPARENCY LOG</span><h3>História prístupov</h3><p>Vidíš, kedy bol support prístup udelený, odvolaný alebo kedy GAMO pristúpilo k zákazníckym dátam.</p></div></div>
-  <div class="privacy-access-log">{% for e in access_rows %}<div><span>{{e.action}}</span><p><b>{{e.actor_name or 'Systém'}}</b><small>{{e.reason or '—'}}</small></p><time>{{e.created}}</time></div>{% else %}<div class="customer-empty-row">Zatiaľ nebol evidovaný žiadny support prístup.</div>{% endfor %}</div>
+  <div class="privacy-card-head"><div><span class="admin-kicker">AUTHENTICATION TELEMETRY</span><h3>Posledné bezpečnostné udalosti</h3><p>Úspešné a neúspešné login/MFA udalosti v rámci tvojej organizácie.</p></div></div>
+  <div class="auth-event-list">{% for e in auth_rows %}<div><span class="{{'ok' if e.success else 'bad'}}">{{'✓' if e.success else '!'}}</span><p><b>{{e.event}}</b><small>{{e.detail or '—'}} · {{e.ip or 'bez IP'}}</small></p><time>{{e.created}}</time></div>{% else %}<div class="customer-empty-row">Zatiaľ bez autentifikačných udalostí.</div>{% endfor %}</div>
  </section>
 </div>
-<section class="privacy-principles"><div><b>01</b><span><strong>Izolácia organizácie</strong><small>Budovy, miestnosti, assety, servis, incidenty, dokumenty, nastavenia a audit sú viazané na tvoju organizáciu.</small></span></div><div><b>02</b><span><strong>Minimálny support prístup</strong><small>Citlivý obsah v GAMO Customer 360 sa sprístupní až po dočasnom súhlase zákazníka.</small></span></div><div><b>03</b><span><strong>Auditovateľnosť</strong><small>Support prístupy a exporty sú zapisované do histórie organizácie.</small></span></div></section>
+
+<section class="privacy-card gdpr-card">
+ <div class="privacy-card-head"><div><span class="admin-kicker">GDPR / DATA SUBJECT RIGHTS</span><h3>Používatelia a osobné údaje</h3><p>Export osobných údajov alebo bezpečná anonymizácia účtu bez poškodenia prevádzkovej histórie.</p></div></div>
+ <div class="gdpr-user-table">
+  <div class="gdpr-row head"><span>POUŽÍVATEĽ</span><span>ROLA</span><span>MFA</span><span>STAV</span><span>AKCIE</span></div>
+  {% for u in privacy_users %}
+  <div class="gdpr-row">
+   <span><b>{{u.name}}</b><small>{{u.email}}</small></span>
+   <span>{{u.role}}</span>
+   <span><i class="{{'ok' if u.mfa_enabled else 'warn'}}">{{'Zapnuté' if u.mfa_enabled else 'Vypnuté'}}</i></span>
+   <span>{{'Anonymizovaný' if u.erased_at else u.status}}</span>
+   <span class="gdpr-actions"><a href="/privacy/user/{{u.id}}/export.json">Export JSON</a>{% if not u.erased_at %}<details><summary>Anonymizovať</summary><form method="post" action="/privacy/user/{{u.id}}/anonymize"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input name="confirm_text" required placeholder="napíš ANONYMIZE"><button class="danger" type="submit">Potvrdiť</button></form></details>{% endif %}</span>
+  </div>
+  {% endfor %}
+ </div>
+</section>
+
+<div class="privacy-grid">
+ <section class="privacy-card">
+  <div class="privacy-card-head"><div><span class="admin-kicker">PRIVACY REQUESTS</span><h3>Register GDPR úkonov</h3><p>Exporty a anonymizácie sa zapisujú do auditovateľného registra.</p></div></div>
+  <div class="privacy-access-log">{% for e in privacy_requests %}<div><span>{{e.request_type}}</span><p><b>{{e.subject_name or ('User #' ~ e.subject_user_id)}}</b><small>{{e.note or '—'}}</small></p><time>{{e.completed_at or e.requested_at}}</time></div>{% else %}<div class="customer-empty-row">Bez GDPR úkonov.</div>{% endfor %}</div>
+ </section>
+ <section class="privacy-card">
+  <div class="privacy-card-head"><div><span class="admin-kicker">TRANSPARENCY LOG</span><h3>História prístupov GAMO</h3><p>Udelenie/odvolanie súhlasu, support sessions a exporty.</p></div></div>
+  <div class="privacy-access-log">{% for e in access_rows %}<div><span>{{e.action}}</span><p><b>{{e.actor_name or 'Systém'}}</b><small>{{e.reason or '—'}}</small></p><time>{{e.created}}</time></div>{% else %}<div class="customer-empty-row">Zatiaľ bez support prístupov.</div>{% endfor %}</div>
+ </section>
+</div>
+
+<section class="privacy-principles"><div><b>01</b><span><strong>Defense in depth</strong><small>Tenant filtre + PostgreSQL RLS + databázové foreign keys.</small></span></div><div><b>02</b><span><strong>Explicitný súhlas</strong><small>GAMO support sa k detailom dostane iba v časovo obmedzenom support okne.</small></span></div><div><b>03</b><span><strong>Silná identita</strong><small>TOTP MFA, recovery kódy, povinná rotácia dočasných hesiel a auth telemetry.</small></span></div><div><b>04</b><span><strong>Audit & portability</strong><small>GDPR exporty, anonymizácia a checksumovaný backup V3.</small></span></div></section>
 {% elif page=='customer' %}
 <section class="customer-detail-hero" style="--customer-accent:{{customer.brand_color or '#246BFD'}}">
  <div class="customer-detail-brand"><div class="customer-detail-logo">{{customer.code[:2]|upper}}</div><div><a href="/admin#customersAdmin" class="customer-back">← Zákazníci</a><span class="admin-kicker">CUSTOMER 360°</span><h2>{{customer.name}}</h2><p>{{customer.branding_name or customer.name}} · {{customer.code}} · zákaznícke prostredie GAMO Facility Platform</p><div class="customer-detail-badges"><span class="plan-pill plan-{{customer.plan|lower}}">{{customer.plan}}</span><span class="customer-status {{'ok' if customer.status=='Aktívny' and customer.license_status=='Aktívna' and (license_days is none or license_days>=0) else 'bad'}}">● {% if license_days is not none and license_days < 0 %}EXPIROVANÁ{% elif customer.status!='Aktívny' %}NEAKTÍVNA FIRMA{% else %}{{customer.license_status|upper}}{% endif %}</span><span class="support-pill {{'active' if support_access else 'locked'}}">◈ {{'SUPPORT ACCESS' if support_access else 'PRIVATE / LOCKED'}}</span>{% if support_access %}<a class="customer-backup-link" href="/platform/customer/{{customer.id}}/backup">↓ Stiahnuť backup</a><form method="post" action="/platform/customer/{{customer.id}}/support-enter" class="support-enter-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><button type="submit">↗ Otvoriť support režim</button></form>{% endif %}</div></div></div>
@@ -99,6 +142,11 @@
  <div><small>ODDELENIE DÁT</small><b>Organization ID {{customer.id}}</b></div>
  <div><small>PLATFORMA</small><b>GAMO Cloud</b></div>
 </div>
+<section class="customer-security-panel">
+ <div class="customer-security-score"><small>SECURITY SCORE</small><b>{{customer_security.score}}</b><span>/100</span></div>
+ <div class="customer-security-main"><span class="admin-kicker">CUSTOMER SECURITY POSTURE</span><h3>Bezpečnostný stav organizácie</h3><p>{{customer_security.mfa_users}} z {{customer_security.active_users}} aktívnych používateľov má MFA · {{customer_security.admin_mfa}} z {{customer_security.admins}} adminov chránených · RLS {{'aktívne' if rls_enabled is defined and rls_enabled else 'platformové'}}</p><div class="security-pills"><span class="{{'ok' if customer.mfa_required else 'warn'}}">MFA POLICY: {{'REQUIRED' if customer.mfa_required else 'OPTIONAL'}}</span><span class="{{'ok' if not support_access else 'warn'}}">SUPPORT: {{'LOCKED' if not support_access else 'OPEN'}}</span><span class="{{'ok' if customer_security.backup_ok else 'warn'}}">BACKUP: {{'VERIFIED' if customer_security.backup_ok else 'NOT VERIFIED'}}</span></div></div>
+ <div class="customer-security-warnings">{% for w in customer_security.warnings[:3] %}<small>• {{w}}</small>{% else %}<small>Bez aktívnych bezpečnostných upozornení.</small>{% endfor %}</div>
+</section>
 
 <div class="customer-detail-grid">
  <section class="customer-detail-card">
@@ -143,8 +191,8 @@
 <div class="customer-detail-grid wide">
  <section class="customer-detail-card" id="customerUsers">
   <div class="customer-detail-card-head"><div><span class="admin-kicker">IDENTITY & ACCESS</span><h3>Používatelia zákazníka</h3><p>Účty existujú iba v organizácii {{customer.name}}.</p></div><b class="detail-count">{{customer_users|length}}</b></div>
-  <div class="customer-detail-list customer-users-list">{% for u in customer_users %}<div><span class="adm-avatar">{{u.name[:2]|upper}}</span><p><b>{{u.name}}</b><small>{{u.email}}</small></p><label class="role-pill">{{u.role}}</label><span class="customer-status {{'ok' if u.status=='Aktívny' else 'bad'}}">● {{u.status}}</span><time>{{u.last_login or 'bez prihlásenia'}}</time></div>{% else %}<div class="customer-empty-row">Žiadne používateľské účty.</div>{% endfor %}</div>
-  <details class="admin-reset-box"><summary>Obnoviť heslo hlavného administrátora</summary><form method="post" action="/platform/customer/{{customer.id}}/reset-admin-password"><input type="hidden" name="_csrf" value="{{csrf_token}}"><div class="field"><label>Nové dočasné heslo</label><input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="min. 10 znakov"></div><button class="admin-primary">Nastaviť nové heslo</button></form></details>
+  <div class="customer-detail-list customer-users-list">{% for u in customer_users %}<div><span class="adm-avatar">{{u.name[:2]|upper}}</span><p><b>{{u.name}}</b><small>{{u.email}}</small></p><label class="role-pill">{{u.role}}</label><span class="mfa-mini {{'ok' if u.mfa_enabled else 'warn'}}">MFA {{'ON' if u.mfa_enabled else 'OFF'}}</span><span class="customer-status {{'ok' if u.status=='Aktívny' else 'bad'}}">● {{u.status}}</span><time>{{u.last_login or 'bez prihlásenia'}}</time></div>{% else %}<div class="customer-empty-row">Žiadne používateľské účty.</div>{% endfor %}</div>
+  <details class="admin-reset-box"><summary>Obnoviť heslo hlavného administrátora</summary><form method="post" action="/platform/customer/{{customer.id}}/reset-admin-password"><input type="hidden" name="_csrf" value="{{csrf_token}}"><div class="field"><label>Nové dočasné heslo</label><input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="min. 10 znakov"></div><button class="admin-primary">Nastaviť nové heslo</button></form></details><details class="admin-reset-box danger-zone"><summary>Núdzovo resetovať MFA hlavného administrátora</summary><form method="post" action="/platform/customer/{{customer.id}}/reset-admin-mfa"><input type="hidden" name="_csrf" value="{{csrf_token}}"><p>Vyžaduje aktívny support súhlas zákazníka. Ak je MFA povinné, používateľ ho musí nastaviť pri ďalšom prihlásení.</p><button class="danger">Resetovať MFA</button></form></details>
  </section>
  <section class="customer-detail-card">
   <div class="customer-detail-card-head"><div><span class="admin-kicker">FACILITY PORTFOLIO</span><h3>Budovy zákazníka</h3><p>Objekty a technické dáta patriace iba tejto organizácii.</p></div><b class="detail-count">{{customer_buildings|length}}</b></div>
