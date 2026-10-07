@@ -597,6 +597,8 @@ def _migration_11(db, using_postgres):
                 closed_at TIMESTAMPTZ,
                 customer_last_read_at TIMESTAMPTZ,
                 staff_last_read_at TIMESTAMPTZ,
+                customer_last_read_message_id BIGINT DEFAULT 0,
+                staff_last_read_message_id BIGINT DEFAULT 0,
                 UNIQUE(organization_id,ticket_no)
             )"""
         )
@@ -630,6 +632,8 @@ def _migration_11(db, using_postgres):
                 closed_at TEXT,
                 customer_last_read_at TEXT,
                 staff_last_read_at TEXT,
+                customer_last_read_message_id INTEGER DEFAULT 0,
+                staff_last_read_message_id INTEGER DEFAULT 0,
                 UNIQUE(organization_id,ticket_no)
             )"""
         )
