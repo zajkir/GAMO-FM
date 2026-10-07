@@ -25,8 +25,8 @@ LOGIN_WINDOW=300
 LOGIN_MAX_ATTEMPTS=6
 _login_attempts={}
 ROLE_PERMISSIONS={
- 'Administrator':{'view','facility_write','asset_write','maintenance_write','incident_write','documents_write','users_manage','settings_manage','audit_view','platform_manage'},
- 'Facility Manager':{'view','facility_write','asset_write','maintenance_write','incident_write','documents_write'},
+ 'Administrator':{'view','facility_write','asset_write','maintenance_write','incident_write','documents_write','users_manage','settings_manage','audit_view','platform_manage','reports_view'},
+ 'Facility Manager':{'view','facility_write','asset_write','maintenance_write','incident_write','documents_write','reports_view'},
  'Technik':{'view','maintenance_write','incident_write'},
  'Servisný technik':{'view','maintenance_write','incident_write'},
  'Viewer':{'view'}
@@ -321,6 +321,7 @@ def dashboard():
  return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=q(profession_sql,(oid,)),buildings=q('select * from buildings where organization_id=?',(oid,)),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc limit 6',(oid,)),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc limit 5',(oid,)))
 @app.route('/reports')
 def reports():
+ if not can('reports_view'): abort(403)
  oid=org_id()
  stats={
   'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
@@ -344,6 +345,7 @@ def reports():
 
 @app.get('/reports/export.xlsx')
 def reports_export_xlsx():
+ if not can('reports_view'): abort(403)
  oid=org_id(); org=one('select * from organizations where id=?',(oid,))
  wb=Workbook(); ws=wb.active; ws.title='Súhrn'
  title_fill=PatternFill('solid',fgColor='17365D'); header_fill=PatternFill('solid',fgColor='DCE6F1')
