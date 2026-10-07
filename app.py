@@ -150,7 +150,7 @@ def dashboard():
 @app.route('/buildings')
 def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b'))
 @app.route('/building/<int:i>')
-def building(i): return render_template('index.html',page='building',b=one('select * from buildings where id=?',(i,)),floors=q('select * from floors where building_id=?',(i,)),rooms=q('select r.*,f.code floor from rooms r join floors f on f.id=r.floor_id where f.building_id=?',(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
+def building(i): return render_template('index.html',page='building',b=one('select * from buildings where id=?',(i,)),floors=q('select * from floors where building_id=?',(i,)),rooms=q("select r.*,f.code floor,(select count(*) from assets a where a.room_id=r.id) asset_count,(select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status!='Ukončená') incident_count from rooms r join floors f on f.id=r.floor_id where f.building_id=?",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
 @app.post('/building/<int:i>/document')
 def upload_building_document(i):
  if not one('select id from buildings where id=?',(i,)): abort(404)
