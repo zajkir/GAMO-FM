@@ -775,6 +775,23 @@ def backup_my_organization():
  customer_access(org_id(),'CUSTOMER_DATA_EXPORT','Export vytvorený administrátorom organizácie.')
  return build_organization_backup(org_id())
 
+@app.get('/privacy/access-log.json')
+def privacy_access_log_export():
+ if support_mode(): abort(403)
+ if session.get('user_role')!='Administrator': abort(403)
+ org=one('select code,name from organizations where id=?',(org_id(),))
+ if not org: abort(404)
+ rows=[dict(r) for r in q('select created,actor_name,action,reason,ip from customer_access_log where target_organization_id=? order by id desc',(org_id(),))]
+ payload={
+  'organization':{'code':org['code'],'name':org['name']},
+  'generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
+  'events':rows
+ }
+ audit('PRIVACY_ACCESS_LOG_EXPORT',f"{len(rows)} udalostí")
+ response=app.response_class(json.dumps(payload,ensure_ascii=False,indent=2,default=str),mimetype='application/json')
+ response.headers['Content-Disposition']=f'attachment; filename=GAMO_access_log_{org["code"]}_{date.today().isoformat()}.json'
+ return response
+
 @app.post('/platform/customer/<int:i>/support-enter')
 def platform_customer_support_enter(i):
  if not is_gamo_admin(): abort(403)
