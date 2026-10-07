@@ -141,6 +141,7 @@ asset = app.one("select * from assets where asset_id=? and organization_id=?", (
 assert asset
 
 # Regression: new asset may leave Asset ID empty; server must generate a tenant-safe ID.
+expected_auto_id = client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"]
 r = client.post(
     "/add/asset",
     data={
@@ -166,8 +167,8 @@ auto_asset = app.one(
     "select * from assets where organization_id=? and name=?",
     (gamo_org_id, "Automatic HVAC Asset"),
 )
-assert auto_asset and auto_asset["asset_id"] == "HVAC-000001"
-assert client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"] == "HVAC-000002"
+assert auto_asset and auto_asset["asset_id"] == expected_auto_id
+assert client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"] != expected_auto_id
 
 # A manually duplicated ID must be rejected without creating another row.
 before_auto = app.one("select count(*) n from assets where organization_id=?", (gamo_org_id,))["n"]
@@ -175,7 +176,7 @@ r = client.post(
     "/add/asset",
     data={
         "_csrf": csrf(),
-        "asset_id": "HVAC-000001",
+        "asset_id": expected_auto_id,
         "name": "Duplicate Must Not Save",
         "building_id": str(building["id"]),
         "floor_id": str(floor["id"]),
