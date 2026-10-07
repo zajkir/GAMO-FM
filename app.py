@@ -680,7 +680,7 @@ def privacy_center():
  org=one('select * from organizations where id=?',(org_id(),))
  if not org or session.get('user_role')!='Administrator': abort(403)
  access_rows=q('select * from customer_access_log where target_organization_id=? order by id desc limit 50',(org_id(),))
- return render_template('index.html',page='privacy',privacy_org=org,support_active=support_access_active(org),access_rows=access_rows)
+ return render_template('index.html',page='privacy',privacy_org=org,support_active=support_access_active(org),access_rows=access_rows,rls_enabled=USING_POSTGRES)
 
 @app.post('/privacy/settings')
 def privacy_settings():
