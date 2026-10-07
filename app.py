@@ -31,6 +31,17 @@ ROLE_PERMISSIONS={
 def can(permission):
  return permission in ROLE_PERMISSIONS.get(session.get('user_role','Viewer'),{'view'})
 
+def org_id():
+ return session.get('organization_id')
+
+def owns_building(building_id):
+ oid=org_id()
+ return bool(oid and one('select id from buildings where id=? and organization_id=?',(building_id,oid)))
+
+def owns_asset(asset_id):
+ oid=org_id()
+ return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
+
 def audit(action,detail=''):
  try:
   x("insert into audit_log(user_id,user_name,action,detail,ip) values(?,?,?,?,?)",(session.get('user_id'),session.get('user_name','Systém'),action,detail,request.headers.get('X-Forwarded-For',request.remote_addr or '')))
@@ -169,12 +180,15 @@ def dashboard():
  profession_costs=q("select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0)::numeric,2) value from workorders w join assets a on a.id=w.asset_id group by a.profession order by value desc limit 6") if USING_POSTGRES else q("select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0),2) value from workorders w join assets a on a.id=w.asset_id group by a.profession order by value desc limit 6")
  return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=profession_costs,buildings=q('select * from buildings'),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id order by w.id desc limit 6'),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id order by i.id desc limit 5'))
 @app.route('/buildings')
-def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b'))
+def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b where b.organization_id=?',(org_id(),)))
 @app.route('/building/<int:i>')
-def building(i): return render_template('index.html',page='building',b=one('select * from buildings where id=?',(i,)),floors=q('select * from floors where building_id=?',(i,)),rooms=q("select r.*,f.code floor,(select count(*) from assets a where a.room_id=r.id) asset_count,(select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status!='Ukončená') incident_count from rooms r join floors f on f.id=r.floor_id where f.building_id=?",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
+def building(i):
+ b=one('select * from buildings where id=? and organization_id=?',(i,org_id()))
+ if not b: abort(404)
+ return render_template('index.html',page='building',b=b,floors=q('select * from floors where building_id=?',(i,)),rooms=q("select r.*,f.code floor,(select count(*) from assets a where a.room_id=r.id) asset_count,(select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status!='Ukončená') incident_count from rooms r join floors f on f.id=r.floor_id where f.building_id=?",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
 @app.post('/building/<int:i>/document')
 def upload_building_document(i):
- if not one('select id from buildings where id=?',(i,)): abort(404)
+ if not owns_building(i): abort(404)
  f=request.files.get('document'); category=(request.form.get('category') or 'Technická').strip()
  if not f or not f.filename:
   flash('Vyber dokument na nahratie.','error'); return redirect(f'/building/{i}#documents')
@@ -199,19 +213,19 @@ def delete_document(i):
  return redirect(f"/building/{d['building_id']}#documents")
 
 @app.route('/assets')
-def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a left join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id order by a.asset_id'))
+def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id where b.organization_id=? order by a.asset_id',(org_id(),)))
 @app.route('/asset/<int:i>')
 def asset(i):
- a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a left join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=?',(i,))
+ a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=? and b.organization_id=?',(i,org_id()))
  if not a: abort(404)
  children=q('select a.*,r.code room,r.name room_name,r.area from assets a left join rooms r on r.id=a.room_id where a.parent_id=?',(i,))
  parent=one('select id,asset_id,name,status from assets where id=?',(a['parent_id'],)) if a['parent_id'] else None
  impact_rooms=len({x['room'] for x in children if x['room']}); impact_area=sum(float(x['area'] or 0) for x in children if x['room'])
  return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=q('select * from workorders where asset_id=? order by id desc',(i,)),incidents=q('select * from incidents where asset_id=? order by id desc',(i,)))
 @app.route('/maintenance')
-def maintenance(): return render_template('index.html',page='maintenance',orders=q('select w.*,a.asset_id,a.name asset from workorders w left join assets a on a.id=w.asset_id order by w.id desc'))
+def maintenance(): return render_template('index.html',page='maintenance',orders=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),)))
 @app.route('/incidents')
-def incidents(): return render_template('index.html',page='incidents',incidents=q('select i.*,a.asset_id,a.name asset from incidents i left join assets a on a.id=i.asset_id order by i.id desc'))
+def incidents(): return render_template('index.html',page='incidents',incidents=q('select i.*,a.asset_id,a.name asset from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),)))
 @app.route('/admin')
 def admin(): return render_template('index.html',page='admin',users=q('select * from users'),buildings=q('select * from buildings'),audit_rows=q('select * from audit_log order by id desc limit 20'))
 @app.route('/add/<what>',methods=['GET','POST'])
