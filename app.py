@@ -52,7 +52,7 @@ def one(sql,a=()):
 def x(sql,a=()):
  with con() as c:
   statement=_sql(sql)
-  if USING_POSTGRES and statement.lstrip().lower().startswith('insert into') and ' returning ' not in statement.lower():
+  if USING_POSTGRES and statement.lstrip().lower().startswith('insert into') and not statement.lstrip().lower().startswith('insert into settings') and ' returning ' not in statement.lower():
    statement+=' RETURNING id'
    r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
   r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
