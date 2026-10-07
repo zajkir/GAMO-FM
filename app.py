@@ -315,10 +315,18 @@ def assets(): return render_template('index.html',page='assets',assets=q('select
 def asset(i):
  a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=? and b.organization_id=?',(i,org_id()))
  if not a: abort(404)
- children=q('select a.*,r.code room,r.name room_name,r.area from assets a left join rooms r on r.id=a.room_id where a.parent_id=?',(i,))
- parent=one('select id,asset_id,name,status from assets where id=?',(a['parent_id'],)) if a['parent_id'] else None
+ children=q("""select a.*,r.code room,r.name room_name,r.area from assets a
+  join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
+  where a.parent_id=? and b.organization_id=? order by a.asset_id""",(i,org_id()))
+ parent=one("""select a.id,a.asset_id,a.name,a.status from assets a join buildings b on b.id=a.building_id
+  where a.id=? and b.organization_id=?""",(a['parent_id'],org_id())) if a['parent_id'] else None
  impact_rooms=len({x['room'] for x in children if x['room']}); impact_area=sum(float(x['area'] or 0) for x in children if x['room'])
- return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=q('select * from workorders where asset_id=? order by id desc',(i,)),incidents=q('select * from incidents where asset_id=? order by id desc',(i,)))
+ orders=q("""select w.* from workorders w join assets aa on aa.id=w.asset_id join buildings b on b.id=aa.building_id
+  where w.asset_id=? and b.organization_id=? order by w.id desc""",(i,org_id()))
+ incidents=q("""select x.* from incidents x join assets aa on aa.id=x.asset_id join buildings b on b.id=aa.building_id
+  where x.asset_id=? and b.organization_id=? order by x.id desc""",(i,org_id()))
+ events=q('select * from asset_events where asset_id=? and organization_id=? order by id desc limit 100',(i,org_id()))
+ return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events)
 @app.route('/maintenance')
 def maintenance(): return render_template('index.html',page='maintenance',orders=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),)))
 @app.route('/incidents')
@@ -381,9 +389,10 @@ def platform_customer_detail(i):
  recent_orders=q("""select w.*,a.asset_id,a.name asset,b.name building from workorders w
   join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? order by w.id desc limit 6""",(i,))
+ limits=plan_limits(i)
  return render_template('index.html',page='customer',customer=customer,customer_stats=customer_stats,
   customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
-  recent_orders=recent_orders,license_days=license_days)
+  recent_orders=recent_orders,license_days=license_days,customer_limits=limits)
 
 @app.post('/platform/customer/<int:i>/branding')
 def platform_customer_branding(i):
