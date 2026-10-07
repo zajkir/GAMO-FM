@@ -1,6 +1,10 @@
 import io
 import os
 import tempfile
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 tmp = tempfile.mkdtemp(prefix="gamo-smoke-")
 os.environ.pop("DATABASE_URL", None)
