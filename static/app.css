@@ -368,3 +368,25 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .support-mode-banner>div{display:flex;align-items:center;gap:11px}.support-mode-banner>div>span{width:34px;height:34px;flex:0 0 34px;border-radius:10px;background:#ffe6b8;color:#a75d00;display:grid;place-items:center;font-weight:900}.support-mode-banner p{margin:0;display:flex;flex-direction:column;gap:3px}.support-mode-banner p b{font-size:10px;color:#7e4c0f}.support-mode-banner p small{color:#8f7553;font-size:9px}.support-mode-banner form{margin:0}.support-mode-banner button{white-space:nowrap;border-color:#e4b56c;background:#fff;color:#8b5209;font-size:9px;font-weight:900}.support-mode-banner button:hover{background:#fff4df}
 .support-enter-form{display:inline-flex;margin:0}.support-enter-form button{padding:6px 9px;border:1px solid rgba(255,255,255,.15);border-radius:999px;background:rgba(255,255,255,.08);color:#fff;font-size:8px;font-weight:900}.support-enter-form button:hover{background:rgba(255,255,255,.15)}
 @media(max-width:760px){.support-mode-banner{align-items:flex-start;flex-direction:column}.support-mode-banner form,.support-mode-banner button{width:100%}}
+
+
+/* Customer account password security */
+.password-page{min-height:100vh;background:#edf2f7;color:var(--ink)}
+.password-shell{min-height:100vh;display:grid;grid-template-columns:minmax(360px,.9fr) minmax(500px,1.1fr);padding:0}
+.password-brand{position:relative;overflow:hidden;padding:70px clamp(45px,7vw,95px);background:radial-gradient(circle at 78% 78%,rgba(53,123,230,.26),transparent 34%),linear-gradient(150deg,#061321,#0b2038 65%,#123961);color:#fff}
+.password-brand:after{content:"";position:absolute;right:-240px;bottom:-250px;width:500px;height:500px;border:1px solid rgba(255,255,255,.09);border-radius:50%;box-shadow:0 0 0 60px rgba(255,255,255,.016),0 0 0 120px rgba(255,255,255,.01)}
+.password-mark{position:relative;z-index:2;width:62px;height:62px;border-radius:18px;background:#e31b23;display:grid;place-items:center;font-size:30px;font-weight:950;box-shadow:0 15px 34px rgba(0,0,0,.24)}
+.password-brand>span{position:relative;z-index:2;display:block;margin-top:28px;color:#7f9fc6;font-size:9px;font-weight:900;letter-spacing:.18em}
+.password-brand h1{position:relative;z-index:2;max-width:570px;margin:8px 0 13px;font-size:39px;line-height:1.08;letter-spacing:-.035em}
+.password-brand>p{position:relative;z-index:2;max-width:540px;margin:0;color:#aabed6;font-size:13px;line-height:1.65}
+.password-security-list{position:relative;z-index:2;display:grid;gap:15px;margin-top:42px;max-width:520px}
+.password-security-list>div{display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start;padding:13px 0;border-top:1px solid rgba(255,255,255,.08)}
+.password-security-list i{width:30px;height:30px;border-radius:9px;background:rgba(70,207,145,.12);color:#72dcae;display:grid;place-items:center;font-style:normal;font-weight:900}
+.password-security-list span{display:flex;flex-direction:column;gap:3px}.password-security-list b{font-size:11px}.password-security-list small{color:#8fa7c3;font-size:9px;line-height:1.45}
+.password-card{align-self:center;width:min(620px,calc(100% - 64px));margin:42px auto;border:1px solid #dce4ed;border-radius:22px;background:#fff;box-shadow:0 28px 70px rgba(15,30,50,.12);overflow:hidden}
+.password-card-head{padding:27px 30px;border-bottom:1px solid var(--line)}.password-card-head h2{margin:5px 0 5px;font-size:25px}.password-card-head p{margin:0;color:var(--muted);font-size:10px}
+.password-flashes{padding:17px 30px 0}.password-form{display:grid;gap:15px;padding:23px 30px}.password-form input{width:100%;min-height:44px;border:1px solid #dbe3ed;border-radius:10px;padding:0 12px;outline:none}.password-form input:focus{border-color:#9bb9ff;box-shadow:0 0 0 3px #edf3ff}
+.password-submit{display:flex;align-items:center;justify-content:space-between;min-height:48px;padding:0 17px;margin-top:4px;border-color:#246bfd;background:#246bfd;color:#fff;font-size:11px;font-weight:900}.password-submit:hover{background:#1d5cdb}
+.password-back{display:block;margin:-4px 30px 20px;text-align:center;color:#69778a;font-size:9px;font-weight:800}.password-card footer{padding:14px 30px;border-top:1px solid var(--line);background:#fbfcfe;color:#8b96a6;font-size:8px;text-align:center}
+@media(max-width:900px){.password-shell{grid-template-columns:1fr}.password-brand{padding:42px 32px}.password-security-list{margin-top:25px}.password-card{width:min(620px,calc(100% - 32px));margin:24px auto 40px}}
+@media(max-width:560px){.password-brand h1{font-size:31px}.password-card{border-radius:16px}.password-card-head,.password-form{padding-left:20px;padding-right:20px}.password-flashes{padding-left:20px;padding-right:20px}}
