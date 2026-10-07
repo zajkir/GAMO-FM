@@ -426,7 +426,12 @@ for sheet in ("Súhrn", "Assety", "Údržba", "Incidenty", "Po termíne"):
 assert book["Súhrn"]["A1"].value.startswith("GAMO FACILITY REPORT")
 assert "QA-000001" in [cell.value for row in book["Assety"].iter_rows() for cell in row]
 assert len(book["Súhrn"]._charts) >= 1
-assert book["Súhrn"]["E5"].value == 1
+expected_open_incidents = app.one(
+    """select count(*) n from incidents i join assets a on a.id=i.asset_id
+       where a.organization_id=? and i.status not in ('Ukončená','Vyriešená')""",
+    (gamo_org_id,),
+)["n"]
+assert book["Súhrn"]["E5"].value == expected_open_incidents
 overdue_values = [cell.value for row in book["Po termíne"].iter_rows() for cell in row]
 assert "QA cancelled overdue" not in overdue_values
 
