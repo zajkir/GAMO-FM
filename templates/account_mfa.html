@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="sk">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MFA · {{org.branding_name or org.name}}</title><link rel="stylesheet" href="/static/app.css"></head>
+<body class="mfa-account-page" style="--brand:{{org.brand_color or '#E31B23'}}">
+ <main class="mfa-account-shell">
+  <header><a href="/">← Aplikácia</a><div><span class="admin-kicker">ACCOUNT SECURITY</span><h1>Dvojfaktorové overenie</h1><p>{{current_user.email}} · {{org.name}}</p></div><span class="mfa-state {{'on' if current_user.mfa_enabled else 'off'}}">{{'MFA ACTIVE' if current_user.mfa_enabled else 'SETUP REQUIRED'}}</span></header>
+  {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="mfa-flashes">{% for cat,msg in messages %}<div class="{{cat}}">{{msg}}</div>{% endfor %}</div>{% endif %}{% endwith %}
+  {% if new_recovery_codes %}
+  <section class="mfa-recovery-reveal"><span>RECOVERY CODES · ZOBRAZIA SA IBA TERAZ</span><h2>Ulož si ich mimo aplikácie</h2><div>{% for code in new_recovery_codes %}<code>{{code}}</code>{% endfor %}</div><p>Každý kód je jednorazový. Po použití sa automaticky zneplatní.</p></section>
+  {% endif %}
+  {% if not current_user.mfa_enabled %}
+  <section class="mfa-setup-grid">
+   <div class="mfa-qr-card"><img src="{{qr_data}}" alt="MFA QR"><small>Naskenuj cez Microsoft Authenticator, Google Authenticator, 1Password alebo kompatibilnú TOTP aplikáciu.</small></div>
+   <div class="mfa-setup-card"><span class="admin-kicker">STEP 1</span><h2>Pridaj GAMO do autentifikátora</h2><p>Ak QR nevieš použiť, zadaj secret manuálne:</p><code class="mfa-secret">{{secret}}</code><span class="admin-kicker">STEP 2</span><h2>Potvrď prvý kód</h2><form method="post"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="enable"><div class="field"><label>6-miestny kód</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required placeholder="123456"></div><button class="admin-primary">Aktivovať MFA</button></form></div>
+  </section>
+  {% else %}
+  <div class="mfa-security-grid">
+   <section class="mfa-status-card"><span>✓</span><div><small>STATUS</small><h2>MFA je aktívne</h2><p>Aktivované: {{current_user.mfa_enabled_at or '—'}} · zostáva {{recovery_left}} recovery kódov.</p></div></section>
+   <section class="mfa-action-card"><h3>Nové recovery kódy</h3><p>Staré kódy budú okamžite zneplatnené.</p><form method="post"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="regenerate"><input type="password" name="current_password" required placeholder="Aktuálne heslo"><input name="code" required placeholder="MFA / recovery kód"><button>Vygenerovať nové kódy</button></form></section>
+   <section class="mfa-action-card danger-zone"><h3>Vypnúť MFA</h3><p>{% if org.mfa_required %}Organizácia má povinné MFA; vypnutie je zablokované.{% else %}Vyžaduje heslo aj druhý faktor.{% endif %}</p>{% if not org.mfa_required %}<form method="post"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="disable"><input type="password" name="current_password" required placeholder="Aktuálne heslo"><input name="code" required placeholder="MFA / recovery kód"><button class="danger">Vypnúť MFA</button></form>{% endif %}</section>
+  </div>
+  {% endif %}
+ </main>
+</body></html>
