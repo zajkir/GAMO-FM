@@ -84,7 +84,7 @@ def ticket_staff():
  return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
 
 def next_ticket_no():
- rows=q("select ticket_no from tickets where organization_id=? and ticket_no like 'TKT-%'",(org_id(),))
+ rows=q("select ticket_no from tickets where organization_id=? and ticket_no like ?",(org_id(),'TKT-%'))
  nums=[int(str(r['ticket_no'])[4:]) for r in rows if str(r['ticket_no'] or '')[4:].isdigit()]
  return f"TKT-{(max(nums) if nums else 0)+1:06d}"
 
