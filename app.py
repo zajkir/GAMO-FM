@@ -67,11 +67,19 @@ def init_postgres():
   """CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,name TEXT,email TEXT,role TEXT,status TEXT,password_hash TEXT,last_login TEXT)""",
   """CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT)""",
   """CREATE TABLE IF NOT EXISTS audit_log(id BIGSERIAL PRIMARY KEY,created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,user_id BIGINT,user_name TEXT,action TEXT,detail TEXT,ip TEXT)""",
-  """CREATE TABLE IF NOT EXISTS documents(id BIGSERIAL PRIMARY KEY,building_id BIGINT REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size BIGINT,uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,data BYTEA)"""
+  """CREATE TABLE IF NOT EXISTS documents(id BIGSERIAL PRIMARY KEY,building_id BIGINT REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size BIGINT,uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,data BYTEA)""",
+  """CREATE TABLE IF NOT EXISTS organizations(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)""",
+  """CREATE TABLE IF NOT EXISTS platform_meta(k TEXT PRIMARY KEY,v TEXT)"""
  ]
  with con() as db:
   for statement in schema: db.execute(statement)
   db.execute("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS customer TEXT DEFAULT 'GAMO a.s.'")
+  db.execute("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS organization_id BIGINT")
+  db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id BIGINT")
+  db.execute("INSERT INTO organizations(code,name,status,plan,license_status,branding_name) VALUES('GAMO','GAMO a.s.','Aktívny','INTERNAL','Aktívna','GAMO a.s.') ON CONFLICT (code) DO NOTHING")
+  gamo_org=db.execute("SELECT id FROM organizations WHERE code='GAMO'").fetchone()['id']
+  db.execute("UPDATE users SET organization_id=%s WHERE organization_id IS NULL",(gamo_org,))
+  db.execute("UPDATE buildings SET organization_id=%s WHERE organization_id IS NULL",(gamo_org,))
   db.commit()
  if not one('select count(*) n from users')['n']:
   x('insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!'))))
@@ -88,6 +96,16 @@ def init():
   if 'last_login' not in cols: c.execute("alter table users add column last_login TEXT")
   c.execute("""CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY,created TEXT DEFAULT CURRENT_TIMESTAMP,user_id INTEGER,user_name TEXT,action TEXT,detail TEXT,ip TEXT);""")
   c.execute("""CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY,building_id INTEGER REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size INTEGER,uploaded TEXT DEFAULT CURRENT_TIMESTAMP,data BLOB);""")
+  c.execute("""CREATE TABLE IF NOT EXISTS organizations(id INTEGER PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);""")
+  c.execute("""CREATE TABLE IF NOT EXISTS platform_meta(k TEXT PRIMARY KEY,v TEXT);""")
+  bcols=[r[1] for r in c.execute("pragma table_info(buildings)").fetchall()]
+  if 'organization_id' not in bcols: c.execute("alter table buildings add column organization_id INTEGER")
+  ucols=[r[1] for r in c.execute("pragma table_info(users)").fetchall()]
+  if 'organization_id' not in ucols: c.execute("alter table users add column organization_id INTEGER")
+  c.execute("insert or ignore into organizations(code,name,status,plan,license_status,branding_name) values('GAMO','GAMO a.s.','Aktívny','INTERNAL','Aktívna','GAMO a.s.')")
+  gamo_org=c.execute("select id from organizations where code='GAMO'").fetchone()[0]
+  c.execute("update users set organization_id=? where organization_id is null",(gamo_org,))
+  c.execute("update buildings set organization_id=? where organization_id is null",(gamo_org,))
   if not c.execute('select count(*) n from buildings').fetchone()['n']:
    c.execute("insert into buildings(code,name,address,manager) values('A','GAMO Centrum – Budova A','Kyjevské námestie 6, Banská Bystrica','Facility Management')"); c.execute("insert into buildings(code,name,address,manager) values('B','GAMO Centrum – Budova B','Banská Bystrica','Facility Management')")
    a=c.execute("select id from buildings where code='A'").fetchone()[0]; b=c.execute("select id from buildings where code='B'").fetchone()[0]
