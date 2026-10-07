@@ -85,7 +85,7 @@ def init_postgres():
   """CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT)""",
   """CREATE TABLE IF NOT EXISTS audit_log(id BIGSERIAL PRIMARY KEY,created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,user_id BIGINT,user_name TEXT,action TEXT,detail TEXT,ip TEXT)""",
   """CREATE TABLE IF NOT EXISTS documents(id BIGSERIAL PRIMARY KEY,building_id BIGINT REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size BIGINT,uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,data BYTEA)""",
-  """CREATE TABLE IF NOT EXISTS organizations(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)""",
+  """CREATE TABLE IF NOT EXISTS organizations(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,brand_color TEXT DEFAULT '#E31B23',brand_tagline TEXT DEFAULT 'FACILITY MANAGEMENT',created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)""",
   """CREATE TABLE IF NOT EXISTS platform_meta(k TEXT PRIMARY KEY,v TEXT)"""
  ]
  with con() as db:
@@ -93,6 +93,8 @@ def init_postgres():
   db.execute("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS customer TEXT DEFAULT 'GAMO a.s.'")
   db.execute("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS organization_id BIGINT")
   db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id BIGINT")
+  db.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS brand_color TEXT DEFAULT '#E31B23'")
+  db.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS brand_tagline TEXT DEFAULT 'FACILITY MANAGEMENT'")
   db.execute("INSERT INTO organizations(code,name,status,plan,license_status,branding_name) VALUES('GAMO','GAMO a.s.','Aktívny','INTERNAL','Aktívna','GAMO a.s.') ON CONFLICT (code) DO NOTHING")
   gamo_org=db.execute("SELECT id FROM organizations WHERE code='GAMO'").fetchone()['id']
   db.execute("UPDATE users SET organization_id=%s WHERE organization_id IS NULL",(gamo_org,))
@@ -113,7 +115,10 @@ def init():
   if 'last_login' not in cols: c.execute("alter table users add column last_login TEXT")
   c.execute("""CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY,created TEXT DEFAULT CURRENT_TIMESTAMP,user_id INTEGER,user_name TEXT,action TEXT,detail TEXT,ip TEXT);""")
   c.execute("""CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY,building_id INTEGER REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size INTEGER,uploaded TEXT DEFAULT CURRENT_TIMESTAMP,data BLOB);""")
-  c.execute("""CREATE TABLE IF NOT EXISTS organizations(id INTEGER PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);""")
+  c.execute("""CREATE TABLE IF NOT EXISTS organizations(id INTEGER PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,brand_color TEXT DEFAULT '#E31B23',brand_tagline TEXT DEFAULT 'FACILITY MANAGEMENT',created TEXT DEFAULT CURRENT_TIMESTAMP);""")
+  orgcols=[r[1] for r in c.execute("pragma table_info(organizations)").fetchall()]
+  if 'brand_color' not in orgcols: c.execute("alter table organizations add column brand_color TEXT DEFAULT '#E31B23'")
+  if 'brand_tagline' not in orgcols: c.execute("alter table organizations add column brand_tagline TEXT DEFAULT 'FACILITY MANAGEMENT'")
   c.execute("""CREATE TABLE IF NOT EXISTS platform_meta(k TEXT PRIMARY KEY,v TEXT);""")
   bcols=[r[1] for r in c.execute("pragma table_info(buildings)").fetchall()]
   if 'organization_id' not in bcols: c.execute("alter table buildings add column organization_id INTEGER")
@@ -124,7 +129,7 @@ def init():
   c.execute("update users set organization_id=? where organization_id is null",(gamo_org,))
   c.execute("update buildings set organization_id=? where organization_id is null",(gamo_org,))
   if not c.execute('select count(*) n from buildings').fetchone()['n']:
-   c.execute("insert into buildings(code,name,address,manager) values('A','GAMO Centrum – Budova A','Kyjevské námestie 6, Banská Bystrica','Facility Management')"); c.execute("insert into buildings(code,name,address,manager) values('B','GAMO Centrum – Budova B','Banská Bystrica','Facility Management')")
+   c.execute("insert into buildings(code,name,address,manager,organization_id) values('A','GAMO Centrum – Budova A','Kyjevské námestie 6, Banská Bystrica','Facility Management',?)",(gamo_org,)); c.execute("insert into buildings(code,name,address,manager,organization_id) values('B','GAMO Centrum – Budova B','Banská Bystrica','Facility Management',?)",(gamo_org,))
    a=c.execute("select id from buildings where code='A'").fetchone()[0]; b=c.execute("select id from buildings where code='B'").fetchone()[0]
    f1=c.execute("insert into floors(building_id,code,name) values(?,?,?)",(a,'1.NP','Prízemie')).lastrowid; f2=c.execute("insert into floors(building_id,code,name) values(?,?,?)",(a,'2.NP','Administratíva')).lastrowid; fb=c.execute("insert into floors(building_id,code,name) values(?,?,?)",(b,'1.NP','Technické podlažie')).lastrowid
    r1=c.execute("insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",(f1,'A005','Kancelária',28.5,'GAMO','HVAC zóna 01')).lastrowid;r2=c.execute("insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",(f1,'A008','Kancelária',31.2,'GAMO','HVAC zóna 01')).lastrowid;r3=c.execute("insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",(f2,'A214','Serverovňa',18,'GAMO','IT kritická zóna')).lastrowid;r4=c.execute("insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",(fb,'B202','Technická miestnosť',42,'','HVAC zóna B')).lastrowid
@@ -132,7 +137,7 @@ def init():
    c.execute("insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,system_id,parent_id,status,criticality,purchase_price) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",('HVAC-000002','VRV vnútorná jednotka A005',a,f1,r1,'HVAC','VRV systém','VRV-IN','Daikin','FXZQ25','HVAC-A-VRV-01',p,'Prevádzka','B',1450));c.execute("insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,system_id,parent_id,status,criticality,purchase_price) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",('HVAC-000003','VRV vnútorná jednotka A008',a,f1,r2,'HVAC','VRV systém','VRV-IN','Daikin','FXZQ25','HVAC-A-VRV-01',p,'Prevádzka','B',1450));c.execute("insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,system_id,status,criticality,purchase_price,ip,protocol) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",('SLB-000001','Core switch serverovne',a,f2,r3,'SLB','LAN/WAN','Switch','Cisco','Catalyst','SLB-A-LAN-01','Prevádzka','A',3200,'10.0.1.2','SNMP'))
    c.execute("insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)",(p,'Preventívny servis VRV','PM','Stredná','Plánované',str(date.today()+timedelta(days=12)),'Servis HVAC s.r.o.','Ján Technik',350,'Kontrola systému a filtrov'))
    c.execute("insert into incidents(asset_id,title,severity,status,reported,impact,cost) values(?,?,?,?,?,?,?)",(p,'Kolísanie tlaku VRV','Porucha','Otvorená',str(date.today()),'A005, A008 – znížený komfort',0))
-   c.execute("insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)",('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!'))))
+   c.execute("insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)",('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
 init()
 with con() as c:
  c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
@@ -187,7 +192,10 @@ def logout():
 @app.context_processor
 def ctx():
  org=one('select * from organizations where id=?',(org_id(),)) if org_id() else None
- return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':org_id()},current_org=org,is_gamo_admin=bool(org and org['code']=='GAMO' and session.get('user_role')=='Administrator'),can=can)
+ brand_name=(org['branding_name'] or org['name']) if org else 'GAMO a.s.'
+ brand_color=(org['brand_color'] or '#E31B23') if org else '#E31B23'
+ brand_tagline=(org['brand_tagline'] or 'FACILITY MANAGEMENT') if org else 'FACILITY MANAGEMENT'
+ return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=bool(org and org['code']=='GAMO' and session.get('user_role')=='Administrator'),can=can)
 @app.route('/')
 def dashboard():
  oid=org_id()
