@@ -127,3 +127,26 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .floor-label{transform:none!important}
 .twin-floor{visibility:visible!important;opacity:1!important}
 .twin-roof{backface-visibility:visible!important}
+
+
+/* GAMO Control Center — commercial customer management */
+.customer-control-grid{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.3fr);gap:18px;margin-top:18px}
+.customer-create-card,.customer-list-card{border:1px solid rgba(117,145,181,.16);border-radius:18px;background:rgba(10,24,42,.58);padding:20px}
+.customer-create-card h4,.customer-list-card h4{margin:5px 0 6px;font-size:18px}
+.customer-create-card>p{margin:0 0 18px;color:#8fa6c4;font-size:12px;line-height:1.55}
+.customer-metrics{margin-top:16px}
+.customer-instance{padding:15px 0;border-bottom:1px solid rgba(117,145,181,.13)}
+.customer-instance:last-child{border-bottom:0}
+.customer-instance-head{display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center}
+.customer-instance-head>div:nth-child(2){display:flex;flex-direction:column;gap:3px}
+.customer-instance-head small{color:#7890ae}
+.customer-license-form{display:grid;grid-template-columns:1fr 1fr 1.25fr 1fr auto;gap:9px;align-items:end;margin:13px 0 0 47px}
+.customer-license-form .field{min-width:0}
+.customer-license-form label{font-size:9px}
+.customer-license-form select,.customer-license-form input{min-height:36px}
+.customer-license-form .adm-manage{height:36px;white-space:nowrap}
+.customer-internal-note{margin:11px 0 0 47px;padding:10px 12px;border:1px solid rgba(99,211,159,.14);border-radius:10px;background:rgba(47,155,111,.06);display:flex;flex-direction:column;gap:3px}
+.customer-internal-note small{color:#7890ae}
+.customer-instance.internal .online-pill{opacity:.8}
+@media(max-width:1200px){.customer-control-grid{grid-template-columns:1fr}.customer-license-form{grid-template-columns:1fr 1fr;margin-left:0}.customer-license-form .adm-manage{grid-column:1/-1}}
+@media(max-width:700px){.customer-license-form{grid-template-columns:1fr}.customer-instance-head{grid-template-columns:auto 1fr}.customer-instance-head .online-pill{grid-column:2}.customer-control-grid{display:block}.customer-list-card{margin-top:14px}}
