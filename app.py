@@ -29,6 +29,13 @@ ROLE_PERMISSIONS={
  'Servisný technik':{'view','maintenance_write','incident_write'},
  'Viewer':{'view'}
 }
+PLAN_LIMITS={
+ 'BASIC':{'users':5,'buildings':2,'assets':500},
+ 'BUSINESS':{'users':25,'buildings':10,'assets':5000},
+ 'ENTERPRISE':{'users':None,'buildings':None,'assets':None},
+ 'INTERNAL':{'users':None,'buildings':None,'assets':None}
+}
+
 def can(permission):
  return permission in ROLE_PERMISSIONS.get(session.get('user_role','Viewer'),{'view'})
 
@@ -48,6 +55,43 @@ def owns_building(building_id):
 def owns_asset(asset_id):
  oid=org_id()
  return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
+
+def owns_floor(floor_id):
+ return bool(org_id() and one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.organization_id=?',(floor_id,org_id())))
+
+def owns_room(room_id):
+ return bool(org_id() and one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and b.organization_id=?',(room_id,org_id())))
+
+def owns_workorder(workorder_id):
+ return bool(org_id() and one('select w.id from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where w.id=? and b.organization_id=?',(workorder_id,org_id())))
+
+def owns_incident(incident_id):
+ return bool(org_id() and one('select i.id from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where i.id=? and b.organization_id=?',(incident_id,org_id())))
+
+def owns_user(user_id):
+ return bool(org_id() and one('select id from users where id=? and organization_id=?',(user_id,org_id())))
+
+def plan_limits(oid=None):
+ oid=oid or org_id()
+ org=one('select plan from organizations where id=?',(oid,)) if oid else None
+ return PLAN_LIMITS.get((org['plan'] if org else 'BASIC') or 'BASIC',PLAN_LIMITS['BASIC'])
+
+def resource_count(resource,oid=None):
+ oid=oid or org_id()
+ if resource=='users': return int(one('select count(*) n from users where organization_id=?',(oid,))['n'])
+ if resource=='buildings': return int(one('select count(*) n from buildings where organization_id=?',(oid,))['n'])
+ if resource=='assets': return int(one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'])
+ return 0
+
+def plan_allows(resource,oid=None):
+ limit=plan_limits(oid).get(resource)
+ return limit is None or resource_count(resource,oid)<limit
+
+def asset_event(asset_id,event_type,title,detail=''):
+ try:
+  x('insert into asset_events(asset_id,organization_id,user_id,user_name,event_type,title,detail) values(?,?,?,?,?,?,?)',(asset_id,org_id(),session.get('user_id'),session.get('user_name','Systém'),event_type,title,detail))
+ except Exception:
+  pass
 
 def audit(action,detail=''):
  try:
@@ -149,7 +193,16 @@ with con() as c:
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
- # Server-side RBAC. UI hiding is only convenience; every write is enforced here.
+ org=one('select * from organizations where id=?',(org_id(),)) if org_id() else None
+ license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
+ if not license_ok:
+  session.clear()
+  return redirect(url_for('login'))
+ if request.method in {'POST','PUT','PATCH','DELETE'}:
+  supplied=request.form.get('_csrf') or request.headers.get('X-CSRF-Token','')
+  expected=session.get('csrf','')
+  if not supplied or not expected or not secrets.compare_digest(str(supplied),str(expected)):
+   abort(400,description='Neplatný bezpečnostný token požiadavky.')
  role=session.get('user_role','Viewer')
  if request.path.startswith('/admin') or request.path.startswith('/settings/') or request.endpoint in {'admin','update_user'}:
   if not can('users_manage') and not can('settings_manage'):
@@ -157,9 +210,12 @@ def require_login():
  if request.method in {'POST','PUT','PATCH','DELETE'}:
   what=(request.view_args or {}).get('what')
   needed={'user':'users_manage','building':'facility_write','floor':'facility_write','room':'facility_write','asset':'asset_write','workorder':'maintenance_write','incident':'incident_write'}.get(what)
-  if request.endpoint in {'upload_building_document','delete_document'}: needed='documents_write'
-  if request.endpoint=='save_setting': needed='settings_manage'
-  if request.endpoint=='update_user': needed='users_manage'
+  endpoint_permissions={
+   'upload_building_document':'documents_write','delete_document':'documents_write','save_setting':'settings_manage',
+   'update_user':'users_manage','platform_customer':'platform_manage','platform_customer_update':'platform_manage',
+   'platform_customer_branding':'platform_manage'
+  }
+  needed=endpoint_permissions.get(request.endpoint,needed)
   if needed and not can(needed):
    flash('Tvoja rola nemá oprávnenie vykonať túto zmenu.','error'); return redirect(request.referrer or '/')
 
