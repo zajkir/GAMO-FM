@@ -383,6 +383,7 @@ def require_login():
  role=session.get('user_role','Viewer')
  if request.path.startswith('/admin') or request.path.startswith('/settings/') or request.endpoint in {'admin','update_user'}:
   if not can('users_manage') and not can('settings_manage'):
+   if request.method in {'POST','PUT','PATCH','DELETE'}: abort(403)
    flash('Na túto časť nemáš administrátorské oprávnenie.','error'); return redirect('/')
  if request.method in {'POST','PUT','PATCH','DELETE'}:
   what=(request.view_args or {}).get('what')
@@ -393,8 +394,7 @@ def require_login():
    'platform_customer_branding':'platform_manage'
   }
   needed=endpoint_permissions.get(request.endpoint,needed)
-  if needed and not can(needed):
-   flash('Tvoja rola nemá oprávnenie vykonať túto zmenu.','error'); return redirect(request.referrer or '/')
+  if needed and not can(needed): abort(403)
 
 @app.route('/login',methods=['GET','POST'])
 def login():
