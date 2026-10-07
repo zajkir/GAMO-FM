@@ -70,10 +70,11 @@ async function loadRoomsForFloor(select,floorId,preferred=''){
  try{const items=await fetchJson('/api/rooms/'+floorId);setPicker(select,items,preferred,'Vyber miestnosť…',x=>[x.code,x.name,(x.area?x.area+' m²':'')].filter(Boolean).join(' · '))}
  catch(e){select.innerHTML='<option value="">Miestnosti sa nepodarilo načítať</option>';select.disabled=true}
 }
-async function loadAssetOptions(select,preferred='',optional=false){
+async function loadAssetOptions(select,preferred='',optional=false,exclude=''){
  select.disabled=true;select.innerHTML='<option>Načítavam assety…</option>';
  try{
-  const items=await fetchJson('/api/assets/options');
+  let items=await fetchJson('/api/assets/options');
+  if(exclude)items=items.filter(x=>String(x.id)!==String(exclude));
   setPicker(select,items,preferred,optional?'Bez parent assetu':'Vyber zariadenie…',x=>{
    const location=[x.building,x.room].filter(Boolean).join(' / ');
    return [x.asset_id,x.name,location].filter(Boolean).join(' · ')
@@ -99,33 +100,59 @@ async function wireRecordPickers(host){
  }else if(floor){
   await loadFloorOptions(floor,floor.dataset.preferred||'');
  }
- for(const s of assets)await loadAssetOptions(s,s.dataset.preferred||'',s.dataset.optional==='1');
+ for(const s of assets)await loadAssetOptions(s,s.dataset.preferred||'',s.dataset.optional==='1',s.dataset.exclude||'');
 }
-function modal(t){
- const f=defs[t],host=document.querySelector('#fields');let h='<div class="formgrid">';
+function modal(t,editData=null){
+ const f=defs[t],host=document.querySelector('#fields');if(!f||!host)return;
+ const editing=!!(editData&&editData.id);let h='<div class="formgrid">';
  f.forEach((raw,i)=>{
-  const a=fieldDef(raw),full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;
+  const a={...fieldDef(raw)};
+  if(editing&&Object.prototype.hasOwnProperty.call(editData,a.name))a.value=editData[a.name]??'';
+  if(editing&&((t==='building'&&a.name==='floors_count')||(t==='floor'&&a.name==='building_id')||(t==='room'&&a.name==='floor_id')))return;
+  const full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;
   const required=(a.required===true||((a.required!==false)&&i<2))?' required':'';
   if(a.type==='select'){
-   control=`<select name="${a.name}"${required}>${a.options.map(o=>`<option value="${escapeHtml(o)}" ${o===a.value?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
+   const opts=[...(a.options||[])];if(editing&&a.value&&!opts.includes(a.value))opts.unshift(a.value);
+   control=`<select name="${a.name}"${required}>${opts.map(o=>`<option value="${escapeHtml(o)}" ${String(o)===String(a.value)?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
   }else if(a.type==='asset'){
-   control=`<select class="asset-picker" data-picker="asset" data-optional="${a.required===false?'1':'0'}" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam assety…</option></select>`;
+   control=`<select class="asset-picker" data-picker="asset" data-optional="${a.required===false?'1':'0'}" data-exclude="${editing&&t==='asset'&&a.name==='parent_id'?escapeHtml(editData.id):''}" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam assety…</option></select>`;
   }else if(['building','floor','room'].includes(a.type)){
    control=`<select class="location-picker" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam…</option></select>`;
   }else{
    const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.name==='password'?'minlength="10" autocomplete="new-password"':''].filter(Boolean).join(' ');
-   control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value||'')}"${required} ${attrs}>`;
+   control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value??'')}"${required} ${attrs}>`;
   }
   h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}</div>`;
  });
  h+='</div>';host.innerHTML=h;wireRecordPickers(host);
- const form=document.querySelector('#mform');form.action='/add/'+t;form.method='post';
- const titles={user:'Nový používateľ',incident:'Nahlásiť nový incident',workorder:'Nový pracovný príkaz',asset:'Nový asset',building:'Nová budova',floor:'Nové podlažie',room:'Nová miestnosť'};
- const meta={asset:['◇','ASSET REGISTER','Evidencia technického zariadenia, jeho umiestnenia, väzieb a servisných parametrov.'],building:['▦','FACILITY STRUCTURE','Vytvorenie nového objektu v portfóliu '+APP_BRAND],floor:['▤','FACILITY STRUCTURE','Nové podlažie a jeho zaradenie do objektu.'],room:['□','SPACE MANAGEMENT','Nová miestnosť, plocha, nájomca a prevádzková zóna.'],workorder:['✓','MAINTENANCE CONTROL','Naplánovanie údržby, revízie, opravy alebo servisného zásahu na konkrétnom zariadení.'],incident:['!','INCIDENT CONTROL','Evidencia poruchy alebo havárie na konkrétnom zariadení.'],user:['⌾','IDENTITY & ACCESS','Vytvorenie používateľského účtu, roly a prístupu do platformy.']};
- const m=meta[t]||['＋','GAMO OPERATIONS','Administrátorské vytvorenie záznamu v '+APP_BRAND];
- document.querySelector('#mtitle').textContent=titles[t]||'Nový záznam';document.querySelector('#micon').textContent=m[0];document.querySelector('#mkicker').textContent=m[1];document.querySelector('#mdesc').textContent=m[2];document.querySelector('#modal').classList.add('show');
+ const form=document.querySelector('#mform');form.action=editing?'/edit/'+t+'/'+editData.id:'/add/'+t;form.method='post';
+ const createTitles={user:'Nový používateľ',incident:'Nahlásiť nový incident',workorder:'Nový pracovný príkaz',asset:'Nový asset',building:'Nová budova',floor:'Nové podlažie',room:'Nová miestnosť'};
+ const editTitles={incident:'Upraviť incident',workorder:'Upraviť pracovný príkaz',asset:'Upraviť asset',building:'Upraviť budovu',floor:'Upraviť podlažie',room:'Upraviť miestnosť'};
+ const meta={asset:['◇','ASSET REGISTER','Evidencia technického zariadenia, jeho umiestnenia, väzieb a servisných parametrov.'],building:['▦','FACILITY STRUCTURE','Správa objektu v portfóliu '+APP_BRAND],floor:['▤','FACILITY STRUCTURE','Správa podlažia a jeho názvu.'],room:['□','SPACE MANAGEMENT','Správa miestnosti, plochy, nájomcu a prevádzkovej zóny.'],workorder:['✓','MAINTENANCE CONTROL','Údržba, revízie, opravy a servisný workflow konkrétneho zariadenia.'],incident:['!','INCIDENT CONTROL','Evidencia a riadenie poruchy alebo havárie.'],user:['⌾','IDENTITY & ACCESS','Vytvorenie používateľského účtu, roly a prístupu do platformy.']};
+ const m=meta[t]||['＋','GAMO OPERATIONS','Správa záznamu v '+APP_BRAND];
+ document.querySelector('#mtitle').textContent=editing?(editTitles[t]||'Upraviť záznam'):(createTitles[t]||'Nový záznam');
+ document.querySelector('#micon').textContent=m[0];document.querySelector('#mkicker').textContent=editing?'EDIT · '+m[1]:m[1];document.querySelector('#mdesc').textContent=m[2];
+ const save=document.querySelector('#mform .modal-actions .primary');if(save)save.textContent=editing?'Uložiť zmeny':'Uložiť záznam';
+ document.querySelector('#modal').classList.add('show');
 }
-function closeM(){document.querySelector('#modal').classList.remove('show')}function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
+function editRecord(type,data){modal(type,data)}
+function closeM(){document.querySelector('#modal').classList.remove('show')}function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa nedá jednoducho vrátiť späť.'){
+ const m=document.querySelector('#confirmModal');if(!m)return window.confirm(title);
+ window._gamoConfirmForm=form;
+ const t=m.querySelector('#confirmTitle'),d=m.querySelector('#confirmDetail');if(t)t.textContent=title;if(d)d.textContent=detail;
+ m.classList.add('show');return false;
+}
+function closeConfirm(){document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null}
+function executeConfirm(){const f=window._gamoConfirmForm;if(!f)return;document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null;f.submit()}
+function filterOpsRows(filter,btn){
+ document.querySelectorAll('.ops-filter-btn').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');
+ document.querySelectorAll('[data-ops-row]').forEach(row=>{
+  const status=row.dataset.status||'',severity=row.dataset.severity||'',priority=row.dataset.priority||'',overdue=row.dataset.overdue==='1';
+  let show=filter==='all'||(filter==='active'&&!['Ukončené','Zrušené','Ukončená','Vyriešená'].includes(status))||(filter==='overdue'&&overdue)||(filter==='critical'&&(priority==='Kritická'||['Kritická','Havária'].includes(severity)))||(filter==='done'&&['Ukončené','Ukončená','Vyriešená'].includes(status));
+  row.style.display=show?'':'none';
+ });
+}
+function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
 function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
 const NOTIFICATION_READ_KEY='gamo_read_notifications_v1';
 function notificationReadSet(){try{return new Set(JSON.parse(localStorage.getItem(NOTIFICATION_READ_KEY)||'[]'))}catch(e){return new Set()}}
@@ -189,9 +216,9 @@ function assetTab(name,btn){
 }
 document.addEventListener('DOMContentLoaded',()=>{
  const name=(location.hash||'').replace('#','');
- if(['tech','service','faults','docs','links'].includes(name)){
+ if(['tech','service','faults','history','docs','links'].includes(name)){
   const buttons=[...document.querySelectorAll('.asset-tabs button')];
-  const map={tech:0,service:1,faults:2,docs:3,links:4}; if(buttons[map[name]]) assetTab(name,buttons[map[name]]);
+  const map={tech:0,service:1,faults:2,history:3,docs:4,links:5}; if(buttons[map[name]]) assetTab(name,buttons[map[name]]);
  }
 });
 
