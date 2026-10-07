@@ -1,6 +1,11 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file
 from sqlite3 import IntegrityError
 import sqlite3, os, json, secrets, time, io
+try:
+ import psycopg
+ from psycopg.rows import dict_row
+except ImportError:
+ psycopg=None; dict_row=None
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta,datetime
@@ -31,16 +36,48 @@ def audit(action,detail=''):
   x("insert into audit_log(user_id,user_name,action,detail,ip) values(?,?,?,?,?)",(session.get('user_id'),session.get('user_name','Systém'),action,detail,request.headers.get('X-Forwarded-For',request.remote_addr or '')))
  except Exception:
   pass
+DATABASE_URL=os.environ.get('DATABASE_URL','').strip()
+USING_POSTGRES=bool(DATABASE_URL)
+def _sql(sql):
+ return sql.replace('datetime(\'now\')','CURRENT_TIMESTAMP').replace("date('now')",'CURRENT_DATE').replace('?','%s') if USING_POSTGRES else sql
 def con():
+ if USING_POSTGRES:
+  if not psycopg: raise RuntimeError('DATABASE_URL is set but psycopg is not installed')
+  return psycopg.connect(DATABASE_URL,row_factory=dict_row)
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def q(sql,a=()):
- with con() as c:return c.execute(sql,a).fetchall()
+ with con() as c:return c.execute(_sql(sql),a).fetchall()
 def one(sql,a=()):
- with con() as c:return c.execute(sql,a).fetchone()
+ with con() as c:return c.execute(_sql(sql),a).fetchone()
 def x(sql,a=()):
- with con() as c:r=c.execute(sql,a);c.commit();return r.lastrowid
+ with con() as c:
+  statement=_sql(sql)
+  if USING_POSTGRES and statement.lstrip().lower().startswith('insert into') and ' returning ' not in statement.lower():
+   statement+=' RETURNING id'
+   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
+  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+def init_postgres():
+ schema=[
+  """CREATE TABLE IF NOT EXISTS buildings(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE,name TEXT,address TEXT,manager TEXT,status TEXT DEFAULT 'Aktívna')""",
+  """CREATE TABLE IF NOT EXISTS floors(id BIGSERIAL PRIMARY KEY,building_id BIGINT REFERENCES buildings(id) ON DELETE CASCADE,code TEXT,name TEXT)""",
+  """CREATE TABLE IF NOT EXISTS rooms(id BIGSERIAL PRIMARY KEY,floor_id BIGINT REFERENCES floors(id) ON DELETE CASCADE,code TEXT,name TEXT,area DOUBLE PRECISION,tenant TEXT,zone TEXT)""",
+  """CREATE TABLE IF NOT EXISTS assets(id BIGSERIAL PRIMARY KEY,asset_id TEXT UNIQUE,name TEXT,building_id BIGINT,floor_id BIGINT,room_id BIGINT,profession TEXT,grp TEXT,type TEXT,manufacturer TEXT,model TEXT,serial TEXT,system_id TEXT,parent_id BIGINT,status TEXT,criticality TEXT,service_months INTEGER,revision_months INTEGER,purchase_price DOUBLE PRECISION,installed TEXT,warranty TEXT,ip TEXT,protocol TEXT,notes TEXT)""",
+  """CREATE TABLE IF NOT EXISTS workorders(id BIGSERIAL PRIMARY KEY,asset_id BIGINT,title TEXT,kind TEXT,priority TEXT,status TEXT,due TEXT,supplier TEXT,technician TEXT,cost DOUBLE PRECISION,description TEXT)""",
+  """CREATE TABLE IF NOT EXISTS incidents(id BIGSERIAL PRIMARY KEY,asset_id BIGINT,title TEXT,severity TEXT,status TEXT,reported TEXT,impact TEXT,cause TEXT,cost DOUBLE PRECISION)""",
+  """CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,name TEXT,email TEXT,role TEXT,status TEXT,password_hash TEXT,last_login TEXT)""",
+  """CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT)""",
+  """CREATE TABLE IF NOT EXISTS audit_log(id BIGSERIAL PRIMARY KEY,created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,user_id BIGINT,user_name TEXT,action TEXT,detail TEXT,ip TEXT)""",
+  """CREATE TABLE IF NOT EXISTS documents(id BIGSERIAL PRIMARY KEY,building_id BIGINT REFERENCES buildings(id) ON DELETE CASCADE,name TEXT,category TEXT,mime TEXT,size BIGINT,uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,data BYTEA)"""
+ ]
+ with con() as db:
+  for statement in schema: db.execute(statement)
+  db.commit()
+ if not one('select count(*) n from users')['n']:
+  x('insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!'))))
 def init():
  os.makedirs(DATA_DIR,exist_ok=True)
+ if USING_POSTGRES:
+  init_postgres(); return
  with con() as c:
   c.executescript("""CREATE TABLE IF NOT EXISTS buildings(id INTEGER PRIMARY KEY,code TEXT UNIQUE,name TEXT,address TEXT,manager TEXT,status TEXT DEFAULT 'Aktívna');CREATE TABLE IF NOT EXISTS floors(id INTEGER PRIMARY KEY,building_id INTEGER REFERENCES buildings(id) ON DELETE CASCADE,code TEXT,name TEXT);CREATE TABLE IF NOT EXISTS rooms(id INTEGER PRIMARY KEY,floor_id INTEGER REFERENCES floors(id) ON DELETE CASCADE,code TEXT,name TEXT,area REAL,tenant TEXT,zone TEXT);CREATE TABLE IF NOT EXISTS assets(id INTEGER PRIMARY KEY,asset_id TEXT UNIQUE,name TEXT,building_id INTEGER,floor_id INTEGER,room_id INTEGER,profession TEXT,grp TEXT,type TEXT,manufacturer TEXT,model TEXT,serial TEXT,system_id TEXT,parent_id INTEGER,status TEXT,criticality TEXT,service_months INTEGER,revision_months INTEGER,purchase_price REAL,installed TEXT,warranty TEXT,ip TEXT,protocol TEXT,notes TEXT);CREATE TABLE IF NOT EXISTS workorders(id INTEGER PRIMARY KEY,asset_id INTEGER,title TEXT,kind TEXT,priority TEXT,status TEXT,due TEXT,supplier TEXT,technician TEXT,cost REAL,description TEXT);CREATE TABLE IF NOT EXISTS incidents(id INTEGER PRIMARY KEY,asset_id INTEGER,title TEXT,severity TEXT,status TEXT,reported TEXT,impact TEXT,cause TEXT,cost REAL);CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,name TEXT,email TEXT,role TEXT,status TEXT);CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT);""")
   cols=[r[1] for r in c.execute("pragma table_info(users)").fetchall()]
@@ -252,6 +289,7 @@ def api_health():
   'response_ms':round((time.time()-started)*1000,1),
   'version':'9.0.0.5',
   'counts':counts,
+  'database_engine':'PostgreSQL' if USING_POSTGRES else 'SQLite',
   'checked_at':datetime.now().isoformat(timespec='seconds')
  }), (200 if ok else 503)
 
