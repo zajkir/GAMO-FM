@@ -124,11 +124,16 @@
   <div><small>OBJEKTY</small><b>{{customer_stats.buildings}}</b><span>budov</span></div>
  </div>
  {% if organizations %}
+ <div class="customer-filterbar">
+  <div class="customer-searchbox"><span>⌕</span><input id="customerSearch" placeholder="Hľadať firmu, kód alebo administrátora..." oninput="filterCustomers()"></div>
+  <select id="customerPlanFilter" onchange="filterCustomers()"><option value="">Všetky plány</option><option>BASIC</option><option>BUSINESS</option><option>ENTERPRISE</option></select>
+  <select id="customerStatusFilter" onchange="filterCustomers()"><option value="">Všetky stavy</option><option value="active">Aktívne</option><option value="paused">Pozastavené / expirované</option></select>
+ </div>
  <div class="customer-table">
   <div class="customer-table-head"><span>FIRMA</span><span>ADMINISTRÁTOR</span><span>PLÁN</span><span>VYUŽITIE</span><span>LICENCIA</span><span>STAV</span><span></span></div>
   {% for o in organizations %}
   {% set expired = o.license_until and (o.license_until|string) < today.isoformat() %}
-  <div class="customer-row">
+  <div class="customer-row" data-search="{{(o.name ~ ' ' ~ o.code ~ ' ' ~ (o.admin_name or '') ~ ' ' ~ (o.admin_email or ''))|lower}}" data-plan="{{o.plan}}" data-license="{{o.license_status}}" data-orgstatus="{{o.status}}" data-expired="{{'1' if expired else '0'}}">
    <a class="customer-company customer-company-link" href="/platform/customer/{{o.id}}"><div class="customer-logo" style="background:linear-gradient(145deg,{{o.brand_color or '#163a72'}},#17345d)">{{o.code[:2]|upper}}</div><div><b>{{o.name}}</b><small>{{o.code}} · otvoriť detail →</small></div></a>
    <div class="customer-admin"><b>{{o.admin_name or '—'}}</b><small>{{o.admin_email or 'Bez administrátora'}}</small></div>
    <div><span class="plan-pill plan-{{o.plan|lower}}">{{o.plan}}</span></div>
