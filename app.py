@@ -379,6 +379,16 @@ def reports_export_xlsx():
  money_fmt='#,##0.00 [$€-sk-SK]'
  date_fmt='dd.mm.yyyy'
 
+ def excel_safe(value):
+  if isinstance(value,str) and value[:1] in {'=','+','-','@'}: return "'" + value
+  return value
+
+ def excel_date(value):
+  if not value: return None
+  if isinstance(value,(date,datetime)): return value
+  try: return datetime.strptime(str(value)[:10],'%Y-%m-%d').date()
+  except Exception: return excel_safe(value)
+
  buildings=q("""select b.id,b.code,b.name,
   (select count(*) from assets a where a.building_id=b.id) assets,
   (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id) maintenance_cost,
@@ -407,7 +417,7 @@ def reports_export_xlsx():
 
  # Executive summary
  ws.sheet_view.showGridLines=False
- ws.freeze_panes='A11'
+ ws.freeze_panes='A12'
  ws.merge_cells('A1:H2')
  ws['A1']=f"GAMO FACILITY REPORT · {org['name'] if org else ''}"
  ws['A1'].font=Font(color=white,bold=True,size=20)
@@ -448,7 +458,7 @@ def reports_export_xlsx():
   cell=ws.cell(start_row,col,hdr); cell.fill=PatternFill('solid',fgColor=dark); cell.font=Font(color=white,bold=True,size=9); cell.alignment=Alignment(vertical='center')
  for r_idx,b in enumerate(buildings,start_row+1):
   total=float(b['maintenance_cost'] or 0)+float(b['incident_cost'] or 0)
-  vals=[b['code'],b['name'],b['assets'],float(b['maintenance_cost'] or 0),float(b['incident_cost'] or 0),b['open_incidents'],total]
+  vals=[excel_safe(b['code']),excel_safe(b['name']),b['assets'],float(b['maintenance_cost'] or 0),float(b['incident_cost'] or 0),b['open_incidents'],total]
   for col,val in enumerate(vals,1):
    cell=ws.cell(r_idx,col,val); cell.border=Border(bottom=thin); cell.alignment=Alignment(vertical='top',wrap_text=True)
   for col in (4,5,7): ws.cell(r_idx,col).number_format=money_fmt
@@ -462,19 +472,21 @@ def reports_export_xlsx():
  # Charts use a dedicated hidden data sheet so chart anchors stay visible.
  chart_data=wb.create_sheet('_Grafy'); chart_data.sheet_state='hidden'
  chart_data.append(['Budova','Údržba','Incidenty','','Profesia','Assety'])
- for idx,b in enumerate(buildings,2):
-  chart_data.cell(idx,1,b['code']); chart_data.cell(idx,2,float(b['maintenance_cost'] or 0)); chart_data.cell(idx,3,float(b['incident_cost'] or 0))
- for idx,p in enumerate(professions,2):
-  chart_data.cell(idx,5,p['profession']); chart_data.cell(idx,6,p['assets'])
- if buildings:
-  chart=BarChart(); chart.type='col'; chart.style=10; chart.title='Náklady podľa budovy'; chart.y_axis.title='EUR'; chart.height=7.5; chart.width=13
-  chart.add_data(Reference(chart_data,min_col=2,max_col=3,min_row=1,max_row=1+len(buildings)),titles_from_data=True)
-  chart.set_categories(Reference(chart_data,min_col=1,min_row=2,max_row=1+len(buildings)))
+ chart_buildings=sorted(buildings,key=lambda b:float(b['maintenance_cost'] or 0)+float(b['incident_cost'] or 0),reverse=True)[:12]
+ chart_professions=list(professions)[:10]
+ for idx,b in enumerate(chart_buildings,2):
+  chart_data.cell(idx,1,excel_safe(b['code'])); chart_data.cell(idx,2,float(b['maintenance_cost'] or 0)); chart_data.cell(idx,3,float(b['incident_cost'] or 0))
+ for idx,p in enumerate(chart_professions,2):
+  chart_data.cell(idx,5,excel_safe(p['profession'])); chart_data.cell(idx,6,p['assets'])
+ if chart_buildings:
+  chart=BarChart(); chart.type='col'; chart.style=10; chart.title='Top náklady podľa budovy'; chart.y_axis.title='EUR'; chart.height=7.5; chart.width=13
+  chart.add_data(Reference(chart_data,min_col=2,max_col=3,min_row=1,max_row=1+len(chart_buildings)),titles_from_data=True)
+  chart.set_categories(Reference(chart_data,min_col=1,min_row=2,max_row=1+len(chart_buildings)))
   chart.legend.position='b'; ws.add_chart(chart,'J4')
- if professions:
+ if chart_professions:
   pie=PieChart(); pie.title='Assety podľa profesie'; pie.height=7.5; pie.width=10
-  pie.add_data(Reference(chart_data,min_col=6,min_row=1,max_row=1+len(professions)),titles_from_data=True)
-  pie.set_categories(Reference(chart_data,min_col=5,min_row=2,max_row=1+len(professions)))
+  pie.add_data(Reference(chart_data,min_col=6,min_row=1,max_row=1+len(chart_professions)),titles_from_data=True)
+  pie.set_categories(Reference(chart_data,min_col=5,min_row=2,max_row=1+len(chart_professions)))
   pie.legend.position='r'; ws.add_chart(pie,'J19')
  for col,width in {'A':13,'B':31,'C':11,'D':16,'E':16,'F':12,'G':16,'H':4}.items(): ws.column_dimensions[col].width=width
  ws.auto_filter.ref=f'A{start_row}:G{end_row}' if buildings else None
@@ -493,7 +505,7 @@ def reports_export_xlsx():
    cell=sh.cell(header_row,col,hdr); cell.fill=PatternFill('solid',fgColor=dark); cell.font=Font(color=white,bold=True,size=9); cell.alignment=Alignment(vertical='center',wrap_text=True)
   for ridx,row in enumerate(rows,header_row+1):
    for cidx,val in enumerate(row,1):
-    cell=sh.cell(ridx,cidx,val); cell.border=Border(bottom=thin); cell.alignment=Alignment(vertical='top',wrap_text=True)
+    cell=sh.cell(ridx,cidx,excel_safe(val)); cell.border=Border(bottom=thin); cell.alignment=Alignment(vertical='top',wrap_text=True)
    if ridx%2==0:
     for cidx in range(1,len(headers)+1): sh.cell(ridx,cidx).fill=PatternFill('solid',fgColor='FAFBFD')
   if formats:
@@ -527,21 +539,21 @@ def reports_export_xlsx():
  asset_data=[[r[k] for k in ['asset_id','name','building','floor','room','profession','grp','type','manufacturer','model','serial','system_id','status','criticality','purchase_price']] for r in assets_rows]
  styled_sheet('Assety','ASSET REGISTER',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],asset_data,{15:money_fmt},13,14,'AssetsTable')
 
- work_data=[[r[k] for k in ['asset_id','asset','building','title','kind','priority','status','due','supplier','technician','cost','description']] for r in wo_rows]
- work=styled_sheet('Údržba','ÚDRŽBA & REVÍZIE',['Asset ID','Asset','Budova','Pracovný príkaz','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],work_data,{11:money_fmt},7,None,'MaintenanceTable')
+ work_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['kind'],r['priority'],r['status'],excel_date(r['due']),r['supplier'],r['technician'],r['cost'],r['description']] for r in wo_rows]
+ work=styled_sheet('Údržba','ÚDRŽBA & REVÍZIE',['Asset ID','Asset','Budova','Pracovný príkaz','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],work_data,{8:date_fmt,11:money_fmt},7,None,'MaintenanceTable')
  for ridx in range(6,6+len(work_data)):
   due=work.cell(ridx,8).value
   if due and str(due)[:10]<date.today().isoformat() and str(work.cell(ridx,7).value)!='Ukončené':
    work.cell(ridx,8).fill=PatternFill('solid',fgColor=red); work.cell(ridx,8).font=Font(color='A61B2B',bold=True)
 
- incident_data=[[r[k] for k in ['asset_id','asset','building','title','severity','status','reported','impact','cause','cost']] for r in inc_rows]
- incidents_sh=styled_sheet('Incidenty','PORUCHY & HAVÁRIE',['Asset ID','Asset','Budova','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],incident_data,{10:money_fmt},6,None,'IncidentsTable')
+ incident_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['severity'],r['status'],excel_date(r['reported']),r['impact'],r['cause'],r['cost']] for r in inc_rows]
+ incidents_sh=styled_sheet('Incidenty','PORUCHY & HAVÁRIE',['Asset ID','Asset','Budova','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],incident_data,{7:date_fmt,10:money_fmt},6,None,'IncidentsTable')
  for ridx in range(6,6+len(incident_data)):
   sev=str(incidents_sh.cell(ridx,5).value or '')
   incidents_sh.cell(ridx,5).fill=PatternFill('solid',fgColor=red if sev in {'Kritická','Havária','Vysoká'} else amber)
 
- overdue_data=[[r[k] for k in ['asset_id','asset','building','title','priority','due','technician','supplier','status']] for r in overdue_rows]
- overdue_sh=styled_sheet('Po termíne','ÚLOHY PO TERMÍNE',['Asset ID','Asset','Budova','Úloha','Priorita','Termín','Technik','Dodávateľ','Stav'],overdue_data,None,9,None,'OverdueTable')
+ overdue_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['priority'],excel_date(r['due']),r['technician'],r['supplier'],r['status']] for r in overdue_rows]
+ overdue_sh=styled_sheet('Po termíne','ÚLOHY PO TERMÍNE',['Asset ID','Asset','Budova','Úloha','Priorita','Termín','Technik','Dodávateľ','Stav'],overdue_data,{6:date_fmt},9,None,'OverdueTable')
  for ridx in range(6,6+len(overdue_data)):
   overdue_sh.cell(ridx,6).fill=PatternFill('solid',fgColor=red); overdue_sh.cell(ridx,6).font=Font(color='A61B2B',bold=True)
 
@@ -1066,6 +1078,7 @@ def api_notifications():
 
 @app.get('/api/setting')
 def api_setting():
+ if not can('settings_manage'): abort(403)
  section=(request.args.get('section') or '').strip()
  r=one('select v from organization_settings where organization_id=? and k=?',(org_id(),section))
  return jsonify({'value':r['v'] if r else ''})
