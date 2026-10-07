@@ -255,11 +255,14 @@ def security_headers(response):
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
- current=one_system('select id,status,role,organization_id from users where id=?',(session.get('user_id'),))
+ current=one_system('select id,status,role,organization_id,must_change_password from users where id=?',(session.get('user_id'),))
  if not current or current['status']!='Aktívny' or current['organization_id']!=actor_org_id():
   session.clear(); return redirect(url_for('login'))
  if current['role']!=session.get('user_role'):
   session['user_role']=current['role']
+ session['must_change_password']=bool(current['must_change_password'])
+ if session['must_change_password'] and request.endpoint not in {'account_password','logout'}:
+  return redirect('/account/password')
  actor_org=one_system('select * from organizations where id=?',(actor_org_id(),)) if actor_org_id() else None
  if actor_org: session['organization_code']=actor_org['code']
  target=None
@@ -311,9 +314,9 @@ def login():
     error='Licencia organizácie nie je aktívna alebo jej platnosť skončila. Kontaktuj GAMO.'
    else:
     _login_attempts.pop(key,None); session.clear(); session.permanent=remember
-    session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u['organization_id']; session['organization_code']=org['code']; session['csrf']=secrets.token_urlsafe(32)
+    session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u['organization_id']; session['organization_code']=org['code']; session['must_change_password']=bool(u['must_change_password']); session['csrf']=secrets.token_urlsafe(32)
     x("update users set last_login=datetime('now') where id=?",(u['id'],))
-    return redirect(request.args.get('next') or '/')
+    return redirect('/account/password' if session['must_change_password'] else (request.args.get('next') or '/'))
   else:
    attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
  return render_template('login.html',error=error)
@@ -321,6 +324,32 @@ def login():
 @app.get('/logout')
 def logout():
  session.clear(); return redirect('/login')
+
+@app.route('/account/password',methods=['GET','POST'])
+def account_password():
+ if support_mode():
+  flash('Najprv ukonči GAMO support režim.','error'); return redirect('/')
+ u=one('select * from users where id=? and organization_id=?',(session.get('user_id'),actor_org_id()))
+ if not u: abort(404)
+ if request.method=='POST':
+  current_password=request.form.get('current_password') or ''
+  new_password=request.form.get('new_password') or ''
+  confirm=request.form.get('confirm_password') or ''
+  if not check_password_hash(u['password_hash'],current_password):
+   flash('Aktuálne heslo nie je správne.','error')
+  elif len(new_password)<10:
+   flash('Nové heslo musí mať aspoň 10 znakov.','error')
+  elif new_password!=confirm:
+   flash('Nové heslá sa nezhodujú.','error')
+  elif check_password_hash(u['password_hash'],new_password):
+   flash('Nové heslo musí byť odlišné od aktuálneho.','error')
+  else:
+   x('update users set password_hash=?,must_change_password=? where id=?',(generate_password_hash(new_password),False if USING_POSTGRES else 0,u['id']))
+   session['must_change_password']=False
+   audit('PASSWORD_CHANGE','Používateľ zmenil svoje heslo.')
+   flash('Heslo bolo bezpečne zmenené.','success')
+   return redirect('/')
+ return render_template('account_password.html',forced=bool(u['must_change_password']),csrf_token=session.get('csrf',''),current_user=u)
 
 @app.context_processor
 def ctx():
@@ -881,12 +910,12 @@ def platform_customer_reset_admin_password(i):
   flash('Reset hesla vyžaduje aktívny support prístup udelený zákazníkom.','error')
   return redirect(f'/platform/customer/{i}#customerUsers')
  password=request.form.get('password') or ''
- if len(password)<8:
-  flash('Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
+ if len(password)<10:
+  flash('Dočasné heslo musí mať aspoň 10 znakov.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
  admin_user=one_system("select id,name,email from users where organization_id=? and role='Administrator' order by id limit 1",(i,))
  if not admin_user:
   flash('Zákazník nemá administrátorský účet.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
- x_system('update users set password_hash=?,status=? where id=?',(generate_password_hash(password),'Aktívny',admin_user['id']))
+ x_system('update users set password_hash=?,status=?,must_change_password=? where id=?',(generate_password_hash(password),'Aktívny',True if USING_POSTGRES else 1,admin_user['id']))
  customer_access(i,'GAMO_ADMIN_PASSWORD_RESET',f"Reset hesla administrátora {admin_user['email']}.")
  audit('CUSTOMER_ADMIN_PASSWORD_RESET',f"{customer['code']} · {admin_user['email']}")
  flash('Dočasné heslo zákazníckeho administrátora bolo zmenené.','success')
@@ -919,7 +948,7 @@ def platform_customer():
  plan=(f.get('plan') or 'BUSINESS').upper()
  license_status=f.get('license_status') or 'Aktívna'
  license_until=(f.get('license_until') or '').strip() or None
- if not code or not name or not admin_name or not email or len(password)<8:
+ if not code or not name or not admin_name or not email or len(password)<10:
   flash('Vyplň povinné údaje. Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect('/admin#customersAdmin')
  if plan not in {'BASIC','BUSINESS','ENTERPRISE'} or license_status not in {'Aktívna','Pozastavená'}:
   flash('Neplatný licenčný plán alebo stav.','error'); return redirect('/admin#customersAdmin')
@@ -932,7 +961,7 @@ def platform_customer():
     oid=row['id']
    else:
     cur=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact) values(?,?,?,?,?,?,?,?)'),(code,name,'Aktívny',plan,license_status,license_until,name,email)); oid=cur.lastrowid
-   db.execute(_sql('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)'),(admin_name,email,'Administrator','Aktívny',generate_password_hash(password),oid))
+   db.execute(_sql('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)'),(admin_name,email,'Administrator','Aktívny',generate_password_hash(password),oid,True if USING_POSTGRES else 1))
    db.commit()
   audit('CUSTOMER_CREATE',f'{code} · {name} · {plan}')
   flash('Zákazník bol vytvorený. Má vlastnú organizáciu a administrátorský účet.','success')
@@ -1024,9 +1053,9 @@ def add(what):
     flash('Licenčný limit používateľov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/admin#usersAdmin')
    name=(f.get('name') or '').strip(); email=(f.get('email') or '').strip().lower(); pwd=f.get('password') or ''
    role=f.get('role') or 'Viewer'; status=f.get('status') or 'Aktívny'
-   if not name or not email or len(pwd)<8 or role not in {'Administrator','Facility Manager','Technik','Servisný technik','Viewer'} or status not in {'Aktívny','Neaktívny'}: raise ValueError()
+   if not name or not email or len(pwd)<10 or role not in {'Administrator','Facility Manager','Technik','Servisný technik','Viewer'} or status not in {'Aktívny','Neaktívny'}: raise ValueError()
    if one('select id from users where lower(email)=?',(email,)): raise IntegrityError()
-   x('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id()))
+   x('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id(),True if USING_POSTGRES else 1))
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
  except (IntegrityError,ValueError):
   flash('Záznam sa nepodarilo uložiť. Skontroluj duplicity a zadané hodnoty.','error')
@@ -1051,7 +1080,9 @@ def update_user(i):
   duplicate=one('select id from users where lower(email)=? and id<>?',(email,i))
   if duplicate: raise IntegrityError()
   if pwd:
-   x('update users set name=?,email=?,role=?,status=?,password_hash=? where id=?',(name,email,role,status,generate_password_hash(pwd),i))
+   if len(pwd)<10:
+    flash('Dočasné heslo musí mať aspoň 10 znakov.','error'); return redirect('/admin#usersAdmin')
+   x('update users set name=?,email=?,role=?,status=?,password_hash=?,must_change_password=? where id=?',(name,email,role,status,generate_password_hash(pwd),True if USING_POSTGRES else 1,i))
   else:
    x('update users set name=?,email=?,role=?,status=? where id=?',(name,email,role,status,i))
   if i==session.get('user_id'):
