@@ -11,7 +11,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta,datetime
 from db_migrations import run_migrations
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.utils import get_column_letter
 BASE=os.path.dirname(os.path.abspath(__file__))
 if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
@@ -19,7 +22,7 @@ else:
     DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
 app=Flask(__name__)
 app.secret_key=os.environ.get('GAMO_SECRET_KEY') or secrets.token_hex(32)
-app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(days=30),MAX_CONTENT_LENGTH=16*1024*1024)
+app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','1' if os.environ.get('DATABASE_URL') else '0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(days=30),MAX_CONTENT_LENGTH=16*1024*1024)
 DB=os.path.join(DATA_DIR,'gamo.db')
 LOGIN_WINDOW=300
 LOGIN_MAX_ATTEMPTS=6
@@ -116,7 +119,9 @@ def one(sql,a=()):
 def x(sql,a=()):
  with con() as c:
   statement=_sql(sql)
-  if USING_POSTGRES and statement.lstrip().lower().startswith('insert into') and not statement.lstrip().lower().startswith('insert into settings') and ' returning ' not in statement.lower():
+  lower=statement.lstrip().lower()
+  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
+  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
    statement+=' RETURNING id'
    r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
   r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
@@ -191,10 +196,26 @@ init()
 with con() as c:
  c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
 
+@app.after_request
+def security_headers(response):
+ response.headers['X-Content-Type-Options']='nosniff'
+ response.headers['X-Frame-Options']='DENY'
+ response.headers['Referrer-Policy']='same-origin'
+ response.headers['Permissions-Policy']='camera=(), microphone=(), geolocation=()'
+ response.headers['Content-Security-Policy']="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+ if app.config.get('SESSION_COOKIE_SECURE'):
+  response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
+ return response
+
 @app.before_request
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
+ current=one('select id,status,role,organization_id from users where id=?',(session.get('user_id'),))
+ if not current or current['status']!='Aktívny' or current['organization_id']!=org_id():
+  session.clear(); return redirect(url_for('login'))
+ if current['role']!=session.get('user_role'):
+  session['user_role']=current['role']
  org=one('select * from organizations where id=?',(org_id(),)) if org_id() else None
  license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
  if not license_ok:
@@ -347,48 +368,185 @@ def reports():
 def reports_export_xlsx():
  if not can('reports_view'): abort(403)
  oid=org_id(); org=one('select * from organizations where id=?',(oid,))
+ brand=(org['brand_color'] if org and org['brand_color'] else '#17365D').replace('#','').upper()
+ dark='17365D'; blue='246BFD'; light='EAF1FB'; pale='F7F9FC'; green='DFF3E8'; red='FCE8EC'; amber='FFF3D8'; white='FFFFFF'; gray='667085'
  wb=Workbook(); ws=wb.active; ws.title='Súhrn'
- title_fill=PatternFill('solid',fgColor='17365D'); header_fill=PatternFill('solid',fgColor='DCE6F1')
- for cell in ws[1]:
-  cell.fill=title_fill
- ws.merge_cells('A1:D1'); ws['A1']=f"GAMO Facility Report · {org['name'] if org else ''}"; ws['A1'].font=Font(color='FFFFFF',bold=True,size=14); ws['A1'].alignment=Alignment(vertical='center')
- ws.row_dimensions[1].height=26
- summary=[
-  ('Generované',datetime.now().strftime('%d.%m.%Y %H:%M')),
-  ('Budovy',one('select count(*) n from buildings where organization_id=?',(oid,))['n']),
-  ('Assety',one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n']),
-  ('Náklady údržby',float(one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'] or 0)),
-  ('Náklady incidentov',float(one('select coalesce(sum(i.cost),0) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'] or 0))
- ]
- for r,(k,v) in enumerate(summary,3):
-  ws.cell(r,1,k).font=Font(bold=True); ws.cell(r,2,v)
- ws.column_dimensions['A'].width=24; ws.column_dimensions['B'].width=28
+ wb.properties.creator='GAMO Facility Platform'
+ wb.properties.title=f"Facility report · {org['name'] if org else ''}"
+ wb.properties.subject='Assety, údržba, incidenty a manažérske KPI'
+ thin=Side(style='thin',color='DDE3EC')
+ money_fmt='#,##0.00 [$€-sk-SK]'
+ date_fmt='dd.mm.yyyy'
 
- def add_sheet(name,headers,rows):
-  sh=wb.create_sheet(name); sh.append(headers)
-  for cell in sh[1]:
-   cell.fill=header_fill; cell.font=Font(bold=True)
-  for row in rows: sh.append(list(row))
-  sh.freeze_panes='A2'; sh.auto_filter.ref=sh.dimensions
-  for col in sh.columns:
-   letter=col[0].column_letter
-   sh.column_dimensions[letter].width=min(45,max(12,max(len(str(x.value or '')) for x in col)+2))
-  return sh
-
+ buildings=q("""select b.id,b.code,b.name,
+  (select count(*) from assets a where a.building_id=b.id) assets,
+  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id) maintenance_cost,
+  (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id) incident_cost,
+  (select count(*) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.status!='Ukončená') open_incidents
+  from buildings b where b.organization_id=? order by b.name""",(oid,))
+ professions=q("""select coalesce(a.profession,'Iné') profession,count(*) assets,
+  coalesce(sum(a.purchase_price),0) asset_value
+  from assets a join buildings b on b.id=a.building_id
+  where b.organization_id=? group by a.profession order by assets desc""",(oid,))
  assets_rows=q("""select a.asset_id,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price
   from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id
   where b.organization_id=? order by a.asset_id""",(oid,))
- add_sheet('Assety',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],[[r[k] for k in ['asset_id','name','building','floor','room','profession','grp','type','manufacturer','model','serial','system_id','status','criticality','purchase_price']] for r in assets_rows])
- wo_rows=q("""select a.asset_id,w.title,w.kind,w.priority,w.status,w.due,w.supplier,w.technician,w.cost,w.description
+ wo_rows=q("""select a.asset_id,a.name asset,b.name building,w.title,w.kind,w.priority,w.status,w.due,w.supplier,w.technician,w.cost,w.description
   from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? order by w.id desc""",(oid,))
- add_sheet('Údržba',['Asset ID','Úloha','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],[[r[k] for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description']] for r in wo_rows])
- inc_rows=q("""select a.asset_id,i.title,i.severity,i.status,i.reported,i.impact,i.cause,i.cost
+ inc_rows=q("""select a.asset_id,a.name asset,b.name building,i.title,i.severity,i.status,i.reported,i.impact,i.cause,i.cost
   from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
   where b.organization_id=? order by i.id desc""",(oid,))
- add_sheet('Incidenty',['Asset ID','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],[[r[k] for k in ['asset_id','title','severity','status','reported','impact','cause','cost']] for r in inc_rows])
+ overdue_rows=[r for r in wo_rows if r['status']!='Ukončené' and r['due'] and str(r['due'])[:10]<date.today().isoformat()]
+
+ maintenance_cost=float(sum(float(r['cost'] or 0) for r in wo_rows))
+ incident_cost=float(sum(float(r['cost'] or 0) for r in inc_rows))
+ total_cost=maintenance_cost+incident_cost
+ open_incidents=sum(1 for r in inc_rows if r['status']!='Ukončená')
+
+ # Executive summary
+ ws.sheet_view.showGridLines=False
+ ws.freeze_panes='A11'
+ ws.merge_cells('A1:H2')
+ ws['A1']=f"GAMO FACILITY REPORT · {org['name'] if org else ''}"
+ ws['A1'].font=Font(color=white,bold=True,size=20)
+ ws['A1'].fill=PatternFill('solid',fgColor=brand or dark)
+ ws['A1'].alignment=Alignment(vertical='center')
+ for row in ws['A1:H2']:
+  for cell in row: cell.fill=PatternFill('solid',fgColor=brand or dark)
+ ws.row_dimensions[1].height=25; ws.row_dimensions[2].height=16
+ ws.merge_cells('A3:H3'); ws['A3']=f"Generované {datetime.now().strftime('%d.%m.%Y %H:%M')} · {org['plan'] if org else ''} · organizácia {org['code'] if org else ''}"
+ ws['A3'].font=Font(color=gray,size=9); ws['A3'].alignment=Alignment(vertical='center')
+
+ cards=[
+  ('A5','B7','CELKOVÉ NÁKLADY',total_cost,money_fmt,brand or dark),
+  ('C5','D7','ÚDRŽBA',maintenance_cost,money_fmt,blue),
+  ('E5','F7','OTVORENÉ INCIDENTY',open_incidents,'0','C0394E' if open_incidents else '16845A'),
+  ('G5','H7','PO TERMÍNE',len(overdue_rows),'0','C98412' if overdue_rows else '16845A')
+ ]
+ for start,end,label,value,numfmt,color in cards:
+  ws.merge_cells(f'{start}:{end}')
+  cell=ws[start]; cell.value=value; cell.number_format=numfmt
+  cell.font=Font(size=17,bold=True,color=dark)
+  cell.fill=PatternFill('solid',fgColor=pale)
+  cell.alignment=Alignment(horizontal='center',vertical='center')
+  cell.border=Border(left=Side(style='medium',color=color),top=thin,right=thin,bottom=thin)
+  label_cell=ws.cell(cell.row-1,cell.column); label_cell.value=label; label_cell.font=Font(size=8,bold=True,color=gray)
+
+ ws['A9']='PORTFÓLIO'; ws['A9'].font=Font(size=9,bold=True,color=gray)
+ portfolio=[('Budovy',len(buildings)),('Assety',len(assets_rows)),('Servisné záznamy',len(wo_rows)),('Incidenty',len(inc_rows))]
+ for idx,(label,value) in enumerate(portfolio):
+  col=1+idx*2
+  ws.cell(9,col,label).font=Font(size=8,bold=True,color=gray)
+  ws.cell(9,col+1,value).font=Font(size=11,bold=True,color=dark)
+
+ # Building cost table
+ headers=['Kód','Budova','Assety','Údržba','Incidenty','Otvorené','Spolu']
+ start_row=11
+ for col,hdr in enumerate(headers,1):
+  cell=ws.cell(start_row,col,hdr); cell.fill=PatternFill('solid',fgColor=dark); cell.font=Font(color=white,bold=True,size=9); cell.alignment=Alignment(vertical='center')
+ for r_idx,b in enumerate(buildings,start_row+1):
+  total=float(b['maintenance_cost'] or 0)+float(b['incident_cost'] or 0)
+  vals=[b['code'],b['name'],b['assets'],float(b['maintenance_cost'] or 0),float(b['incident_cost'] or 0),b['open_incidents'],total]
+  for col,val in enumerate(vals,1):
+   cell=ws.cell(r_idx,col,val); cell.border=Border(bottom=thin); cell.alignment=Alignment(vertical='top',wrap_text=True)
+  for col in (4,5,7): ws.cell(r_idx,col).number_format=money_fmt
+  if b['open_incidents']: ws.cell(r_idx,6).fill=PatternFill('solid',fgColor=red)
+ end_row=max(start_row+1,start_row+len(buildings))
+ if buildings:
+  tab=Table(displayName='BuildingCostTable',ref=f'A{start_row}:G{end_row}')
+  tab.tableStyleInfo=TableStyleInfo(name='TableStyleMedium2',showRowStripes=True,showFirstColumn=False,showLastColumn=False)
+  ws.add_table(tab)
+
+ # Chart data (hidden columns J:L) and charts
+ ws['J1']='Budova'; ws['K1']='Údržba'; ws['L1']='Incidenty'
+ for idx,b in enumerate(buildings,2):
+  ws.cell(idx,10,b['code']); ws.cell(idx,11,float(b['maintenance_cost'] or 0)); ws.cell(idx,12,float(b['incident_cost'] or 0))
+ if buildings:
+  chart=BarChart(); chart.type='col'; chart.style=10; chart.title='Náklady podľa budovy'; chart.y_axis.title='EUR'; chart.height=7.5; chart.width=13
+  chart.add_data(Reference(ws,min_col=11,max_col=12,min_row=1,max_row=1+len(buildings)),titles_from_data=True)
+  chart.set_categories(Reference(ws,min_col=10,min_row=2,max_row=1+len(buildings)))
+  chart.legend.position='b'; ws.add_chart(chart,'J4')
+ ws['N1']='Profesia'; ws['O1']='Assety'
+ for idx,p in enumerate(professions,2):
+  ws.cell(idx,14,p['profession']); ws.cell(idx,15,p['assets'])
+ if professions:
+  pie=PieChart(); pie.title='Assety podľa profesie'; pie.height=7.5; pie.width=10
+  pie.add_data(Reference(ws,min_col=15,min_row=1,max_row=1+len(professions)),titles_from_data=True)
+  pie.set_categories(Reference(ws,min_col=14,min_row=2,max_row=1+len(professions)))
+  pie.legend.position='r'; ws.add_chart(pie,'J19')
+ ws.column_dimensions['J'].hidden=True; ws.column_dimensions['K'].hidden=True; ws.column_dimensions['L'].hidden=True; ws.column_dimensions['N'].hidden=True; ws.column_dimensions['O'].hidden=True
+ for col,width in {'A':13,'B':31,'C':11,'D':16,'E':16,'F':12,'G':16,'H':4}.items(): ws.column_dimensions[col].width=width
+ ws.auto_filter.ref=f'A{start_row}:G{end_row}' if buildings else None
+ ws.print_title_rows='1:11'; ws.page_setup.orientation='landscape'; ws.page_setup.fitToWidth=1; ws.sheet_properties.pageSetUpPr.fitToPage=True
+
+ def styled_sheet(name,title,headers,rows,formats=None,status_col=None,critical_col=None,table_name=None):
+  sh=wb.create_sheet(name); sh.sheet_view.showGridLines=False
+  sh.merge_cells(start_row=1,start_column=1,end_row=2,end_column=max(1,len(headers)))
+  sh.cell(1,1,title); sh.cell(1,1).font=Font(color=white,bold=True,size=16); sh.cell(1,1).fill=PatternFill('solid',fgColor=brand or dark); sh.cell(1,1).alignment=Alignment(vertical='center')
+  for row in sh.iter_rows(min_row=1,max_row=2,min_col=1,max_col=len(headers)):
+   for cell in row: cell.fill=PatternFill('solid',fgColor=brand or dark)
+  sh.cell(3,1,f"Organizácia: {org['name'] if org else ''} · export {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+  sh.cell(3,1).font=Font(color=gray,size=9)
+  header_row=5
+  for col,hdr in enumerate(headers,1):
+   cell=sh.cell(header_row,col,hdr); cell.fill=PatternFill('solid',fgColor=dark); cell.font=Font(color=white,bold=True,size=9); cell.alignment=Alignment(vertical='center',wrap_text=True)
+  for ridx,row in enumerate(rows,header_row+1):
+   for cidx,val in enumerate(row,1):
+    cell=sh.cell(ridx,cidx,val); cell.border=Border(bottom=thin); cell.alignment=Alignment(vertical='top',wrap_text=True)
+   if ridx%2==0:
+    for cidx in range(1,len(headers)+1): sh.cell(ridx,cidx).fill=PatternFill('solid',fgColor='FAFBFD')
+  if formats:
+   for col_idx,fmt in formats.items():
+    for ridx in range(header_row+1,header_row+1+len(rows)): sh.cell(ridx,col_idx).number_format=fmt
+  if status_col:
+   for ridx in range(header_row+1,header_row+1+len(rows)):
+    val=str(sh.cell(ridx,status_col).value or '')
+    if val in {'Ukončené','Ukončená','Vyriešená','Prevádzka'}: sh.cell(ridx,status_col).fill=PatternFill('solid',fgColor=green)
+    elif val in {'Kritická','Havária','Porucha','Mimo prevádzky'}: sh.cell(ridx,status_col).fill=PatternFill('solid',fgColor=red)
+    elif val in {'Prebieha','Rieši sa','Pozastavené','Čaká na diel'}: sh.cell(ridx,status_col).fill=PatternFill('solid',fgColor=amber)
+  if critical_col:
+   for ridx in range(header_row+1,header_row+1+len(rows)):
+    val=str(sh.cell(ridx,critical_col).value or '')
+    if val=='A': sh.cell(ridx,critical_col).fill=PatternFill('solid',fgColor=red)
+    elif val=='B': sh.cell(ridx,critical_col).fill=PatternFill('solid',fgColor=amber)
+    elif val=='C': sh.cell(ridx,critical_col).fill=PatternFill('solid',fgColor=green)
+  end=max(header_row+1,header_row+len(rows))
+  if rows and table_name:
+   table=Table(displayName=table_name,ref=f"A{header_row}:{get_column_letter(len(headers))}{end}")
+   table.tableStyleInfo=TableStyleInfo(name='TableStyleMedium2',showRowStripes=True,showFirstColumn=False,showLastColumn=False)
+   sh.add_table(table)
+  sh.freeze_panes=f'A{header_row+1}'; sh.auto_filter.ref=f"A{header_row}:{get_column_letter(len(headers))}{end}" if rows else None
+  for cidx,hdr in enumerate(headers,1):
+   values=[str(hdr)]+[str(row[cidx-1] or '') for row in rows[:250]]
+   width=min(38,max(11,max(len(v) for v in values)+2))
+   sh.column_dimensions[get_column_letter(cidx)].width=width
+  sh.row_dimensions[1].height=24; sh.page_setup.orientation='landscape'; sh.page_setup.fitToWidth=1; sh.sheet_properties.pageSetUpPr.fitToPage=True
+  return sh
+
+ asset_data=[[r[k] for k in ['asset_id','name','building','floor','room','profession','grp','type','manufacturer','model','serial','system_id','status','criticality','purchase_price']] for r in assets_rows]
+ styled_sheet('Assety','ASSET REGISTER',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],asset_data,{15:money_fmt},13,14,'AssetsTable')
+
+ work_data=[[r[k] for k in ['asset_id','asset','building','title','kind','priority','status','due','supplier','technician','cost','description']] for r in wo_rows]
+ work=styled_sheet('Údržba','ÚDRŽBA & REVÍZIE',['Asset ID','Asset','Budova','Pracovný príkaz','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],work_data,{11:money_fmt},7,None,'MaintenanceTable')
+ for ridx in range(6,6+len(work_data)):
+  due=work.cell(ridx,8).value
+  if due and str(due)[:10]<date.today().isoformat() and str(work.cell(ridx,7).value)!='Ukončené':
+   work.cell(ridx,8).fill=PatternFill('solid',fgColor=red); work.cell(ridx,8).font=Font(color='A61B2B',bold=True)
+
+ incident_data=[[r[k] for k in ['asset_id','asset','building','title','severity','status','reported','impact','cause','cost']] for r in inc_rows]
+ incidents_sh=styled_sheet('Incidenty','PORUCHY & HAVÁRIE',['Asset ID','Asset','Budova','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],incident_data,{10:money_fmt},6,None,'IncidentsTable')
+ for ridx in range(6,6+len(incident_data)):
+  sev=str(incidents_sh.cell(ridx,5).value or '')
+  incidents_sh.cell(ridx,5).fill=PatternFill('solid',fgColor=red if sev in {'Kritická','Havária','Vysoká'} else amber)
+
+ overdue_data=[[r[k] for k in ['asset_id','asset','building','title','priority','due','technician','supplier','status']] for r in overdue_rows]
+ overdue_sh=styled_sheet('Po termíne','ÚLOHY PO TERMÍNE',['Asset ID','Asset','Budova','Úloha','Priorita','Termín','Technik','Dodávateľ','Stav'],overdue_data,None,9,None,'OverdueTable')
+ for ridx in range(6,6+len(overdue_data)):
+  overdue_sh.cell(ridx,6).fill=PatternFill('solid',fgColor=red); overdue_sh.cell(ridx,6).font=Font(color='A61B2B',bold=True)
+
  stream=io.BytesIO(); wb.save(stream); stream.seek(0)
- audit('REPORT_EXPORT','XLSX management report')
+ audit('REPORT_EXPORT',f'XLSX management report · {len(assets_rows)} assets · {len(wo_rows)} workorders · {len(inc_rows)} incidents')
  code=(org['code'] if org else 'ORG')
  return send_file(stream,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name=f'GAMO_report_{code}_{date.today().isoformat()}.xlsx')
 
