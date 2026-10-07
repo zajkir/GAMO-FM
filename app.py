@@ -563,6 +563,22 @@ def platform_customer_detail(i):
   recent_orders=recent_orders,license_days=license_days,customer_limits=limits,customer_audit=customer_audit,
   customer_last_backup=(last_backup['created'] if last_backup else None),customer_last_login=(last_login['last_login'] if last_login else None))
 
+@app.post('/platform/customer/<int:i>/reset-admin-password')
+def platform_customer_reset_admin_password(i):
+ if not is_gamo_admin(): abort(403)
+ customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ if not customer: abort(404)
+ password=request.form.get('password') or ''
+ if len(password)<8:
+  flash('Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
+ admin_user=one("select id,name,email from users where organization_id=? and role='Administrator' order by id limit 1",(i,))
+ if not admin_user:
+  flash('Zákazník nemá administrátorský účet.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
+ x('update users set password_hash=?,status=? where id=?',(generate_password_hash(password),'Aktívny',admin_user['id']))
+ audit('CUSTOMER_ADMIN_PASSWORD_RESET',f"{customer['code']} · {admin_user['email']}")
+ flash('Dočasné heslo zákazníckeho administrátora bolo zmenené.','success')
+ return redirect(f'/platform/customer/{i}#customerUsers')
+
 @app.post('/platform/customer/<int:i>/branding')
 def platform_customer_branding(i):
  if not is_gamo_admin(): abort(403)
