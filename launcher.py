@@ -83,12 +83,15 @@ class Launcher(tk.Tk):
         self.online = False
         self.update_manifest = None
         self.busy = False
+        self._fullscreen = False
 
         self.title("GAMO a.s. — Launcher")
-        self.geometry("900x540")
-        self.minsize(820, 500)
+        self.geometry("1020x640")
+        self.minsize(920, 580)
         self.configure(bg=BG)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<F11>", self.toggle_fullscreen)
+        self.bind("<Escape>", self.exit_fullscreen)
 
         self._center()
         self._build_styles()
@@ -97,10 +100,19 @@ class Launcher(tk.Tk):
 
     def _center(self):
         self.update_idletasks()
-        width, height = 900, 540
+        width, height = 1020, 640
         x = max(0, (self.winfo_screenwidth() - width) // 2)
         y = max(0, (self.winfo_screenheight() - height) // 2)
         self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def toggle_fullscreen(self, _event=None):
+        self._fullscreen = not self._fullscreen
+        self.attributes("-fullscreen", self._fullscreen)
+
+    def exit_fullscreen(self, _event=None):
+        if self._fullscreen:
+            self._fullscreen = False
+            self.attributes("-fullscreen", False)
 
     def _build_styles(self):
         style = ttk.Style(self)
@@ -120,111 +132,104 @@ class Launcher(tk.Tk):
 
     def _build_ui(self):
         shell = tk.Frame(self, bg=WHITE, highlightthickness=1, highlightbackground=LINE)
-        shell.pack(fill="both", expand=True, padx=24, pady=24)
+        shell.pack(fill="both", expand=True, padx=26, pady=26)
 
-        left = tk.Canvas(shell, width=300, bg=NAVY, highlightthickness=0)
+        left = tk.Canvas(shell, width=330, bg=NAVY, highlightthickness=0)
         left.pack(side="left", fill="y")
-        left.create_oval(196, -48, 390, 146, fill=NAVY_2, outline="")
-        left.create_oval(-80, 350, 160, 590, fill="#0A213B", outline="")
-        left.create_text(34, 52, text="G", anchor="nw", fill=WHITE, font=("Segoe UI", 31, "bold"))
-        left.create_text(34, 104, text="GAMO a.s.", anchor="nw", fill=WHITE, font=("Segoe UI", 18, "bold"))
+        left.create_oval(208, -54, 430, 168, fill=NAVY_2, outline="")
+        left.create_oval(-104, 420, 190, 714, fill="#0A213B", outline="")
+        left.create_rectangle(30, 34, 76, 80, fill=BLUE, outline="")
+        left.create_text(53, 57, text="G", anchor="center", fill=WHITE, font=("Segoe UI", 22, "bold"))
+        left.create_text(32, 111, text="GAMO a.s.", anchor="nw", fill=WHITE, font=("Segoe UI", 21, "bold"))
         left.create_text(
-            34,
-            136,
-            text="SMART FACILITY PLATFORM",
-            anchor="nw",
-            fill="#8FA6C0",
-            font=("Segoe UI", 8, "bold"),
+            32, 148, text="SMART FACILITY PLATFORM", anchor="nw",
+            fill="#9BB2CD", font=("Segoe UI", 10, "bold")
         )
         left.create_text(
-            34,
-            220,
-            text="Jedna aplikácia.\nBez lokálnej databázy.\nVždy aktuálne dáta.",
-            anchor="nw",
-            fill="#D9E4F1",
-            font=("Segoe UI", 13, "bold"),
-            width=220,
+            32, 219,
+            text="Jedna platforma pre\nbudovy, technológie\na servis.",
+            anchor="nw", fill="#E6EEF7", font=("Segoe UI", 16, "bold"), width=250
         )
         left.create_text(
-            34,
-            328,
-            text="Launcher bezpečne overí cloud,\naktualizácie a až potom otvorí\nGAMO Facility Platform.",
-            anchor="nw",
-            fill="#8299B4",
-            font=("Segoe UI", 9),
-            width=220,
+            32, 325,
+            text="Launcher pred spustením overí cloud,\nverziu aplikácie a bezpečné HTTPS\npripojenie.",
+            anchor="nw", fill="#A8BDD3", font=("Segoe UI", 11), width=258
         )
+
+        features = [
+            ("✓", "Cloudové dáta", "Bez lokálnej databázy zákazníka"),
+            ("✓", "Automatické aktualizácie", "Kontrola verzie pred spustením"),
+            ("✓", "Bezpečný prístup", "HTTPS · tenant izolácia · MFA"),
+        ]
+        y = 418
+        for symbol, title, subtitle in features:
+            left.create_oval(32, y, 54, y + 22, fill="#103658", outline="")
+            left.create_text(43, y + 11, text=symbol, anchor="center", fill="#66D7A7", font=("Segoe UI", 10, "bold"))
+            left.create_text(66, y - 1, text=title, anchor="nw", fill=WHITE, font=("Segoe UI", 10, "bold"))
+            left.create_text(66, y + 18, text=subtitle, anchor="nw", fill="#8FA6C0", font=("Segoe UI", 9))
+            y += 58
+
         left.create_text(
-            34,
-            476,
-            text=f"DESKTOP CLIENT  ·  v{current_version()}",
-            anchor="nw",
-            fill="#6F88A5",
-            font=("Segoe UI", 8, "bold"),
+            32, 597, text=f"DESKTOP CLIENT  ·  v{current_version()}",
+            anchor="sw", fill="#7E98B5", font=("Segoe UI", 9, "bold")
         )
 
         right = tk.Frame(shell, bg=WHITE)
         right.pack(side="left", fill="both", expand=True)
 
         header = tk.Frame(right, bg=WHITE)
-        header.pack(fill="x", padx=34, pady=(30, 0))
+        header.pack(fill="x", padx=38, pady=(34, 0))
+        top_line = tk.Frame(header, bg=WHITE)
+        top_line.pack(fill="x")
         tk.Label(
-            header, text="GAMO LAUNCHER", bg=WHITE, fg=BLUE, font=("Segoe UI", 8, "bold")
-        ).pack(anchor="w")
+            top_line, text="GAMO LAUNCHER", bg=WHITE, fg=BLUE, font=("Segoe UI", 10, "bold")
+        ).pack(side="left")
         tk.Label(
-            header, text="Facility Platform", bg=WHITE, fg=TEXT, font=("Segoe UI", 26, "bold")
-        ).pack(anchor="w", pady=(4, 0))
+            top_line, text="F11 · celá obrazovka", bg=WHITE, fg="#8B98AA", font=("Segoe UI", 9)
+        ).pack(side="right")
+        tk.Label(
+            header, text="Facility Platform", bg=WHITE, fg=TEXT, font=("Segoe UI", 30, "bold")
+        ).pack(anchor="w", pady=(6, 0))
         tk.Label(
             header,
-            text="Pripravené pre bezpečnú cloudovú prevádzku zákazníka.",
-            bg=WHITE,
-            fg=MUTED,
-            font=("Segoe UI", 10),
-        ).pack(anchor="w", pady=(3, 0))
+            text="Bezpečný vstup do cloudového prostredia GAMO a.s.",
+            bg=WHITE, fg=MUTED, font=("Segoe UI", 11),
+        ).pack(anchor="w", pady=(5, 0))
 
         self.status_card = tk.Frame(right, bg="#F8FAFD", highlightthickness=1, highlightbackground=LINE)
-        self.status_card.pack(fill="x", padx=34, pady=(24, 14))
+        self.status_card.pack(fill="x", padx=38, pady=(28, 16))
         status_inner = tk.Frame(self.status_card, bg="#F8FAFD")
-        status_inner.pack(fill="x", padx=16, pady=15)
+        status_inner.pack(fill="x", padx=18, pady=17)
 
-        self.status_dot = tk.Canvas(status_inner, width=34, height=34, bg="#F8FAFD", highlightthickness=0)
+        self.status_dot = tk.Canvas(status_inner, width=40, height=40, bg="#F8FAFD", highlightthickness=0)
         self.status_dot.pack(side="left")
-        self.dot_id = self.status_dot.create_oval(5, 5, 29, 29, fill=AMBER_SOFT, outline="")
-        self.dot_text = self.status_dot.create_text(17, 17, text="…", fill=AMBER, font=("Segoe UI", 11, "bold"))
+        self.dot_id = self.status_dot.create_oval(5, 5, 35, 35, fill=AMBER_SOFT, outline="")
+        self.dot_text = self.status_dot.create_text(20, 20, text="…", fill=AMBER, font=("Segoe UI", 13, "bold"))
 
         status_text = tk.Frame(status_inner, bg="#F8FAFD")
-        status_text.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        status_text.pack(side="left", padx=(12, 0), fill="x", expand=True)
         self.status_title = tk.Label(
-            status_text, text="Kontrolujem systém…", bg="#F8FAFD", fg=TEXT, font=("Segoe UI", 11, "bold")
+            status_text, text="Kontrolujem systém…", bg="#F8FAFD", fg=TEXT, font=("Segoe UI", 13, "bold")
         )
         self.status_title.pack(anchor="w")
         self.status_detail = tk.Label(
-            status_text, text="Pripájam sa ku GAMO Cloud.", bg="#F8FAFD", fg=MUTED, font=("Segoe UI", 8)
+            status_text, text="Pripájam sa ku GAMO Cloud.", bg="#F8FAFD", fg=MUTED, font=("Segoe UI", 10)
         )
-        self.status_detail.pack(anchor="w", pady=(3, 0))
+        self.status_detail.pack(anchor="w", pady=(4, 0))
 
         self.refresh_btn = tk.Button(
-            status_inner,
-            text="↻  Obnoviť",
-            command=self.refresh_status,
-            relief="flat",
-            bg=WHITE,
-            fg=TEXT,
-            activebackground=BLUE_SOFT,
-            activeforeground=BLUE,
-            font=("Segoe UI", 8, "bold"),
-            padx=12,
-            pady=7,
-            cursor="hand2",
+            status_inner, text="↻  Obnoviť", command=self.refresh_status, relief="flat",
+            bg=WHITE, fg=TEXT, activebackground=BLUE_SOFT, activeforeground=BLUE,
+            font=("Segoe UI", 10, "bold"), padx=15, pady=9, cursor="hand2"
         )
         self.refresh_btn.pack(side="right")
 
         info = tk.Frame(right, bg=WHITE)
-        info.pack(fill="x", padx=34, pady=(0, 16))
-        self.version_info = self._info_box(info, "VERZIA", f"v{current_version()}")
-        self.version_info.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        self.cloud_info = self._info_box(info, "CLOUD", "Kontrola…")
-        self.cloud_info.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        info.pack(fill="x", padx=38, pady=(0, 18))
+        self.version_info = self._info_box(info, "VERZIA APLIKÁCIE", f"v{current_version()}")
+        self.version_info.pack(side="left", fill="x", expand=True, padx=(0, 7))
+        self.cloud_info = self._info_box(info, "GAMO CLOUD", "Kontrola…")
+        self.cloud_info.pack(side="left", fill="x", expand=True, padx=(7, 0))
 
         self.progress_var = tk.DoubleVar(value=0)
         self.progress = ttk.Progressbar(
@@ -233,62 +238,41 @@ class Launcher(tk.Tk):
 
         self.update_card = tk.Frame(right, bg=BLUE_SOFT, highlightthickness=1, highlightbackground="#D8E5FF")
         update_inner = tk.Frame(self.update_card, bg=BLUE_SOFT)
-        update_inner.pack(fill="x", padx=14, pady=11)
+        update_inner.pack(fill="x", padx=16, pady=13)
         tk.Label(
-            update_inner, text="Nová verzia je pripravená", bg=BLUE_SOFT, fg=TEXT, font=("Segoe UI", 9, "bold")
+            update_inner, text="Nová verzia je pripravená", bg=BLUE_SOFT, fg=TEXT,
+            font=("Segoe UI", 11, "bold")
         ).pack(side="left")
         self.update_btn = tk.Button(
-            update_inner,
-            text="Aktualizovať",
-            command=self.install_update,
-            relief="flat",
-            bg=BLUE,
-            fg=WHITE,
-            activebackground="#1E55C9",
-            activeforeground=WHITE,
-            font=("Segoe UI", 8, "bold"),
-            padx=14,
-            pady=7,
-            cursor="hand2",
+            update_inner, text="Aktualizovať", command=self.install_update, relief="flat",
+            bg=BLUE, fg=WHITE, activebackground="#1E55C9", activeforeground=WHITE,
+            font=("Segoe UI", 10, "bold"), padx=16, pady=8, cursor="hand2"
         )
         self.update_btn.pack(side="right")
 
         actions = tk.Frame(right, bg=WHITE)
-        actions.pack(fill="x", padx=34, pady=(8, 0))
+        actions.pack(fill="x", padx=38, pady=(10, 0))
         self.launch_btn = tk.Button(
-            actions,
-            text="Spustiť GAMO a.s.  →",
-            command=self.launch_app,
-            relief="flat",
-            bg=BLUE,
-            fg=WHITE,
-            disabledforeground="#AAB6C6",
-            activebackground="#1E55C9",
-            activeforeground=WHITE,
-            font=("Segoe UI", 11, "bold"),
-            padx=22,
-            pady=13,
-            cursor="hand2",
-            state="disabled",
+            actions, text="Spustiť GAMO a.s.  →", command=self.launch_app, relief="flat",
+            bg=BLUE, fg=WHITE, disabledforeground="#AAB6C6",
+            activebackground="#1E55C9", activeforeground=WHITE,
+            font=("Segoe UI", 13, "bold"), padx=24, pady=15, cursor="hand2", state="disabled"
         )
         self.launch_btn.pack(fill="x")
 
-        self.footer = tk.Label(
+        tk.Label(
             right,
-            text="GAMO a.s.  ·  Cloud Facility Platform  ·  zabezpečené HTTPS pripojenie",
-            bg=WHITE,
-            fg="#96A1B0",
-            font=("Segoe UI", 8),
-        )
-        self.footer.pack(side="bottom", pady=20)
+            text="GAMO a.s.  ·  Cloud Facility Platform  ·  HTTPS  ·  automatické aktualizácie",
+            bg=WHITE, fg="#8592A4", font=("Segoe UI", 10),
+        ).pack(side="bottom", pady=22)
 
     def _info_box(self, parent, label, value):
         box = tk.Frame(parent, bg="#F8FAFD", highlightthickness=1, highlightbackground=LINE)
-        tk.Label(box, text=label, bg="#F8FAFD", fg="#8B98AA", font=("Segoe UI", 7, "bold")).pack(
-            anchor="w", padx=12, pady=(9, 0)
-        )
-        value_label = tk.Label(box, text=value, bg="#F8FAFD", fg=TEXT, font=("Segoe UI", 10, "bold"))
-        value_label.pack(anchor="w", padx=12, pady=(2, 9))
+        tk.Label(
+            box, text=label, bg="#F8FAFD", fg="#758397", font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w", padx=14, pady=(11, 0))
+        value_label = tk.Label(box, text=value, bg="#F8FAFD", fg=TEXT, font=("Segoe UI", 12, "bold"))
+        value_label.pack(anchor="w", padx=14, pady=(4, 11))
         box.value_label = value_label
         return box
 
