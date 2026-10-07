@@ -402,7 +402,9 @@ def add(what):
    if not code or not name: flash('Kód a názov budovy sú povinné.','error')
    elif one('select id from buildings where upper(code)=? and organization_id=?',(code,org_id())): flash(f'Budova s kódom {code} už existuje.','error')
    else:
-    bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),f.get('customer','').strip() or 'GAMO a.s.',org_id()))
+    owner=one('select name from organizations where id=?',(org_id(),))
+    customer_name=f.get('customer','').strip() or (owner['name'] if owner else 'GAMO a.s.')
+    bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
     floor_count=max(0,min(50,int(f.get('floors_count') or 0)))
     for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
