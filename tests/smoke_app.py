@@ -675,13 +675,13 @@ platform_inbox = client.get("/tickets")
 assert platform_inbox.status_code == 200
 assert b"Nefunguje klimatiz" in platform_inbox.data
 assert b"Smoke Customer" in platform_inbox.data
+platform_notifications = client.get("/api/notifications").get_json()
+assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in platform_notifications)
 platform_thread = client.get(f"/ticket/{ticket['id']}")
 assert platform_thread.status_code == 200
 assert "Prosím správcu".encode("utf-8") in platform_thread.data
 assert "Požiadavku som prevzal".encode("utf-8") in platform_thread.data
 assert client.get(f"/building/{private_building['id']}").status_code == 404
-platform_notifications = client.get("/api/notifications").get_json()
-assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in platform_notifications)
 
 r = client.post(
     f"/ticket/{ticket['id']}/message",
