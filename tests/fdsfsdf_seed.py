@@ -93,7 +93,7 @@ assert before == after
 
 # The seed must stay inside the selected customer.
 assert app.one_system(
-    "select count(*) n from assets where asset_id like 'HVAC-900%' and organization_id<>?", (oid,)
+    "select count(*) n from assets where asset_id like ? and organization_id<>?", ("HVAC-900%", oid)
 )["n"] == 0
 
 print("fdsfsdf demo seed test OK")
