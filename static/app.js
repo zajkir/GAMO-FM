@@ -11,7 +11,30 @@ function fieldDef(a){return Array.isArray(a)?{name:a[0],label:a[1],value:a[2],ty
 function modal(t){let f=defs[t],h='<div class="formgrid">';f.forEach((raw,i)=>{const a=fieldDef(raw),full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;if(a.type==='select'){control=`<select name="${a.name}" ${i<2?'required':''}>${a.options.map(o=>`<option value="${o}" ${o===a.value?'selected':''}>${o}</option>`).join('')}</select>`}else{control=`<input type="${a.type||'text'}" name="${a.name}" value="${a.value||''}" ${i<2?'required':''}>`}h+=`<div class="field ${full}"><label>${a.label}</label>${control}</div>`});h+='</div>';document.querySelector('#fields').innerHTML=h;const form=document.querySelector('#mform');form.action='/add/'+t;form.method='post';const titles={user:'Nový používateľ',incident:'Nahlásiť nový incident',workorder:'Nový pracovný príkaz',asset:'Nový asset',building:'Nová budova',floor:'Nové podlažie',room:'Nová miestnosť'};const meta={asset:['◇','ASSET REGISTER','Evidencia technického zariadenia, jeho umiestnenia, väzieb a servisných parametrov.'],building:['▦','FACILITY STRUCTURE','Vytvorenie nového objektu v portfóliu GAMO a.s.'],floor:['▤','FACILITY STRUCTURE','Nové podlažie a jeho zaradenie do objektu.'],room:['□','SPACE MANAGEMENT','Nová miestnosť, plocha, nájomca a prevádzková zóna.'],workorder:['✓','MAINTENANCE CONTROL','Naplánovanie údržby, revízie, opravy alebo servisného zásahu.'],incident:['!','INCIDENT CONTROL','Evidencia poruchy alebo havárie, jej závažnosti, dopadu a riešenia.'],user:['⌾','IDENTITY & ACCESS','Vytvorenie používateľského účtu, roly a prístupu do platformy.']};const m=meta[t]||['＋','GAMO OPERATIONS','Administrátorské vytvorenie záznamu v GAMO a.s.'];document.querySelector('#mtitle').textContent=titles[t]||'Nový záznam';document.querySelector('#micon').textContent=m[0];document.querySelector('#mkicker').textContent=m[1];document.querySelector('#mdesc').textContent=m[2];document.querySelector('#modal').classList.add('show')}
 function closeM(){document.querySelector('#modal').classList.remove('show')}function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
 function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
-function renderNotifications(items){const list=document.querySelector('#notificationList');if(list)list.innerHTML=items.length?items.map(x=>`<a class="searchitem" href="${x.url}"><b>${x.title}</b><small>${x.subtitle}</small><span class="badge ${x.level||''}">${x.status}</span></a>`).join(''):'<div class="empty">Žiadne aktívne upozornenia.</div>';const b=document.querySelector('#notificationBadge');if(b){b.textContent=items.length>9?'9+':items.length;b.hidden=!items.length}}function refreshNotifications(render=false){return fetch('/api/notifications').then(r=>r.json()).then(items=>{renderNotifications(items);return items}).catch(()=>{if(render){const l=document.querySelector('#notificationList');if(l)l.innerHTML='<div class="empty">Notifikácie sa nepodarilo načítať.</div>'}})}function toggleNotifications(){let p=document.querySelector('#notifications');p.classList.toggle('showpanel');if(p.classList.contains('showpanel'))refreshNotifications(true)}
+const NOTIFICATION_READ_KEY='gamo_read_notifications_v1';
+function notificationReadSet(){try{return new Set(JSON.parse(localStorage.getItem(NOTIFICATION_READ_KEY)||'[]'))}catch(e){return new Set()}}
+function notificationTime(value){
+ if(!value)return 'Práve teraz';
+ let normalized=String(value).trim().replace(' ','T');if(!/[zZ]|[+-]\d\d:?\d\d$/.test(normalized))normalized+='Z';
+ const d=new Date(normalized);if(Number.isNaN(d.getTime()))return value;
+ const diff=Math.max(0,Math.floor((Date.now()-d.getTime())/1000));
+ if(diff<60)return 'Práve teraz';if(diff<3600)return 'Pred '+Math.floor(diff/60)+' min';if(diff<86400)return 'Pred '+Math.floor(diff/3600)+' h';
+ return d.toLocaleDateString('sk-SK')+' '+d.toLocaleTimeString('sk-SK',{hour:'2-digit',minute:'2-digit'});
+}
+function renderNotifications(items){
+ const read=notificationReadSet(),list=document.querySelector('#notificationList');
+ if(list)list.innerHTML=items.length?items.map(x=>{const seen=read.has(x.key);return `<a class="searchitem notification-item ${seen?'notification-read':'notification-new'}" href="${x.url}"><div class="notification-copy"><b>${x.title}</b><small>${x.subtitle}</small><time data-notification-time="${x.created_at||''}">${notificationTime(x.created_at)}</time></div><span class="badge ${x.level||''}">${x.status}</span></a>`}).join(''):'<div class="empty">Žiadne aktívne upozornenia.</div>';
+ const unread=items.filter(x=>!read.has(x.key)).length,b=document.querySelector('#notificationBadge');
+ if(b){b.textContent=unread>9?'9+':unread;b.hidden=!unread}
+}
+function markNotificationsRead(items){
+ const read=notificationReadSet();items.forEach(x=>read.add(x.key));
+ try{localStorage.setItem(NOTIFICATION_READ_KEY,JSON.stringify([...read].slice(-250)))}catch(e){}
+ const b=document.querySelector('#notificationBadge');if(b)b.hidden=true;
+}
+function refreshNotificationTimes(){document.querySelectorAll('[data-notification-time]').forEach(el=>el.textContent=notificationTime(el.dataset.notificationTime))}
+function refreshNotifications(render=false,markRead=false){return fetch('/api/notifications',{cache:'no-store'}).then(r=>r.json()).then(items=>{renderNotifications(items);if(markRead){markNotificationsRead(items);setTimeout(()=>renderNotifications(items),220)}return items}).catch(()=>{if(render){const l=document.querySelector('#notificationList');if(l)l.innerHTML='<div class="empty">Notifikácie sa nepodarilo načítať.</div>'}})}
+function toggleNotifications(){let p=document.querySelector('#notifications');p.classList.toggle('showpanel');if(p.classList.contains('showpanel'))refreshNotifications(true,true)}
 let searchTimer;function globalSearch(v){clearTimeout(searchTimer);let box=document.querySelector('#globalSearchResults');if(v.trim().length<2){box.innerHTML='<div class="empty">Začni písať aspoň 2 znaky.</div>';return}searchTimer=setTimeout(()=>fetch('/api/search?q='+encodeURIComponent(v)).then(r=>r.json()).then(items=>{box.innerHTML=items.length?items.map(x=>`<a class="searchitem" href="${x.url}"><b>${x.title}</b><small>${x.subtitle}</small><span>${x.kind}</span></a>`).join(''):'<div class="empty">Nenašli sa žiadne výsledky.</div>'}),180)}
 const configSchemas={
 'Organizačná štruktúra':{icon:'▦',group:'FACILITY STRUCTURE',fields:[['Predvolený názov organizácie','GAMO a.s.','text'],['Kód lokality','GAMO','text'],['Číslovanie podlaží','NP / PP','select',['NP / PP','Číselné','Vlastné']],['Prevádzkové zóny','Zapnuté','select',['Zapnuté','Vypnuté']]]},
@@ -135,4 +158,4 @@ document.addEventListener('DOMContentLoaded',()=>{
  }
 });
 
-document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),60000)});
+document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000)});
