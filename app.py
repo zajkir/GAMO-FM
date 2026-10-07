@@ -180,7 +180,13 @@ def delete_document(i):
 @app.route('/assets')
 def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a left join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id order by a.asset_id'))
 @app.route('/asset/<int:i>')
-def asset(i): return render_template('index.html',page='asset',a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a left join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=?',(i,)),children=q('select * from assets where parent_id=?',(i,)),orders=q('select * from workorders where asset_id=? order by id desc',(i,)),incidents=q('select * from incidents where asset_id=? order by id desc',(i,)))
+def asset(i):
+ a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a left join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=?',(i,))
+ if not a: abort(404)
+ children=q('select a.*,r.code room,r.name room_name,r.area from assets a left join rooms r on r.id=a.room_id where a.parent_id=?',(i,))
+ parent=one('select id,asset_id,name,status from assets where id=?',(a['parent_id'],)) if a['parent_id'] else None
+ impact_rooms=len({x['room'] for x in children if x['room']}); impact_area=sum(float(x['area'] or 0) for x in children if x['room'])
+ return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=q('select * from workorders where asset_id=? order by id desc',(i,)),incidents=q('select * from incidents where asset_id=? order by id desc',(i,)))
 @app.route('/maintenance')
 def maintenance(): return render_template('index.html',page='maintenance',orders=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id order by w.id desc'))
 @app.route('/incidents')
