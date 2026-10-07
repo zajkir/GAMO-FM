@@ -1067,6 +1067,7 @@ def building(i):
  return render_template('index.html',page='building',b=b,floors=q('select * from floors where building_id=?',(i,)),rooms=q("select r.*,f.code floor,(select count(*) from assets a where a.room_id=r.id) asset_count,(select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status not in ('Ukončená','Vyriešená')) incident_count from rooms r join floors f on f.id=r.floor_id where f.building_id=?",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
 @app.post('/building/<int:i>/document')
 def upload_building_document(i):
+ if not can('documents_write'): abort(403)
  if not owns_building(i): abort(404)
  f=request.files.get('document'); category=(request.form.get('category') or 'Technická').strip()
  if not f or not f.filename:
@@ -1086,6 +1087,7 @@ def download_document(i):
 
 @app.post('/document/<int:i>/delete')
 def delete_document(i):
+ if not can('documents_write'): abort(403)
  d=one('select d.building_id,d.name from documents d join buildings b on b.id=d.building_id where d.id=? and b.organization_id=?',(i,org_id()))
  if not d: abort(404)
  x('delete from documents where id=?',(i,)); audit('DOCUMENT_DELETE',d['name']); flash('Dokument bol odstránený.','success')
@@ -1617,6 +1619,9 @@ def platform_customer_update(i):
 def add(what):
  if request.method=='GET':
   return redirect({'incident':'/incidents','workorder':'/maintenance','asset':'/assets','user':'/admin','building':'/buildings'}.get(what,'/'))
+ required={'building':'facility_write','floor':'facility_write','room':'facility_write','asset':'asset_write','workorder':'maintenance_write','incident':'incident_write','user':'users_manage'}
+ if what not in required: abort(404)
+ if not can(required[what]): abort(403)
  f=request.form
  try:
   if what=='building':
@@ -1703,6 +1708,7 @@ def add(what):
  return redirect(target or request.referrer or '/')
 @app.post('/user/<int:i>/update')
 def update_user(i):
+ if not can('users_manage'): abort(403)
  f=request.form
  u=one('select * from users where id=? and organization_id=?',(i,org_id()))
  if not u:
@@ -1733,6 +1739,9 @@ def update_user(i):
 
 @app.post('/edit/<what>/<int:i>')
 def edit_record(what,i):
+ required={'building':'facility_write','floor':'facility_write','room':'facility_write','asset':'asset_write','workorder':'maintenance_write','incident':'incident_write'}
+ if what not in required: abort(404)
+ if not can(required[what]): abort(403)
  f=request.form
  try:
   if what=='building':
@@ -1822,7 +1831,9 @@ def delete(what,i):
   'building':owns_building,'floor':owns_floor,'room':owns_room,'asset':owns_asset,
   'workorder':owns_workorder,'incident':owns_incident,'user':owns_user
  }
- if what not in ownership: abort(404)
+ required={'building':'facility_write','floor':'facility_write','room':'facility_write','asset':'asset_write','workorder':'maintenance_write','incident':'incident_write','user':'users_manage'}
+ if what not in ownership or what not in required: abort(404)
+ if not can(required[what]): abort(403)
  if not ownership[what](i): abort(404)
  if what=='building':
   if one('select id from assets where building_id=? limit 1',(i,)):
@@ -1863,12 +1874,13 @@ def delete(what,i):
 @app.post('/status/<what>/<int:i>')
 def status(what,i):
  allowed={
-  'asset':({'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'},owns_asset),
-  'workorder':({'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'},owns_workorder),
-  'incident':({'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'},owns_incident)
+  'asset':({'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'},owns_asset,'asset_write'),
+  'workorder':({'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'},owns_workorder,'maintenance_write'),
+  'incident':({'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'},owns_incident,'incident_write')
  }
  if what not in allowed: abort(404)
- statuses,owner_check=allowed[what]
+ statuses,owner_check,permission=allowed[what]
+ if not can(permission): abort(403)
  if not owner_check(i): abort(404)
  new_status=request.form.get('status')
  if new_status not in statuses: abort(400)
