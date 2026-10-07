@@ -664,7 +664,8 @@ def ticket_create():
  except IntegrityError:
   no=next_ticket_no()
   tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+ mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+ x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
  audit('TICKET_CREATE',f'{no} · {subject}'); flash(f'Ticket {no} bol vytvorený.','success')
  return redirect(f'/ticket/{tid}')
 
@@ -677,8 +678,11 @@ def ticket_detail(i):
  building=one('select id,code,name from buildings where id=? and organization_id=?',(t['building_id'],org_id())) if t['building_id'] else None
  asset=one('select id,asset_id,name from assets where id=? and organization_id=?',(t['asset_id'],org_id())) if t['asset_id'] else None
  messages=q('select m.*,u.role sender_role from ticket_messages m left join users u on u.id=m.sender_user_id where m.ticket_id=? and m.organization_id=? order by m.id',(i,org_id()))
- if t['created_by']==session.get('user_id'): x('update tickets set customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(i,org_id()))
- elif ticket_staff(): x('update tickets set staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(i,org_id()))
+ last_message_id=messages[-1]['id'] if messages else 0
+ if t['created_by']==session.get('user_id'):
+  x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,org_id()))
+ elif ticket_staff():
+  x('update tickets set staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,org_id()))
  staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by name",(org_id(),))
  return render_template('index.html',page='ticket',ticket=t,ticket_creator=creator,ticket_assigned=assigned,ticket_building=building,ticket_asset=asset,ticket_messages=messages,ticket_staff_users=staff_users,ticket_is_staff=ticket_staff())
 
@@ -690,13 +694,13 @@ def ticket_message(i):
  if not body:
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
  uid=session.get('user_id'); is_creator=t['created_by']==uid
- x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,org_id(),uid,session.get('user_name','Používateľ'),body))
+ mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,org_id(),uid,session.get('user_name','Používateľ'),body))
  if is_creator:
   new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
-  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,i,org_id()))
+  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,org_id()))
  else:
   new_status='Otvorený' if t['status']=='Nový' else t['status']
-  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,i,org_id()))
+  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,org_id()))
  audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
  return redirect(f'/ticket/{i}#conversation')
 
@@ -1854,13 +1858,13 @@ def api_notifications():
   ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
    where t.organization_id=? and t.created_by<>? and exists(
     select 1 from ticket_messages m where m.ticket_id=t.id and m.sender_user_id=t.created_by
-    and (t.staff_last_read_at is null or m.created>t.staff_last_read_at))
+    and m.id>coalesce(t.staff_last_read_message_id,0))
    order by t.updated desc limit 5""",(oid,uid))
  else:
   ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
    where t.organization_id=? and t.created_by=? and exists(
     select 1 from ticket_messages m where m.ticket_id=t.id and (m.sender_user_id is null or m.sender_user_id<>t.created_by)
-    and (t.customer_last_read_at is null or m.created>t.customer_last_read_at))
+    and m.id>coalesce(t.customer_last_read_message_id,0))
    order by t.updated desc limit 5""",(oid,uid))
  for r in ticket_rows:
   out.insert(0,{'key':f"ticket-unread:{r['id']}:{r['updated']}",'title':f"{r['ticket_no']} · {r['subject']}",'subtitle':'Nová správa v tickete','status':r['status'],'level':'red' if r['priority']=='Kritická' else 'blue','url':f"/ticket/{r['id']}",'created_at':str(r['updated'] or '')})
