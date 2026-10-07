@@ -668,7 +668,7 @@ def _migration_11(db, using_postgres):
                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_tickets_building_org') THEN
                    ALTER TABLE tickets ADD CONSTRAINT fk_tickets_building_org
                    FOREIGN KEY(building_id,organization_id)
-                   REFERENCES buildings(id,organization_id) ON DELETE SET NULL;
+                   REFERENCES buildings(id,organization_id) ON DELETE RESTRICT;
                  END IF;
                END $$"""
         )
@@ -677,7 +677,7 @@ def _migration_11(db, using_postgres):
                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_tickets_asset_org') THEN
                    ALTER TABLE tickets ADD CONSTRAINT fk_tickets_asset_org
                    FOREIGN KEY(asset_id,organization_id)
-                   REFERENCES assets(id,organization_id) ON DELETE SET NULL;
+                   REFERENCES assets(id,organization_id) ON DELETE RESTRICT;
                  END IF;
                END $$"""
         )
