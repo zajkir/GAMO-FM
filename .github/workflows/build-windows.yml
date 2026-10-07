@@ -32,6 +32,12 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt pyinstaller
 
+      - name: Validate launcher and installer regression
+        run: |
+          python -m py_compile launcher.py updater.py desktop.py
+          python tests/launcher_ui_static.py
+          python tests/installer_regression.py
+
       - name: Build desktop application
         run: pyinstaller --noconfirm --clean --windowed --name GAMO_FM --add-data "templates;templates" --add-data "static;static" --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
 
