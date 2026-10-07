@@ -263,6 +263,71 @@ def _migration_8(db, using_postgres):
             db.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
 
 
+
+def _migration_9(db, using_postgres):
+    """Strengthen tenant referential integrity and prevent cross-organization relationships."""
+    if not using_postgres:
+        return
+
+    # Required organization ownership after legacy rows were backfilled.
+    db.execute("ALTER TABLE assets ALTER COLUMN organization_id SET NOT NULL")
+    db.execute("ALTER TABLE buildings ALTER COLUMN organization_id SET NOT NULL")
+    db.execute("ALTER TABLE users ALTER COLUMN organization_id SET NOT NULL")
+
+    # Composite keys let PostgreSQL verify that an asset can only reference
+    # facility records belonging to the same organization.
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_buildings_id_org ON buildings(id,organization_id)")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_id_org ON assets(id,organization_id)")
+
+    db.execute(
+        """DO $$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_assets_building_org') THEN
+               ALTER TABLE assets ADD CONSTRAINT fk_assets_building_org
+               FOREIGN KEY(building_id,organization_id)
+               REFERENCES buildings(id,organization_id);
+             END IF;
+           END $$"""
+    )
+    db.execute(
+        """DO $$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_asset_events_asset_org') THEN
+               ALTER TABLE asset_events ADD CONSTRAINT fk_asset_events_asset_org
+               FOREIGN KEY(asset_id,organization_id)
+               REFERENCES assets(id,organization_id) ON DELETE CASCADE;
+             END IF;
+           END $$"""
+    )
+
+    # These child tables inherit tenant ownership from their parent asset.
+    # Explicit foreign keys stop orphan operational records.
+    db.execute(
+        """DO $$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_workorders_asset') THEN
+               ALTER TABLE workorders ADD CONSTRAINT fk_workorders_asset
+               FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE RESTRICT;
+             END IF;
+           END $$"""
+    )
+    db.execute(
+        """DO $$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_incidents_asset') THEN
+               ALTER TABLE incidents ADD CONSTRAINT fk_incidents_asset
+               FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE RESTRICT;
+             END IF;
+           END $$"""
+    )
+
+    # Parent assets must never point into another tenant.
+    db.execute(
+        """DO $$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_assets_parent_org') THEN
+               ALTER TABLE assets ADD CONSTRAINT fk_assets_parent_org
+               FOREIGN KEY(parent_id,organization_id)
+               REFERENCES assets(id,organization_id) ON DELETE RESTRICT;
+             END IF;
+           END $$"""
+    )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -272,6 +337,7 @@ MIGRATIONS = (
     (6, "postgres_row_level_security", _migration_6),
     (7, "temporary_password_rotation", _migration_7),
     (8, "totp_mfa_and_recovery_codes", _migration_8),
+    (9, "tenant_referential_integrity", _migration_9),
 )
 
 
