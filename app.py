@@ -369,6 +369,7 @@ def reports_export_xlsx():
  if not can('reports_view'): abort(403)
  oid=org_id(); org=one('select * from organizations where id=?',(oid,))
  brand=(org['brand_color'] if org and org['brand_color'] else '#17365D').replace('#','').upper()
+ if len(brand)!=6 or any(ch not in '0123456789ABCDEF' for ch in brand): brand='17365D'
  dark='17365D'; blue='246BFD'; light='EAF1FB'; pale='F7F9FC'; green='DFF3E8'; red='FCE8EC'; amber='FFF3D8'; white='FFFFFF'; gray='667085'
  wb=Workbook(); ws=wb.active; ws.title='Súhrn'
  wb.properties.creator='GAMO Facility Platform'
@@ -458,24 +459,23 @@ def reports_export_xlsx():
   tab.tableStyleInfo=TableStyleInfo(name='TableStyleMedium2',showRowStripes=True,showFirstColumn=False,showLastColumn=False)
   ws.add_table(tab)
 
- # Chart data (hidden columns J:L) and charts
- ws['J1']='Budova'; ws['K1']='Údržba'; ws['L1']='Incidenty'
+ # Charts use a dedicated hidden data sheet so chart anchors stay visible.
+ chart_data=wb.create_sheet('_Grafy'); chart_data.sheet_state='hidden'
+ chart_data.append(['Budova','Údržba','Incidenty','','Profesia','Assety'])
  for idx,b in enumerate(buildings,2):
-  ws.cell(idx,10,b['code']); ws.cell(idx,11,float(b['maintenance_cost'] or 0)); ws.cell(idx,12,float(b['incident_cost'] or 0))
+  chart_data.cell(idx,1,b['code']); chart_data.cell(idx,2,float(b['maintenance_cost'] or 0)); chart_data.cell(idx,3,float(b['incident_cost'] or 0))
+ for idx,p in enumerate(professions,2):
+  chart_data.cell(idx,5,p['profession']); chart_data.cell(idx,6,p['assets'])
  if buildings:
   chart=BarChart(); chart.type='col'; chart.style=10; chart.title='Náklady podľa budovy'; chart.y_axis.title='EUR'; chart.height=7.5; chart.width=13
-  chart.add_data(Reference(ws,min_col=11,max_col=12,min_row=1,max_row=1+len(buildings)),titles_from_data=True)
-  chart.set_categories(Reference(ws,min_col=10,min_row=2,max_row=1+len(buildings)))
+  chart.add_data(Reference(chart_data,min_col=2,max_col=3,min_row=1,max_row=1+len(buildings)),titles_from_data=True)
+  chart.set_categories(Reference(chart_data,min_col=1,min_row=2,max_row=1+len(buildings)))
   chart.legend.position='b'; ws.add_chart(chart,'J4')
- ws['N1']='Profesia'; ws['O1']='Assety'
- for idx,p in enumerate(professions,2):
-  ws.cell(idx,14,p['profession']); ws.cell(idx,15,p['assets'])
  if professions:
   pie=PieChart(); pie.title='Assety podľa profesie'; pie.height=7.5; pie.width=10
-  pie.add_data(Reference(ws,min_col=15,min_row=1,max_row=1+len(professions)),titles_from_data=True)
-  pie.set_categories(Reference(ws,min_col=14,min_row=2,max_row=1+len(professions)))
+  pie.add_data(Reference(chart_data,min_col=6,min_row=1,max_row=1+len(professions)),titles_from_data=True)
+  pie.set_categories(Reference(chart_data,min_col=5,min_row=2,max_row=1+len(professions)))
   pie.legend.position='r'; ws.add_chart(pie,'J19')
- ws.column_dimensions['J'].hidden=True; ws.column_dimensions['K'].hidden=True; ws.column_dimensions['L'].hidden=True; ws.column_dimensions['N'].hidden=True; ws.column_dimensions['O'].hidden=True
  for col,width in {'A':13,'B':31,'C':11,'D':16,'E':16,'F':12,'G':16,'H':4}.items(): ws.column_dimensions[col].width=width
  ws.auto_filter.ref=f'A{start_row}:G{end_row}' if buildings else None
  ws.print_title_rows='1:11'; ws.page_setup.orientation='landscape'; ws.page_setup.fitToWidth=1; ws.sheet_properties.pageSetUpPr.fitToPage=True
