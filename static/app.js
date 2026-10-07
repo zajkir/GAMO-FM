@@ -160,10 +160,10 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000)});
 
-function twinApply(){const s=document.querySelector('.twin-stack');if(!s)return;s.style.setProperty('--twin-angle',(s.dataset.angle||'-18')+'deg');s.style.setProperty('--twin-tilt',(s.dataset.tilt||'42')+'deg');s.style.setProperty('--twin-zoom',s.dataset.zoom||'1')}
+function twinApply(){const s=document.querySelector('.twin-stack');if(!s)return;s.style.setProperty('--twin-angle',(s.dataset.angle||'-18')+'deg');s.style.setProperty('--twin-tilt',(s.dataset.tilt||'58')+'deg');s.style.setProperty('--twin-zoom',s.dataset.zoom||'1')}
 function twinRotate(delta){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle=parseFloat(s.dataset.angle||'-18')+delta;twinApply()}
-function twinTilt(delta){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.tilt=Math.max(18,Math.min(68,parseFloat(s.dataset.tilt||'42')+delta));twinApply()}
+function twinTilt(delta){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.tilt=Math.max(18,Math.min(68,parseFloat(s.dataset.tilt||'58')+delta));twinApply()}
 function twinZoom(delta){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.zoom=Math.max(.7,Math.min(1.8,parseFloat(s.dataset.zoom||'1')+delta)).toFixed(2);twinApply()}
 function twinExplode(){const s=document.querySelector('.twin-stack');if(!s)return;s.classList.toggle('exploded')}
-function twinReset(){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle='-18';s.dataset.tilt='42';s.dataset.zoom='1';s.classList.remove('exploded');twinApply()}
+function twinReset(){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle='-18';s.dataset.tilt='58';s.dataset.zoom='1.12';s.classList.remove('exploded');twinApply()}
 document.addEventListener('wheel',e=>{const scene=e.target.closest&&e.target.closest('.twin-scene');if(!scene)return;e.preventDefault();twinZoom(e.deltaY<0?.08:-.08)},{passive:false});
