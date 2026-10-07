@@ -721,12 +721,56 @@ def ticket_detail(i):
  customer_org=one_system('select id,code,name,support_access_enabled,support_access_until from organizations where id=?',(oid,)) if platform_view else None
  return render_template('index.html',page='ticket',ticket=t,ticket_creator=creator,ticket_assigned=assigned,ticket_building=building,ticket_asset=asset,ticket_messages=messages,ticket_staff_users=staff_users,ticket_is_staff=(True if platform_view else ticket_staff()),ticket_platform_view=platform_view,ticket_customer_org=customer_org)
 
+@app.get('/api/ticket/<int:i>/messages')
+def api_ticket_messages(i):
+ t=ticket_record(i)
+ if not t: abort(404)
+ try: after=max(0,int(request.args.get('after') or 0))
+ except (TypeError,ValueError): after=0
+ platform_view=platform_ticket_mode()
+ oid=t['organization_id'] if platform_view else org_id()
+ read_all=q_system if platform_view else q
+ write=x_system if platform_view else x
+ rows=read_all("""select m.*,u.role sender_role,u.organization_id sender_org_id
+  from ticket_messages m left join users u on u.id=m.sender_user_id
+  where m.ticket_id=? and m.organization_id=? and m.id>? order by m.id""",(i,oid,after))
+ if rows:
+  last_id=rows[-1]['id']
+  if platform_view:
+   write('update tickets set platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_id,i,oid))
+  elif t['created_by']==session.get('user_id'):
+   write('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_id,i,oid))
+  elif ticket_staff():
+   write('update tickets set staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_id,i,oid))
+ else:
+  last_id=after
+ fresh=(one_system if platform_view else one)('select status,priority,updated from tickets where id=? and organization_id=?',(i,oid))
+ messages=[]
+ for r in rows:
+  external_support=bool(r['sender_org_id'] and r['sender_org_id']!=oid)
+  messages.append({
+   'id':r['id'],
+   'sender_name':r['sender_name'] or 'Systém',
+   'sender_role':'GAMO Support' if external_support else (r['sender_role'] or 'Používateľ'),
+   'body':r['body'] or '',
+   'created':str(r['created'] or ''),
+   'mine':bool(r['sender_user_id']==session.get('user_id')),
+   'support':external_support
+  })
+ return jsonify({
+  'messages':messages,'last_id':last_id,
+  'status':fresh['status'] if fresh else t['status'],
+  'priority':fresh['priority'] if fresh else t['priority'],
+  'updated':str(fresh['updated'] if fresh else t['updated'])
+ })
+
 @app.post('/ticket/<int:i>/message')
 def ticket_message(i):
  t=ticket_record(i)
  if not t: abort(404)
  body=(request.form.get('message') or '').strip()[:5000]
  if not body:
+  if request.headers.get('X-Requested-With')=='GAMO-Live-Chat': return jsonify({'ok':False,'error':'Správa nemôže byť prázdna.'}),400
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
  uid=session.get('user_id'); platform_view=platform_ticket_mode()
  oid=t['organization_id'] if platform_view else org_id()
@@ -746,6 +790,8 @@ def ticket_message(i):
    new_status='Otvorený' if t['status']=='Nový' else t['status']
    write('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
   audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
+ if request.headers.get('X-Requested-With')=='GAMO-Live-Chat':
+  return jsonify({'ok':True,'message_id':mid,'status':new_status})
  return redirect(f'/ticket/{i}#conversation')
 
 @app.post('/ticket/<int:i>/manage')
