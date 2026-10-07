@@ -65,6 +65,20 @@ def owns_asset(asset_id):
  oid=org_id()
  return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
 
+def asset_parent_allowed(asset_id,parent_id):
+ if not parent_id: return True
+ try: current=int(parent_id); target=int(asset_id)
+ except (TypeError,ValueError): return False
+ seen=set()
+ for _ in range(100):
+  if current==target or current in seen: return False
+  seen.add(current)
+  row=one('select parent_id from assets where id=? and organization_id=?',(current,org_id()))
+  if not row: return False
+  if not row['parent_id']: return True
+  current=int(row['parent_id'])
+ return False
+
 def owns_floor(floor_id):
  return bool(org_id() and one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.organization_id=?',(floor_id,org_id())))
 
@@ -847,9 +861,17 @@ def asset(i):
  events=q('select * from asset_events where asset_id=? and organization_id=? order by id desc limit 100',(i,org_id()))
  return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events)
 @app.route('/maintenance')
-def maintenance(): return render_template('index.html',page='maintenance',orders=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),)))
+def maintenance():
+ orders=q('select w.*,a.asset_id,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
+ today=date.today().isoformat()
+ stats={'total':len(orders),'active':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'}),'overdue':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'} and r['due'] and str(r['due'])[:10]<today),'critical':sum(1 for r in orders if r['priority']=='Kritická' and r['status'] not in {'Ukončené','Zrušené'}),'completed':sum(1 for r in orders if r['status']=='Ukončené')}
+ return render_template('index.html',page='maintenance',orders=orders,maintenance_stats=stats,today_iso=today)
+
 @app.route('/incidents')
-def incidents(): return render_template('index.html',page='incidents',incidents=q('select i.*,a.asset_id,a.name asset from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),)))
+def incidents():
+ rows=q('select i.*,a.asset_id,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),))
+ stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Ukončená','Vyriešená'}),'critical':sum(1 for r in rows if r['severity'] in {'Kritická','Havária'} and r['status'] not in {'Ukončená','Vyriešená'}),'resolved':sum(1 for r in rows if r['status'] in {'Ukončená','Vyriešená'}),'cost':sum(float(r['cost'] or 0) for r in rows)}
+ return render_template('index.html',page='incidents',incidents=rows,incident_stats=stats)
 @app.route('/admin')
 def admin():
  org=one('select * from organizations where id=?',(org_id(),))
