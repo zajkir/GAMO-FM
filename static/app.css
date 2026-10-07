@@ -119,3 +119,11 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .twin-scene:after{content:"Koliesko myši = zoom";position:absolute;right:18px;bottom:18px;padding:7px 10px;border:1px solid rgba(128,177,226,.14);border-radius:8px;background:rgba(4,17,31,.58);color:#7594b8;font-size:8px;letter-spacing:.06em;backdrop-filter:blur(6px)}
 .floor-label{transform:rotateX(calc(-1 * var(--twin-tilt)));transform-origin:left top;transition:transform .4s ease}
 @media(max-width:900px){.twin-stack{transform:scale(calc(var(--twin-zoom) * .76)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important}}
+
+/* Digital Twin geometry hotfix — stable architectural camera */
+.twin-stack{--twin-tilt:58deg!important;--twin-zoom:1.12;transform:scale(var(--twin-zoom)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important}
+.twin-building-sign{left:64px!important;top:118px!important;transform:translateZ(18px)!important}
+.twin-lobby{left:155px!important;top:270px!important;transform:translateZ(8px)!important}
+.floor-label{transform:none!important}
+.twin-floor{visibility:visible!important;opacity:1!important}
+.twin-roof{backface-visibility:visible!important}
