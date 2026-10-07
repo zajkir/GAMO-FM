@@ -178,6 +178,85 @@ assert r.status_code in (302, 303)
 incident = app.one("select * from incidents where asset_id=? and title=?", (asset["id"], "QA incident"))
 assert incident
 
+# ----- Facility editing regression coverage -----
+r = client.post(
+    f"/edit/building/{building['id']}",
+    data={"_csrf": csrf(), "code": "SMK", "name": "Smoke Building Edited", "address": "Test 2", "manager": "QA Manager"},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+building = app.one("select * from buildings where id=?", (building["id"],))
+assert building["name"] == "Smoke Building Edited" and building["manager"] == "QA Manager"
+
+r = client.post(
+    f"/edit/floor/{floor['id']}",
+    data={"_csrf": csrf(), "code": "1.NP", "name": "QA podlažie"},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+floor = app.one("select * from floors where id=?", (floor["id"],))
+assert floor["name"] == "QA podlažie"
+
+r = client.post(
+    f"/edit/room/{room['id']}",
+    data={"_csrf": csrf(), "code": "R01", "name": "QA Room Edited", "area": "44.5", "tenant": "GAMO", "zone": "SECURE"},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+room = app.one("select * from rooms where id=?", (room["id"],))
+assert room["name"] == "QA Room Edited" and float(room["area"]) == 44.5 and room["zone"] == "SECURE"
+
+asset_edit = {
+    "_csrf": csrf(), "asset_id": "QA-000001", "name": "Smoke Asset Edited",
+    "building_id": str(building["id"]), "floor_id": str(floor["id"]), "room_id": str(room["id"]),
+    "profession": "ELE", "grp": "QA", "type": "TEST", "manufacturer": "GAMO QA",
+    "model": "M2", "serial": "QA-SERIAL", "system_id": "QA-SYS", "parent_id": "",
+    "status": "Servis", "criticality": "A", "service_months": "3", "revision_months": "6",
+    "purchase_price": "1500.25", "ip": "10.0.0.10", "protocol": "HTTPS", "notes": "Edited by smoke test"
+}
+r = client.post(f"/edit/asset/{asset['id']}", data=asset_edit, follow_redirects=False)
+assert r.status_code in (302, 303)
+asset = app.one("select * from assets where id=?", (asset["id"],))
+assert asset["name"] == "Smoke Asset Edited" and asset["status"] == "Servis" and asset["criticality"] == "A"
+assert float(asset["purchase_price"]) == 1500.25
+
+cycle_edit = dict(asset_edit)
+cycle_edit.update({"_csrf": csrf(), "name": "SHOULD NOT SAVE", "parent_id": str(asset["id"])})
+r = client.post(f"/edit/asset/{asset['id']}", data=cycle_edit, follow_redirects=False)
+assert r.status_code in (302, 303)
+asset_after_cycle = app.one("select * from assets where id=?", (asset["id"],))
+assert asset_after_cycle["name"] == "Smoke Asset Edited" and asset_after_cycle["parent_id"] is None
+
+r = client.post(
+    f"/edit/workorder/{workorder['id']}",
+    data={
+        "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA servis upravený", "kind": "REV",
+        "priority": "Vysoká", "status": "Prebieha", "due": "2026-10-20",
+        "supplier": "QA Service 2", "technician": "Technik 2", "cost": "129.90", "description": "Edited"
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+workorder = app.one("select * from workorders where id=?", (workorder["id"],))
+assert workorder["title"] == "QA servis upravený" and workorder["status"] == "Prebieha" and workorder["kind"] == "REV"
+
+r = client.post(
+    f"/edit/incident/{incident['id']}",
+    data={
+        "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA incident upravený",
+        "severity": "Kritická", "status": "Rieši sa", "reported": "2026-10-07",
+        "impact": "Kritický test", "cause": "QA cause", "cost": "25.50"
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+incident = app.one("select * from incidents where id=?", (incident["id"],))
+assert incident["title"] == "QA incident upravený" and incident["severity"] == "Kritická" and incident["status"] == "Rieši sa"
+
+assert app.one("select count(*) n from asset_events where asset_id=? and event_type='ASSET_UPDATE'", (asset["id"],))["n"] >= 1
+assert app.one("select count(*) n from asset_events where asset_id=? and event_type='WORKORDER_UPDATE'", (asset["id"],))["n"] >= 1
+assert app.one("select count(*) n from asset_events where asset_id=? and event_type='INCIDENT_UPDATE'", (asset["id"],))["n"] >= 1
+
 # Private GAMO document used later for IDOR checks.
 r = client.post(
     f"/building/{building['id']}/document",
@@ -297,6 +376,15 @@ assert client.get(f"/api/rooms/{floor['id']}").status_code == 404
 assert client.get(f"/building/{building['id']}").status_code == 404
 assert client.get(f"/asset/{asset['id']}").status_code == 404
 assert client.get(f"/document/{document['id']}/download").status_code == 404
+
+r = client.post(f"/edit/building/{building['id']}", data={"_csrf": csrf(), "code": "FOREIGN", "name": "Other tenant", "address": "", "manager": ""})
+assert r.status_code == 404
+r = client.post(f"/edit/asset/{asset['id']}", data={"_csrf": csrf(), "asset_id": "FOREIGN"})
+assert r.status_code == 404
+r = client.post(f"/edit/workorder/{workorder['id']}", data={"_csrf": csrf(), "title": "Other tenant"})
+assert r.status_code == 404
+r = client.post(f"/edit/incident/{incident['id']}", data={"_csrf": csrf(), "title": "Other tenant"})
+assert r.status_code == 404
 
 r = client.post(f"/document/{document['id']}/delete", data={"_csrf": csrf()})
 assert r.status_code == 404
