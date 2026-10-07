@@ -1,12 +1,13 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time, io, zipfile
+import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib
 try:
  import psycopg
  from psycopg.rows import dict_row
 except ImportError:
  psycopg=None; dict_row=None
 from functools import wraps
+import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date,timedelta,datetime
 from db_migrations import run_migrations
@@ -96,6 +97,56 @@ def customer_access(target_org_id,action,reason=''):
   writer('insert into customer_access_log(target_organization_id,actor_user_id,actor_name,action,reason,ip) values(?,?,?,?,?,?)',(target_org_id,session.get('user_id'),session.get('user_name','Systém'),action,(reason or '')[:500],request.headers.get('X-Forwarded-For',request.remote_addr or '')))
  except Exception:
   pass
+
+def safe_next_url(value):
+ value=(value or '/').strip()
+ return value if value.startswith('/') and not value.startswith('//') else '/'
+
+def auth_event(organization_id,user_id,event,success,detail=''):
+ try:
+  x_system('insert into auth_events(organization_id,user_id,event,success,detail,ip,user_agent) values(?,?,?,?,?,?,?)',(
+   organization_id,user_id,event,True if (USING_POSTGRES and success) else (1 if success else (False if USING_POSTGRES else 0)),
+   (detail or '')[:300],request.headers.get('X-Forwarded-For',request.remote_addr or ''),
+   (request.headers.get('User-Agent') or '')[:300]
+  ))
+ except Exception:
+  pass
+
+def _normalize_mfa_code(code):
+ return ''.join(ch for ch in (code or '').upper() if ch.isalnum())
+
+def _recovery_hash(code):
+ return hashlib.sha256(_normalize_mfa_code(code).encode('utf-8')).hexdigest()
+
+def verify_mfa_code(user,code,consume_recovery=True):
+ normalized=_normalize_mfa_code(code)
+ if not normalized: return False
+ secret=user['mfa_secret']
+ if secret:
+  try:
+   if pyotp.TOTP(secret).verify(normalized,valid_window=1): return True
+  except Exception:
+   pass
+ try: hashes=json.loads(user['mfa_recovery_codes'] or '[]')
+ except Exception: hashes=[]
+ digest=_recovery_hash(normalized)
+ if digest in hashes:
+  if consume_recovery:
+   hashes.remove(digest)
+   x_system('update users set mfa_recovery_codes=? where id=?',(json.dumps(hashes),user['id']))
+  return True
+ return False
+
+def establish_user_session(user,org,remember=False,next_url='/'):
+ session.clear(); session.permanent=bool(remember)
+ session['user_id']=user['id']; session['user_name']=user['name']; session['user_role']=user['role']
+ session['organization_id']=user['organization_id']; session['organization_code']=org['code']
+ session['must_change_password']=bool(user['must_change_password']); session['csrf']=secrets.token_urlsafe(32)
+ x_system("update users set last_login=CURRENT_TIMESTAMP where id=?" if USING_POSTGRES else "update users set last_login=datetime('now') where id=?",(user['id'],))
+ auth_event(user['organization_id'],user['id'],'LOGIN_SUCCESS',True,'Prihlásenie dokončené.')
+ if session['must_change_password']: return '/account/password'
+ if bool(org['mfa_required']) and not bool(user['mfa_enabled']): return '/account/mfa'
+ return safe_next_url(next_url)
 
 def plan_limits(oid=None):
  oid=oid or org_id()
@@ -253,9 +304,9 @@ def security_headers(response):
 
 @app.before_request
 def require_login():
- if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
+ if request.endpoint in ('login','login_mfa','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
- current=one_system('select id,status,role,organization_id,must_change_password from users where id=?',(session.get('user_id'),))
+ current=one_system('select id,status,role,organization_id,must_change_password,mfa_enabled from users where id=?',(session.get('user_id'),))
  if not current or current['status']!='Aktívny' or current['organization_id']!=actor_org_id():
   session.clear(); return redirect(url_for('login'))
  if current['role']!=session.get('user_role'):
@@ -265,6 +316,8 @@ def require_login():
   return redirect('/account/password')
  actor_org=one_system('select * from organizations where id=?',(actor_org_id(),)) if actor_org_id() else None
  if actor_org: session['organization_code']=actor_org['code']
+ if actor_org and bool(actor_org['mfa_required']) and not bool(current['mfa_enabled']) and request.endpoint not in {'account_mfa','account_password','logout'}:
+  return redirect('/account/mfa')
  target=None
  if support_mode():
   target=one_system('select * from organizations where id=?',(session.get('support_target_org_id'),))
@@ -307,19 +360,58 @@ def login():
   if len(attempts)>=LOGIN_MAX_ATTEMPTS:
    return render_template('login.html',error='Príliš veľa neúspešných pokusov. Skús to znova o pár minút.'),429
   u=one_system('select * from users where lower(email)=?',(email,))
-  if u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password):
+  password_ok=bool(u and u['status']=='Aktívny' and u['password_hash'] and check_password_hash(u['password_hash'],password))
+  if password_ok:
    org=one_system('select * from organizations where id=?',(u['organization_id'],)) if u['organization_id'] else None
    license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
    if not license_ok:
+    auth_event(u['organization_id'],u['id'],'LOGIN_BLOCKED',False,'Neaktívna organizácia alebo licencia.')
     error='Licencia organizácie nie je aktívna alebo jej platnosť skončila. Kontaktuj GAMO.'
-   else:
+   elif bool(u['mfa_enabled']):
     _login_attempts.pop(key,None); session.clear(); session.permanent=remember
-    session['user_id']=u['id']; session['user_name']=u['name']; session['user_role']=u['role']; session['organization_id']=u['organization_id']; session['organization_code']=org['code']; session['must_change_password']=bool(u['must_change_password']); session['csrf']=secrets.token_urlsafe(32)
-    x("update users set last_login=datetime('now') where id=?",(u['id'],))
-    return redirect('/account/password' if session['must_change_password'] else (request.args.get('next') or '/'))
+    session['mfa_pending_user_id']=u['id']; session['mfa_pending_remember']=remember
+    session['mfa_pending_next']=safe_next_url(request.args.get('next'))
+    session['mfa_csrf']=secrets.token_urlsafe(32); session['mfa_failures']=0
+    auth_event(u['organization_id'],u['id'],'PASSWORD_VERIFIED',True,'Čaká sa na druhý faktor.')
+    return redirect('/login/mfa')
+   else:
+    _login_attempts.pop(key,None)
+    target=establish_user_session(u,org,remember,request.args.get('next'))
+    return redirect(target)
   else:
-   attempts.append(now); _login_attempts[key]=attempts; error='Nesprávny e-mail alebo heslo.'
+   attempts.append(now); _login_attempts[key]=attempts
+   if u: auth_event(u['organization_id'],u['id'],'LOGIN_PASSWORD_FAILURE',False,'Nesprávne heslo.')
+   error='Nesprávny e-mail alebo heslo.'
  return render_template('login.html',error=error)
+
+@app.route('/login/mfa',methods=['GET','POST'])
+def login_mfa():
+ if session.get('user_id'): return redirect('/')
+ uid=session.get('mfa_pending_user_id')
+ if not uid: return redirect('/login')
+ u=one_system('select * from users where id=?',(uid,))
+ org=one_system('select * from organizations where id=?',(u['organization_id'],)) if u else None
+ if not u or not org or u['status']!='Aktívny' or not bool(u['mfa_enabled']):
+  session.clear(); return redirect('/login')
+ error=None
+ if request.method=='POST':
+  supplied=request.form.get('_csrf') or ''
+  expected=session.get('mfa_csrf') or ''
+  if not supplied or not expected or not secrets.compare_digest(str(supplied),str(expected)):
+   abort(400,description='Neplatný bezpečnostný token požiadavky.')
+  code=request.form.get('code') or ''
+  if verify_mfa_code(u,code,True):
+   remember=bool(session.get('mfa_pending_remember')); next_url=session.get('mfa_pending_next') or '/'
+   auth_event(u['organization_id'],u['id'],'MFA_SUCCESS',True,'Druhý faktor overený.')
+   target=establish_user_session(u,org,remember,next_url)
+   return redirect(target)
+  failures=int(session.get('mfa_failures') or 0)+1; session['mfa_failures']=failures
+  auth_event(u['organization_id'],u['id'],'MFA_FAILURE',False,f'Neúspešný MFA pokus #{failures}.')
+  if failures>=6:
+   session.clear()
+   return render_template('login_mfa.html',error='Príliš veľa neúspešných pokusov. Prihlás sa znova.',csrf_token=''),429
+  error='Neplatný overovací alebo recovery kód.'
+ return render_template('login_mfa.html',error=error,csrf_token=session.get('mfa_csrf',''),user_name=u['name'])
 
 @app.get('/logout')
 def logout():
@@ -350,6 +442,66 @@ def account_password():
    flash('Heslo bolo bezpečne zmenené.','success')
    return redirect('/')
  return render_template('account_password.html',forced=bool(u['must_change_password']),csrf_token=session.get('csrf',''),current_user=u)
+
+@app.route('/account/mfa',methods=['GET','POST'])
+def account_mfa():
+ if support_mode():
+  flash('Nastavenie MFA nie je dostupné v support režime.','error'); return redirect('/')
+ u=one('select * from users where id=? and organization_id=?',(session.get('user_id'),actor_org_id()))
+ org=one('select * from organizations where id=?',(actor_org_id(),))
+ if not u or not org: abort(404)
+ new_codes=None
+ if request.method=='POST':
+  action=request.form.get('action') or 'enable'
+  if action=='enable':
+   secret=session.get('mfa_setup_secret')
+   code=request.form.get('code') or ''
+   if not secret or not pyotp.TOTP(secret).verify(_normalize_mfa_code(code),valid_window=1):
+    flash('Kód z autentifikátora nie je správny.','error')
+   else:
+    new_codes=[secrets.token_hex(6).upper() for _ in range(10)]
+    hashes=[_recovery_hash(x) for x in new_codes]
+    x('update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=CURRENT_TIMESTAMP where id=?' if USING_POSTGRES else "update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=datetime('now') where id=?",(secret,json.dumps(hashes),True if USING_POSTGRES else 1,u['id']))
+    session.pop('mfa_setup_secret',None)
+    audit('MFA_ENABLED','Používateľ zapol dvojfaktorové overenie.')
+    auth_event(actor_org_id(),u['id'],'MFA_ENABLED',True,'TOTP MFA aktivované.')
+    u=one('select * from users where id=?',(u['id'],))
+    flash('MFA bolo úspešne zapnuté. Recovery kódy si bezpečne ulož.','success')
+  elif action=='regenerate':
+   password=request.form.get('current_password') or ''; code=request.form.get('code') or ''
+   if not check_password_hash(u['password_hash'],password) or not verify_mfa_code(u,code,True):
+    flash('Heslo alebo MFA kód nie je správny.','error')
+   else:
+    new_codes=[secrets.token_hex(6).upper() for _ in range(10)]
+    x('update users set mfa_recovery_codes=? where id=?',(json.dumps([_recovery_hash(x) for x in new_codes]),u['id']))
+    audit('MFA_RECOVERY_REGENERATED','Vygenerované nové recovery kódy.')
+    flash('Recovery kódy boli nahradené novými.','success')
+  elif action=='disable':
+   if bool(org['mfa_required']):
+    flash('Organizácia vyžaduje MFA. Najprv vypni povinné MFA v Privacy Center.','error')
+   else:
+    password=request.form.get('current_password') or ''; code=request.form.get('code') or ''
+    if not check_password_hash(u['password_hash'],password) or not verify_mfa_code(u,code,True):
+     flash('Heslo alebo MFA kód nie je správny.','error')
+    else:
+     x('update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=? where id=?',(None,None,False if USING_POSTGRES else 0,None,u['id']))
+     audit('MFA_DISABLED','Používateľ vypol dvojfaktorové overenie.')
+     auth_event(actor_org_id(),u['id'],'MFA_DISABLED',True,'TOTP MFA vypnuté.')
+     u=one('select * from users where id=?',(u['id'],))
+     flash('MFA bolo vypnuté.','success')
+ if not bool(u['mfa_enabled']):
+  secret=session.get('mfa_setup_secret')
+  if not secret:
+   secret=pyotp.random_base32(); session['mfa_setup_secret']=secret
+  uri=pyotp.TOTP(secret).provisioning_uri(name=u['email'],issuer_name=(org['branding_name'] or org['name'] or 'GAMO'))
+  img=qrcode.make(uri); qr=io.BytesIO(); img.save(qr,format='PNG')
+  qr_data='data:image/png;base64,'+base64.b64encode(qr.getvalue()).decode('ascii')
+ else:
+  secret=None; qr_data=None
+ try: recovery_left=len(json.loads(u['mfa_recovery_codes'] or '[]'))
+ except Exception: recovery_left=0
+ return render_template('account_mfa.html',current_user=u,org=org,secret=secret,qr_data=qr_data,
+  recovery_left=recovery_left,new_recovery_codes=new_codes,csrf_token=session.get('csrf',''))
 
 @app.context_processor
 def ctx():
