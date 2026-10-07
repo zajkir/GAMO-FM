@@ -6,9 +6,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-tmp = tempfile.mkdtemp(prefix="gamo-smoke-")
-os.environ.pop("DATABASE_URL", None)
-os.environ["GAMO_DATA_DIR"] = tmp
+if not os.environ.get("DATABASE_URL"):
+    tmp = tempfile.mkdtemp(prefix="gamo-smoke-")
+    os.environ["GAMO_DATA_DIR"] = tmp
 os.environ["GAMO_ADMIN_PASSWORD"] = "TestGamo2026!"
 os.environ["GAMO_HTTPS"] = "0"
 
