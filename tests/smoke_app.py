@@ -276,4 +276,16 @@ access = app.one_system(
 )
 assert access
 
+# Regression: production may restart with PostgreSQL RLS already enabled and
+# an empty users table. Bootstrap must reseed the internal GAMO administrator
+# through the privileged system connection instead of being blocked by RLS.
+if app.USING_POSTGRES:
+    with app.con(system=True) as db:
+        db.execute("delete from users")
+        db.commit()
+    app.init_postgres()
+    seeded = app.one_system("select id,organization_id from users where lower(email)=?", ("admin@gamo.sk",))
+    gamo = app.one_system("select id from organizations where code='GAMO'")
+    assert seeded and gamo and seeded["organization_id"] == gamo["id"]
+
 print("GAMO smoke test OK")
