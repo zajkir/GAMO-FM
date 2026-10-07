@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.7"
+#define MyAppVersion "9.0.0.8"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -22,8 +22,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 CloseApplications=yes
-CloseApplicationsFilter={#MyAppExeName}
+CloseApplicationsFilter={#MyAppExeName};{#MyLauncherExeName}
 RestartApplications=no
+SetupLogging=yes
 UninstallDisplayIcon={app}\{#MyLauncherExeName}
 VersionInfoVersion={#MyAppVersion}
 ; Používateľské dáta sú zámerne mimo {app} v %LOCALAPPDATA%\GAMO_FM.
@@ -45,20 +46,34 @@ Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launche
 
 
 [Code]
-function InitializeSetup(): Boolean;
+procedure ForceCloseLauncher();
 var
   ResultCode: Integer;
 begin
-  { The launcher contains no unsaved customer data. Close an older launcher
-    before Restart Manager scans files, so upgrades never show a confusing
-    "application is using files" prompt for GAMO_Launcher.exe. }
+  { Old launcher versions may still own GAMO_Launcher.exe while Setup is
+    preparing an update. Force-close only the launcher process; customer data
+    lives in the cloud and no document is stored inside the launcher process. }
   Exec(
     ExpandConstant('{sys}\taskkill.exe'),
-    '/IM "{#MyLauncherExeName}" /T',
+    '/F /T /IM "{#MyLauncherExeName}"',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
     ResultCode
   );
+  { Give Windows time to release the executable handle before [Files] starts. }
+  Sleep(900);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  ForceCloseLauncher();
   Result := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  { Repeat immediately before file replacement as defense in depth. }
+  ForceCloseLauncher();
+  Result := '';
 end;
