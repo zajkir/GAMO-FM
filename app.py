@@ -255,9 +255,50 @@ def ctx():
  brand_color=(org['brand_color'] or '#E31B23') if org else '#E31B23'
  brand_tagline=(org['brand_tagline'] or 'FACILITY MANAGEMENT') if org else 'FACILITY MANAGEMENT'
  return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=bool(org and org['code']=='GAMO' and session.get('user_role')=='Administrator'),can=can)
+@app.route('/onboarding',methods=['GET','POST'])
+def onboarding():
+ org=one('select * from organizations where id=?',(org_id(),))
+ if not org or org['code']=='GAMO': return redirect('/')
+ if session.get('user_role')!='Administrator':
+  return redirect('/')
+ if request.method=='POST':
+  code=(request.form.get('code') or '').strip().upper()
+  name=(request.form.get('name') or '').strip()
+  address=(request.form.get('address') or '').strip()
+  manager=(request.form.get('manager') or session.get('user_name','')).strip()
+  try: floors=max(1,min(50,int(request.form.get('floors_count') or 1)))
+  except ValueError: floors=1
+  if not code or not name:
+   flash('Kód a názov prvej budovy sú povinné.','error')
+  elif not plan_allows('buildings'):
+   flash('Licenčný plán už neumožňuje pridať ďalšiu budovu.','error')
+  elif one('select id from buildings where organization_id=? and upper(code)=?',(org_id(),code)):
+   flash('Budova s týmto kódom už existuje.','error')
+  else:
+   bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,address,manager,org['name'],org_id()))
+   for n in range(1,floors+1):
+    x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+   x('update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
+   audit('ONBOARDING_COMPLETE',f'{name} · {floors} podlaží')
+   flash('Firemné prostredie je pripravené. Teraz môžeš doplniť miestnosti a assety.','success')
+   return redirect(f'/building/{bid}')
+ limits=plan_limits()
+ return render_template('onboarding.html',org=org,limits=limits,csrf_token=session.get('csrf',''))
+
+@app.post('/onboarding/skip')
+def onboarding_skip():
+ org=one('select * from organizations where id=?',(org_id(),))
+ if not org or org['code']=='GAMO' or session.get('user_role')!='Administrator': abort(403)
+ x('update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
+ audit('ONBOARDING_SKIP','Onboarding preskočený administrátorom')
+ return redirect('/')
+
 @app.route('/')
 def dashboard():
  oid=org_id()
+ org=one('select * from organizations where id=?',(oid,)) if oid else None
+ if org and org['code']!='GAMO' and session.get('user_role')=='Administrator' and not bool(org['onboarding_complete']):
+  return redirect('/onboarding')
  s={
   'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
   'buildings':one('select count(*) n from buildings where organization_id=?',(oid,))['n'],
