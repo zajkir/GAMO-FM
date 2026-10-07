@@ -446,3 +446,104 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .ticket-unread-count{display:inline-flex!important;justify-content:flex-end;margin-bottom:4px;color:#2464d2;font-size:8px;font-weight:900}
 @media(max-width:1180px){.ticket-kpis.five{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:700px){.ticket-kpis.five{grid-template-columns:1fr}}
+
+
+/* 2026 UI clarity + live support release */
+:root{--bg:#f3f6fb;--panel:#fff;--ink:#122033;--muted:#718096;--line:#dfe6ef;--blue:#2f6fed;--shadow:0 10px 30px rgba(16,32,55,.06)}
+body{background:linear-gradient(180deg,#f7f9fc 0,#f2f5fa 280px,#f3f6fb 100%);letter-spacing:-.005em}
+aside{width:256px;background:linear-gradient(180deg,#071524 0%,#0a1b2f 100%);padding:24px 18px;box-shadow:16px 0 35px rgba(12,29,49,.035)}
+main{margin-left:256px;padding:0 34px 54px}
+header{height:100px}
+header h1{font-size:29px;letter-spacing:-.04em}
+.crumb{font-size:10px;letter-spacing:.11em}
+nav a{min-height:43px;border-radius:11px;padding:11px 14px;transition:.18s ease}
+nav a:hover{transform:translateX(2px);background:#122a45}
+nav a.on{background:linear-gradient(90deg,#15365b,#132d4d);box-shadow:inset 3px 0 var(--brand),0 5px 18px rgba(0,0,0,.08)}
+.card,.metric,.ticket-list-card,.privacy-card{border-color:#e2e8f0;box-shadow:0 7px 24px rgba(20,34,54,.045)}
+.card{border-radius:17px}
+button,.primary,.admin-primary{transition:.16s ease}
+button:hover{transform:translateY(-1px)}
+.primary,.admin-primary{box-shadow:0 7px 16px rgba(47,111,237,.17)}
+input,select,textarea{outline:none;transition:border-color .15s,box-shadow .15s,background .15s}
+input:focus,select:focus,textarea:focus{border-color:#8eaff5!important;box-shadow:0 0 0 3px rgba(47,111,237,.10)!important;background:#fff}
+table th{background:#f7f9fc;font-size:9px;color:#748298}
+table td{font-size:12px}
+.flash{min-width:340px;border:1px solid #e1e7ef;border-radius:13px;box-shadow:0 16px 42px rgba(15,30,52,.12)}
+.modalbox{border:1px solid rgba(255,255,255,.7);box-shadow:0 32px 90px rgba(8,21,38,.25)}
+
+/* Live ticket conversation */
+.ticket-detail-top{border-radius:19px;padding:25px 27px;box-shadow:0 8px 28px rgba(17,35,58,.045)}
+.ticket-detail-top h2{font-size:27px;letter-spacing:-.035em}
+.ticket-detail-grid{grid-template-columns:minmax(0,1fr) 320px;align-items:start}
+.ticket-conversation{border-radius:18px!important;box-shadow:0 10px 32px rgba(17,35,58,.055)}
+.ticket-conversation-head{padding:19px 21px;background:linear-gradient(180deg,#fff,#fbfcfe)}
+.ticket-conversation-head>div:first-child{min-width:0}
+.ticket-conversation-head h3{font-size:18px}
+.ticket-live-meta{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.ticket-live-meta>span:last-child{font-size:9px;color:#78869a}
+.ticket-live-indicator{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;background:#e9f8f1;color:#137951;font-size:8px;font-weight:900;letter-spacing:.08em}
+.ticket-live-indicator i,.ticket-live-dot{width:7px;height:7px;border-radius:50%;background:#17a26a;box-shadow:0 0 0 0 rgba(23,162,106,.35);animation:livePulse 1.7s infinite}
+.ticket-live-indicator.offline{background:#fff3df;color:#a66c09}
+.ticket-live-indicator.offline i{background:#e59a13;animation:none}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(23,162,106,.36)}70%{box-shadow:0 0 0 7px rgba(23,162,106,0)}100%{box-shadow:0 0 0 0 rgba(23,162,106,0)}}
+.ticket-thread{height:clamp(380px,52vh,610px);max-height:none;padding:22px;background:radial-gradient(circle at 12% 0,#f9fbff 0,#f5f8fc 42%,#f4f7fb 100%);scroll-behavior:smooth}
+.ticket-message{max-width:min(76%,720px);margin-bottom:17px;align-items:flex-end}
+.ticket-message-avatar{width:36px;height:36px;flex-basis:36px;border-radius:12px;background:linear-gradient(145deg,#e7edf7,#dce6f5);color:#3b5679}
+.ticket-message.mine .ticket-message-avatar{background:linear-gradient(145deg,#dfeaff,#cfe0ff);color:#225fc1}
+.ticket-message.support-message .ticket-message-avatar{background:linear-gradient(145deg,#fde6e8,#ffd5d9);color:#b52d3f}
+.ticket-message-body>div{margin:0 4px 5px}
+.ticket-message-body b{font-size:10px;color:#16263a}
+.ticket-message-body p{padding:12px 14px;border-radius:5px 15px 15px 15px;border-color:#dde5ef;box-shadow:0 3px 12px rgba(23,40,64,.045);font-size:11px;line-height:1.6;color:#24344a}
+.ticket-message.mine .ticket-message-body p{background:linear-gradient(135deg,#eaf2ff,#e4efff);border-color:#cedfff;border-radius:15px 5px 15px 15px}
+.ticket-message.support-message:not(.mine) .ticket-message-body p{background:#fff9fa;border-color:#f2dadd}
+.ticket-reply{padding:15px 17px;background:#fff}
+.ticket-compose{border:1px solid #dce4ee;border-radius:14px;background:#fbfcfe;overflow:hidden;transition:.15s}
+.ticket-compose:focus-within{border-color:#8eaff5;box-shadow:0 0 0 3px rgba(47,111,237,.09);background:#fff}
+.ticket-compose textarea{display:block;width:100%;min-height:86px;padding:14px 15px;border:0!important;box-shadow:none!important;background:transparent;resize:vertical;font:inherit;line-height:1.55}
+.ticket-compose-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px 9px 14px;border-top:1px solid #edf1f5}
+.ticket-compose-footer>div{display:flex;align-items:center;gap:7px;min-width:0}
+.ticket-compose-footer small{font-size:8px;color:#7b8798}
+.ticket-compose-footer strong{font-size:8px;color:#c43a50}
+.ticket-compose-footer button{min-width:118px;border-radius:10px}
+.ticket-compose-footer button.loading{opacity:.72}
+.ticket-new-message-hint{position:absolute;left:50%;transform:translateX(-50%);margin-top:-46px;z-index:3;padding:7px 11px;border:1px solid #cdddf7;background:#fff;color:#2865ce;border-radius:999px;box-shadow:0 8px 22px rgba(30,66,120,.13);font-size:8px}
+.ticket-conversation{position:relative}
+.ticket-manage-card,.ticket-context-card{border-radius:16px!important;box-shadow:0 7px 22px rgba(18,37,61,.045)}
+.ticket-manage-card .field label{font-size:9px;color:#67768b}
+.ticket-manage-card select{min-height:42px}
+.ticket-context-card>div{grid-template-columns:82px 1fr}
+.ticket-row{transition:.15s}.ticket-row:hover{transform:translateX(2px);background:#f6f9fe}
+.ticket-status{border:1px solid #e1e7ef}
+.ticket-hero{border-radius:20px;padding:29px 33px;background:radial-gradient(circle at 85% 15%,rgba(84,139,245,.20),transparent 34%),linear-gradient(130deg,#09192b,#10355b 70%,#174a7d)}
+.ticket-hero h2{font-size:31px;letter-spacing:-.035em}
+.ticket-kpis>div{border-radius:15px;box-shadow:0 5px 18px rgba(22,39,62,.035)}
+
+/* MFA login v4 */
+.mfa-login-v4{min-height:100vh;margin:0;background:#edf2f8;color:#142238}
+.mfa-login-shell{min-height:100vh;display:grid;grid-template-columns:minmax(420px,1.05fr) minmax(430px,.95fr)}
+.mfa-login-visual{position:relative;overflow:hidden;padding:52px clamp(42px,6vw,92px);background:radial-gradient(circle at 80% 20%,rgba(71,132,239,.23),transparent 28%),linear-gradient(145deg,#071727 0%,#0b2846 57%,#11395f 100%);color:#fff;display:flex;flex-direction:column;justify-content:center}
+.mfa-login-visual:after{content:"";position:absolute;width:520px;height:520px;border:1px solid rgba(255,255,255,.06);border-radius:50%;right:-220px;bottom:-210px;box-shadow:0 0 0 70px rgba(255,255,255,.018),0 0 0 140px rgba(255,255,255,.012)}
+.mfa-login-brand{position:absolute;top:40px;left:clamp(42px,6vw,92px);display:flex;align-items:center;gap:12px}
+.mfa-login-brand>span{width:42px;height:42px;border-radius:12px;background:#e31b23;display:grid;place-items:center;font-size:20px;font-weight:950;box-shadow:0 8px 24px rgba(227,27,35,.25)}
+.mfa-login-brand div{display:flex;flex-direction:column}.mfa-login-brand b{font-size:16px}.mfa-login-brand small{margin-top:2px;color:#7891ad;font-size:7px;letter-spacing:.13em}
+.mfa-shield{position:relative;width:92px;height:105px;margin-bottom:28px;clip-path:polygon(50% 0,92% 16%,88% 68%,50% 100%,12% 68%,8% 16%);background:linear-gradient(150deg,#2e6fd5,#66a0ff);display:grid;place-items:center;box-shadow:0 20px 50px rgba(28,83,161,.35)}
+.mfa-shield i{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.17);font-size:22px;font-style:normal;font-weight:900}
+.mfa-kicker{font-size:9px;letter-spacing:.18em;color:#7fa8dc;font-weight:900}
+.mfa-login-visual h1{margin:10px 0 13px;font-size:clamp(38px,4vw,58px);line-height:1.02;letter-spacing:-.05em;max-width:680px}
+.mfa-login-visual h1 em{font-style:normal;color:#7eacff}.mfa-login-visual>p{max-width:620px;margin:0;color:#9eb2c9;font-size:12px;line-height:1.65}
+.mfa-trust-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:36px;max-width:760px}
+.mfa-trust-grid>div{padding:15px;border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(255,255,255,.035);backdrop-filter:blur(8px)}
+.mfa-trust-grid i{display:block;color:#6e96c6;font-size:8px;font-style:normal;font-weight:900}.mfa-trust-grid b{display:block;margin:6px 0 4px;font-size:10px}.mfa-trust-grid small{color:#8298b1;font-size:8px;line-height:1.45}
+.mfa-login-panel{display:grid;place-items:center;padding:42px;background:radial-gradient(circle at 50% 15%,#fff 0,#f5f8fc 45%,#eef3f8 100%)}
+.mfa-login-card{width:min(485px,100%);padding:31px;border:1px solid #dce4ed;border-radius:24px;background:rgba(255,255,255,.94);box-shadow:0 30px 90px rgba(16,35,59,.13)}
+.mfa-login-card-top{display:flex;align-items:center;gap:11px}.mfa-mini-shield{width:42px;height:42px;border-radius:12px;background:#e9f1ff;color:#2c67d0;display:grid;place-items:center;font-size:20px}.mfa-login-card-top>div{display:flex;flex:1;flex-direction:column}.mfa-login-card-top small{font-size:7px;letter-spacing:.12em;color:#8491a3;font-weight:900}.mfa-login-card-top b{margin-top:2px;font-size:13px}
+.mfa-secure-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 8px;border-radius:999px;background:#eaf8f1;color:#16805a;font-size:7px;font-weight:900}.mfa-secure-chip i{width:6px;height:6px;border-radius:50%;background:#16a36a}
+.mfa-user-pill{display:flex;align-items:center;gap:10px;margin:27px 0 21px;padding:11px 12px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafd}.mfa-user-pill>span{width:34px;height:34px;border-radius:10px;background:#122a46;color:#fff;display:grid;place-items:center;font-size:9px;font-weight:900}.mfa-user-pill div{display:flex;flex-direction:column}.mfa-user-pill small{font-size:7px;color:#8693a5;font-weight:900}.mfa-user-pill b{margin-top:3px;font-size:10px}
+.mfa-login-card h2{margin:0 0 8px;font-size:26px;letter-spacing:-.035em}.mfa-login-card>p{margin:0 0 21px;color:#69788d;font-size:10px;line-height:1.6}
+.mfa-error-v4{display:flex;gap:10px;align-items:flex-start;margin:0 0 16px;padding:11px;border:1px solid #f2d7dc;border-radius:11px;background:#fff7f8}.mfa-error-v4>span{width:27px;height:27px;border-radius:8px;background:#fee8ec;color:#bd3043;display:grid;place-items:center;font-weight:900}.mfa-error-v4 div{display:flex;flex-direction:column}.mfa-error-v4 b{font-size:9px}.mfa-error-v4 small{margin-top:2px;color:#a15b66;font-size:8px}
+.mfa-code-form{display:grid}.mfa-code-form>label{margin-bottom:7px;font-size:9px;font-weight:850;color:#42536b}.mfa-code-input-wrap{height:58px;display:flex;align-items:center;gap:10px;padding:0 14px;border:1px solid #d7e0eb;border-radius:13px;background:#fbfcfe}.mfa-code-input-wrap:focus-within{border-color:#82a7ef;box-shadow:0 0 0 4px rgba(47,111,237,.09);background:#fff}.mfa-code-input-wrap>span{color:#9aa7b8;font-size:12px}.mfa-code-input-wrap input{flex:1;min-width:0;border:0!important;box-shadow:none!important;background:transparent;font-size:22px;font-weight:800;letter-spacing:.16em;color:#17283e}.mfa-code-input-wrap>i{font-style:normal;color:#7690b3}.mfa-code-help{margin:8px 2px 17px;color:#8a96a7;font-size:8px}.mfa-verify-btn{height:48px;border:0;border-radius:12px;background:linear-gradient(135deg,#246bfd,#315dd7);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:850;box-shadow:0 10px 25px rgba(47,111,237,.22)}.mfa-verify-btn b{font-size:17px}.mfa-card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding-top:16px;border-top:1px solid #edf1f5}.mfa-card-foot a,.mfa-card-foot span{font-size:8px;color:#7b899b}
+.mfa-account-v4{background:linear-gradient(180deg,#f5f8fc,#eef3f8)}.mfa-account-v4 .mfa-account-shell{width:min(1120px,calc(100% - 32px));margin:28px auto 55px}.mfa-account-header{box-shadow:0 8px 28px rgba(18,35,57,.055)}.mfa-back{padding:7px 9px;border-radius:9px;background:#f4f7fb}.mfa-state{display:inline-flex;align-items:center;gap:6px}.mfa-state i{width:7px;height:7px;border-radius:50%;background:currentColor}.mfa-setup-intro{display:grid;grid-template-columns:34px 1fr 34px 1fr;gap:10px;align-items:center;margin-top:16px;padding:15px 18px;border:1px solid #dfe6ef;border-radius:14px;background:#fff}.mfa-setup-intro>span{width:31px;height:31px;border-radius:9px;background:#eaf1ff;color:#2865cd;display:grid;place-items:center;font-weight:900}.mfa-setup-intro b,.mfa-setup-intro small{display:block}.mfa-setup-intro small{margin-top:2px;color:var(--muted);font-size:8px}.mfa-qr-frame{width:240px;height:240px;margin:0 auto 13px;padding:10px;border:1px solid #dce4ed;border-radius:17px;background:#fff;box-shadow:0 10px 25px rgba(15,31,54,.06)}.mfa-qr-frame img{width:100%;height:100%;border-radius:9px}.mfa-qr-card>b{display:block;text-align:center}.mfa-setup-divider{height:1px;background:#e9edf3;margin:21px 0}.mfa-active-hero{display:flex;align-items:center;gap:15px;margin-top:16px;padding:19px 21px;border:1px solid #ccebdc;border-radius:16px;background:linear-gradient(120deg,#f4fcf8,#fff)}.mfa-active-icon{width:52px;height:52px;border-radius:15px;background:#e2f7ed;color:#16845c;display:grid;place-items:center;font-size:23px;font-weight:950}.mfa-active-hero small{font-size:8px;color:#4e9477;font-weight:900}.mfa-active-hero h2{margin:3px 0}.mfa-active-hero p{margin:0;color:#748296;font-size:9px}.mfa-action-icon{width:36px;height:36px;border-radius:10px;background:#eaf1ff;color:#2e68d0;display:grid;place-items:center;margin-bottom:12px;font-weight:900}.mfa-action-icon.danger{background:#feecef;color:#be374a}.mfa-security-facts{display:grid;gap:7px;margin-top:16px}.mfa-security-facts span{font-size:9px;color:#47617f}
+
+/* General responsive clarity */
+@media(max-width:1100px){.mfa-login-shell{grid-template-columns:1fr}.mfa-login-visual{min-height:420px}.mfa-login-panel{padding:28px}.ticket-detail-grid{grid-template-columns:1fr}}
+@media(max-width:760px){aside{width:78px}main{margin-left:78px;padding:0 16px 40px}.mfa-login-visual{padding:90px 28px 34px}.mfa-login-brand{left:28px;top:28px}.mfa-login-visual h1{font-size:38px}.mfa-trust-grid{grid-template-columns:1fr}.mfa-login-panel{padding:18px}.mfa-login-card{padding:24px}.mfa-trust-grid>div:nth-child(n+2){display:none}.mfa-setup-intro{grid-template-columns:34px 1fr}.mfa-setup-intro>span:nth-of-type(2){margin-top:8px}.mfa-recovery-reveal>div{grid-template-columns:1fr 1fr}.ticket-thread{height:55vh}.ticket-message{max-width:94%}}
