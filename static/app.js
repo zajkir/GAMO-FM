@@ -165,6 +165,77 @@ function filterTicketAssets(){
  [...a.options].forEach((o,i)=>{if(i===0){o.hidden=false;return}o.hidden=!!bid&&o.dataset.building!==bid});
  if(a.selectedOptions[0]?.hidden)a.value='';
 }
+
+function ticketInitials(name){
+ return String(name||'??').trim().split(/\s+/).map(x=>x[0]||'').join('').slice(0,2).toUpperCase()||'??';
+}
+function ticketMessageElement(m){
+ const row=document.createElement('div');row.className='ticket-message'+(m.mine?' mine':'')+(m.support?' support-message':'');row.dataset.messageId=m.id;
+ const avatar=document.createElement('div');avatar.className='ticket-message-avatar';avatar.textContent=ticketInitials(m.sender_name);
+ const body=document.createElement('div');body.className='ticket-message-body';
+ const meta=document.createElement('div');
+ const name=document.createElement('b');name.textContent=m.sender_name||'Systém';
+ const role=document.createElement('span');role.textContent=m.sender_role||'Používateľ';
+ const time=document.createElement('time');time.textContent=m.created||'';
+ meta.append(name,role,time);
+ const p=document.createElement('p');p.textContent=m.body||'';
+ body.append(meta,p);row.append(avatar,body);return row;
+}
+function scrollTicketBottom(){
+ const thread=document.querySelector('#ticketThread');if(thread){thread.scrollTop=thread.scrollHeight;document.querySelector('#ticketNewMessageHint')?.setAttribute('hidden','')}
+}
+async function refreshTicketMessages(forceScroll=false){
+ const thread=document.querySelector('#ticketThread');if(!thread||document.hidden)return;
+ if(thread.dataset.loading==='1')return;thread.dataset.loading='1';
+ const ticketId=thread.dataset.ticketId,last=Number(thread.dataset.lastMessageId||0);
+ const indicator=document.querySelector('#ticketLiveIndicator');
+ try{
+  const nearBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<110;
+  const res=await fetch('/api/ticket/'+encodeURIComponent(ticketId)+'/messages?after='+last,{cache:'no-store',headers:{'Accept':'application/json'}});
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  const data=await res.json();
+  (data.messages||[]).forEach(m=>thread.appendChild(ticketMessageElement(m)));
+  if(data.last_id!==undefined)thread.dataset.lastMessageId=String(data.last_id);
+  const count=document.querySelector('#ticketMessageCount');if(count){const n=thread.querySelectorAll('.ticket-message').length;count.textContent=n+' '+(n===1?'správa':(n>1&&n<5?'správy':'správ'))}
+  const status=document.querySelector('#ticketLiveStatus');if(status&&data.status)status.textContent='● '+data.status;
+  const updated=document.querySelector('#ticketUpdated');if(updated&&data.updated)updated.textContent=data.updated;
+  if((data.messages||[]).length){
+   if(forceScroll||nearBottom)scrollTicketBottom();else document.querySelector('#ticketNewMessageHint')?.removeAttribute('hidden');
+   refreshNotifications(false);
+  }
+  if(indicator){indicator.classList.remove('offline');indicator.innerHTML='<i></i> LIVE'}
+ }catch(e){
+  if(indicator){indicator.classList.add('offline');indicator.innerHTML='<i></i> PRIPÁJAM…'}
+ }finally{thread.dataset.loading='0'}
+}
+async function submitTicketReply(ev){
+ ev.preventDefault();const form=ev.currentTarget,button=document.querySelector('#ticketReplyButton'),error=document.querySelector('#ticketReplyError');
+ const textarea=form.querySelector('textarea[name="message"]');if(!textarea||!textarea.value.trim())return;
+ if(button){button.disabled=true;button.classList.add('loading');button.innerHTML='Odosielam…'}
+ if(error){error.hidden=true;error.textContent=''}
+ try{
+  const res=await fetch(form.action,{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'GAMO-Live-Chat','Accept':'application/json'}});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.ok)throw new Error(data.error||'Správu sa nepodarilo odoslať.');
+  textarea.value='';await refreshTicketMessages(true);textarea.focus();
+ }catch(e){
+  if(error){error.textContent=e.message||'Správu sa nepodarilo odoslať.';error.hidden=false}
+ }finally{
+  if(button){button.disabled=false;button.classList.remove('loading');button.innerHTML='Odoslať <span>→</span>'}
+ }
+}
+function initLiveTicket(){
+ const thread=document.querySelector('#ticketThread');if(!thread)return;
+ scrollTicketBottom();
+ const form=document.querySelector('#ticketReplyForm');if(form){
+  form.addEventListener('submit',submitTicketReply);
+  form.querySelector('textarea')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();form.requestSubmit()}});
+ }
+ refreshTicketMessages(false);
+ window.GAMO_TICKET_TIMER=setInterval(()=>refreshTicketMessages(false),1800);
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTicketMessages(false)});
+ window.addEventListener('beforeunload',()=>{if(window.GAMO_TICKET_TIMER)clearInterval(window.GAMO_TICKET_TIMER)});
+}
 function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
 function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
 const NOTIFICATION_READ_KEY='gamo_read_notifications_v1';
@@ -314,7 +385,7 @@ document.addEventListener('DOMContentLoaded',()=>{
  }
 });
 
-document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000);const thread=document.querySelector('#ticketThread');if(thread)thread.scrollTop=thread.scrollHeight});
+document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000);initLiveTicket()});
 
 function twinApply(){const s=document.querySelector('.twin-stack');if(!s)return;s.style.setProperty('--twin-angle',(s.dataset.angle||'-18')+'deg');s.style.setProperty('--twin-tilt',(s.dataset.tilt||'58')+'deg');s.style.setProperty('--twin-zoom',s.dataset.zoom||'1')}
 function twinRotate(delta){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle=parseFloat(s.dataset.angle||'-18')+delta;twinApply()}
