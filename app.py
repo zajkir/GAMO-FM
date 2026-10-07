@@ -862,14 +862,14 @@ def asset(i):
  return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events)
 @app.route('/maintenance')
 def maintenance():
- orders=q('select w.*,a.asset_id,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
+ orders=q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
  today=date.today().isoformat()
  stats={'total':len(orders),'active':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'}),'overdue':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'} and r['due'] and str(r['due'])[:10]<today),'critical':sum(1 for r in orders if r['priority']=='Kritická' and r['status'] not in {'Ukončené','Zrušené'}),'completed':sum(1 for r in orders if r['status']=='Ukončené')}
  return render_template('index.html',page='maintenance',orders=orders,maintenance_stats=stats,today_iso=today)
 
 @app.route('/incidents')
 def incidents():
- rows=q('select i.*,a.asset_id,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),))
+ rows=q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),))
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Ukončená','Vyriešená'}),'critical':sum(1 for r in rows if r['severity'] in {'Kritická','Havária'} and r['status'] not in {'Ukončená','Vyriešená'}),'resolved':sum(1 for r in rows if r['status'] in {'Ukončená','Vyriešená'}),'cost':sum(float(r['cost'] or 0) for r in rows)}
  return render_template('index.html',page='incidents',incidents=rows,incident_stats=stats)
 @app.route('/admin')
