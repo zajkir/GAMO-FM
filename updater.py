@@ -4,6 +4,9 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import os
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
@@ -71,6 +74,55 @@ def download_update(manifest):
         target.unlink(missing_ok=True)
         raise ValueError('Kontrola aktualizácie zlyhala: SHA-256 nesedí.')
     return target
+
+
+
+def desktop_data_dir():
+    return Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAMO_FM' / 'data'
+
+
+def backup_user_data(reason='update'):
+    """Create a safe copy of persistent desktop data before replacing app files."""
+    data_dir = desktop_data_dir()
+    db = data_dir / 'gamo.db'
+    if not db.exists():
+        return None
+    backup_dir = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAMO_FM' / 'backups'
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    target = backup_dir / f'gamo_{reason}_{stamp}.db'
+    # SQLite online backup produces a consistent snapshot even if the DB was recently used.
+    import sqlite3
+    src = sqlite3.connect(str(db))
+    dst = sqlite3.connect(str(target))
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    # Keep the newest 10 automatic backups.
+    backups = sorted(backup_dir.glob('gamo_*.db'), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in backups[10:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return target
+
+
+def restore_latest_backup():
+    """Emergency helper: restore the newest automatic backup to the persistent DB path."""
+    data_dir = desktop_data_dir()
+    backup_dir = data_dir.parent / 'backups'
+    backups = sorted(backup_dir.glob('gamo_*.db'), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not backups:
+        return None
+    data_dir.mkdir(parents=True, exist_ok=True)
+    target = data_dir / 'gamo.db'
+    if target.exists():
+        shutil.copy2(target, data_dir / f'gamo_before_restore_{datetime.now().strftime("%Y%m%d_%H%M%S")}.db')
+    shutil.copy2(backups[0], target)
+    return backups[0]
 
 
 def launch_installer(path):
