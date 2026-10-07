@@ -101,7 +101,7 @@ def init_postgres():
   db.execute("UPDATE buildings SET organization_id=%s WHERE organization_id IS NULL",(gamo_org,))
   db.commit()
  if not one('select count(*) n from users')['n']:
-  x('insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!'))))
+  x('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
 def init():
  os.makedirs(DATA_DIR,exist_ok=True)
  if USING_POSTGRES:
