@@ -385,6 +385,7 @@ assert r.status_code in (302, 303)
 # MFA is mandatory for newly-created customers.
 r = client.get("/account/mfa")
 assert r.status_code == 200
+assert b"ACCOUNT SECURITY" in r.data
 with client.session_transaction() as sess:
     smoke_mfa_secret = sess["mfa_setup_secret"]
 r = client.post(
@@ -479,12 +480,24 @@ assert client.post(
 force_user_session(manager)
 manager_list = client.get("/tickets")
 assert manager_list.status_code == 200 and b"Nefunguje klimatiz" in manager_list.data
+
+# Regression: the second participant must see the first participant's message
+# through the live API without sending anything or refreshing the whole page.
+live_initial = client.get(f"/api/ticket/{ticket['id']}/messages?after=0")
+assert live_initial.status_code == 200
+live_initial_json = live_initial.get_json()
+assert any(m["body"].startswith("Prosím správcu") for m in live_initial_json["messages"])
+first_message_id = live_initial_json["last_id"]
+
+# Live/AJAX reply returns JSON instead of forcing a page reload.
 r = client.post(
     f"/ticket/{ticket['id']}/message",
     data={"_csrf": csrf(), "message": "Požiadavku som prevzal, prídem ju skontrolovať."},
+    headers={"X-Requested-With": "GAMO-Live-Chat", "Accept": "application/json"},
     follow_redirects=False,
 )
-assert r.status_code in (302, 303)
+assert r.status_code == 200 and r.get_json()["ok"] is True
+manager_message_id = r.get_json()["message_id"]
 r = client.post(
     f"/ticket/{ticket['id']}/manage",
     data={
@@ -500,8 +513,21 @@ assert r.status_code in (302, 303)
 force_user_session(requester)
 notifications = client.get("/api/notifications").get_json()
 assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in notifications)
+
+# Requester receives the manager reply immediately from the live endpoint.
+live_reply = client.get(f"/api/ticket/{ticket['id']}/messages?after={first_message_id}")
+assert live_reply.status_code == 200
+live_reply_json = live_reply.get_json()
+assert live_reply_json["last_id"] == manager_message_id
+assert any(m["body"].startswith("Požiadavku som prevzal") and not m["mine"] for m in live_reply_json["messages"])
+
+# No duplicate payload after the last known message.
+empty_live = client.get(f"/api/ticket/{ticket['id']}/messages?after={manager_message_id}")
+assert empty_live.status_code == 200 and empty_live.get_json()["messages"] == []
+
 thread = client.get(f"/ticket/{ticket['id']}")
 assert thread.status_code == 200 and "Požiadavku som prevzal".encode("utf-8") in thread.data
+assert b"ticketLiveIndicator" in thread.data and b"ticketReplyForm" in thread.data
 
 # Restore the customer administrator for the remaining privacy/IDOR suite.
 force_user_session(smoke_admin)
