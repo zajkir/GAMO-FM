@@ -591,3 +591,97 @@ button:disabled{cursor:not-allowed;opacity:.58}
 .dt2-stage:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 44%,rgba(62,140,218,.08),transparent 42%),linear-gradient(180deg,rgba(255,255,255,.015),rgba(0,0,0,.06));z-index:1}.dt2-world{z-index:4}
 @media(max-width:1080px){.dashboard-commandbar{align-items:flex-start;flex-direction:column}.dashboard-command-actions{justify-content:flex-start}.dt2-selected-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:680px){.dashboard-command-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.dashboard-command-actions>a,.dashboard-command-actions>button{width:100%}.ticket-list-head-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}.dt2-selected-grid{grid-template-columns:1fr 1fr}}
+
+
+/* Readability & information hierarchy pass */
+.admin-kicker{
+ display:inline-flex;align-items:center;gap:5px;
+ min-height:22px;padding:4px 8px;border:1px solid #d9e6f8;border-radius:999px;
+ background:#eef4fc;color:#315d96;font-size:9px;font-weight:900;letter-spacing:.105em;
+ line-height:1.15;text-transform:uppercase
+}
+.eyebrow{
+ display:inline-flex;align-items:center;min-height:24px;padding:4px 9px;
+ border:1px solid rgba(151,187,240,.2);border-radius:999px;
+ background:rgba(88,139,218,.12);color:#c7dcff;
+ font-size:9px;font-weight:900;letter-spacing:.13em;line-height:1.15
+}
+.admin-v2-top .admin-kicker,.dt2-inspector .admin-kicker,.dt2-head .admin-kicker,
+.ticket-hero .admin-kicker,.reports-hero .admin-kicker,.privacy-hero .admin-kicker,
+.ops-hero .admin-kicker{
+ color:#cfe0fb;background:rgba(96,148,225,.13);border-color:rgba(142,181,236,.2)
+}
+.card .admin-kicker,.privacy-card .admin-kicker,.customer-detail-card .admin-kicker,
+.ticket-list-card .admin-kicker,.ticket-detail-top .admin-kicker{
+ color:#2f5c95;background:#edf4ff;border-color:#d8e6fa
+}
+.adm-head h3,.customer-detail-card-head h3,.privacy-card-head h3,
+.ticket-conversation-head h3,.ticket-manage-card h3,.ticket-context-card h3,
+.ticket-list-head h3,.ct h3{
+ color:#17283e;font-weight:800;letter-spacing:-.015em
+}
+.adm-head h3{font-size:16px}.customer-detail-card-head h3{font-size:17px}.privacy-card-head h3{font-size:17px}
+.ticket-conversation-head h3,.ticket-list-head h3{font-size:16px}
+.adm-head p,.customer-detail-card-head p,.privacy-card-head p,.ticket-conversation-head p,.ct p{
+ color:#68778b;line-height:1.5
+}
+.field label{color:#44546b;font-size:11.5px;font-weight:800}
+.adm-table-head{font-size:8.5px;color:#6f7f93;letter-spacing:.075em}
+.adm-metric small{font-size:8.5px;color:#74849a}.adm-metric em{font-size:10px;color:#6f7f93}
+.admin-v2-nav{gap:7px;padding:6px}
+.admin-v2-nav button{
+ min-height:37px;padding:9px 16px;border-radius:9px;
+ color:#43546a;font-size:11.5px;font-weight:800
+}
+.admin-v2-nav button:hover{background:#f1f5fb;color:#17365b}
+.admin-v2-nav button.active{background:#10243e;color:#fff;box-shadow:0 4px 12px rgba(15,35,61,.14)}
+.setting-card{padding:22px}.setting-card b{color:#182a40;font-size:14px;font-weight:800}
+.setting-card small{margin-top:6px;color:#738197;font-size:10px;line-height:1.5}
+.setting-card label{font-size:10.5px}
+.config-v2-card b{color:#17283e;font-size:13px;font-weight:800}
+.config-v2-card p,.config-v2-card small{color:#718095}
+.config-modal-hero{padding:27px 30px;gap:17px}
+.config-modal-hero .config-section-label{
+ display:inline-flex;width:max-content;max-width:100%;padding:5px 8px;
+ border:1px solid rgba(160,198,250,.2);border-radius:999px;
+ background:rgba(111,164,239,.12);color:#d7e8ff;
+ font-size:9px;font-weight:900;letter-spacing:.1em;line-height:1.1
+}
+.config-modal-hero b{margin-top:8px;font-size:23px;line-height:1.15}
+.config-modal-hero p{max-width:610px;margin-top:7px;color:#c0d0e5;font-size:10.5px;line-height:1.5}
+.config-field-grid{gap:14px;padding-top:26px}
+.config-field-grid label{padding:15px;background:#fbfcfe;border-color:#dde5ef}
+.config-field-grid label>span{color:#23364e;font-size:10.5px;font-weight:800}
+.config-field-grid input,.config-field-grid select{height:41px;font-size:10.5px}
+.config-field-grid label>small{color:#7f8da1;font-size:8px;line-height:1.4}
+.ticket-detail-main{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
+.ticket-detail-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px}
+.ticket-detail-nav>a{
+ display:inline-flex;align-items:center;min-height:28px;padding:5px 9px;
+ border:1px solid #dfe6ef;border-radius:8px;background:#f8fafc;
+ color:#40556f!important;font-size:10px!important;font-weight:800;text-decoration:none
+}
+.ticket-detail-nav>a:hover{background:#edf4ff;border-color:#cbdcf4;color:#245da8!important}
+.ticket-context-label{
+ display:inline-flex;align-items:center;min-height:28px;padding:5px 9px;
+ border:1px solid #d7e5fa;border-radius:8px;background:#edf4ff;
+ color:#2d5f9d;font-size:9.5px;font-weight:900;letter-spacing:.055em
+}
+.ticket-detail-top{padding:24px 25px}.ticket-detail-top h2{margin:1px 0 10px;font-size:25px;line-height:1.18;color:#122239}
+.ticket-detail-owner{padding:2px 0}.ticket-detail-owner small{color:#687a91;font-size:8px}
+.ticket-detail-owner b{color:#17283e;font-size:10px}.ticket-detail-owner span{color:#607086;font-size:9px}
+.ticket-detail-badges>span,.ticket-detail-badges>a{font-size:8.5px}
+.ticket-list-head{padding:19px 21px}.ticket-row-main h4{font-size:12.5px;color:#1a2c42}
+.ticket-row-main p{font-size:9.5px}.ticket-row-meta{font-size:9.5px}.ticket-row-meta small{font-size:7.5px}
+.ticket-conversation-head{padding:19px 20px}.ticket-conversation-head p{font-size:9.5px}
+.ticket-message-body b{font-size:10px}.ticket-message-body span,.ticket-message-body time{font-size:7.5px}
+.privacy-kpis small,.ticket-kpis small{color:#697a90;font-size:8.5px}
+.customer-detail-card-head,.privacy-card-head{background:linear-gradient(180deg,#fff,#fbfcfe)}
+.customer-detail-card-head .admin-kicker,.privacy-card-head .admin-kicker{margin-bottom:2px}
+@media(max-width:760px){
+ .admin-kicker,.eyebrow{white-space:normal}
+ .ticket-detail-nav{align-items:flex-start}
+ .ticket-context-label{max-width:100%;overflow-wrap:anywhere}
+ .config-modal-hero b{font-size:20px}
+ .admin-v2-nav button{font-size:11px}
+}

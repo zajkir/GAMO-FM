@@ -193,7 +193,9 @@
 
 {% elif page=='ticket' %}
 <div class="ticket-detail-top">
- <div><a href="/tickets">← Všetky tickety</a><span class="admin-kicker">{{ticket.ticket_no}} · {{ticket.category}}{% if ticket_platform_view and ticket_customer_org %} · {{ticket_customer_org.name}}{% endif %}</span><h2>{{ticket.subject}}</h2><div class="ticket-detail-badges"><span class="ticket-status" id="ticketLiveStatus">● {{ticket.status}}</span><span class="priority-pill {{ticket.priority|lower}}">{{ticket.priority}}</span>{% if ticket_building %}<span>▦ {{ticket_building.code}} · {{ticket_building.name}}</span>{% endif %}{% if ticket_asset %}{% if ticket_platform_view %}<span>◇ {{ticket_asset.asset_id}}</span>{% else %}<a href="/asset/{{ticket_asset.id}}">◇ {{ticket_asset.asset_id}}</a>{% endif %}{% endif %}</div></div>
+ <div class="ticket-detail-main">
+  <div class="ticket-detail-nav"><a href="/tickets">← Všetky tickety</a><span class="ticket-context-label">{{ticket.ticket_no}} · {{ticket.category}}{% if ticket_platform_view and ticket_customer_org %} · {{ticket_customer_org.name}}{% endif %}</span></div>
+  <h2>{{ticket.subject}}</h2><div class="ticket-detail-badges"><span class="ticket-status" id="ticketLiveStatus">● {{ticket.status}}</span><span class="priority-pill {{ticket.priority|lower}}">{{ticket.priority}}</span>{% if ticket_building %}<span>▦ {{ticket_building.code}} · {{ticket_building.name}}</span>{% endif %}{% if ticket_asset %}{% if ticket_platform_view %}<span>◇ {{ticket_asset.asset_id}}</span>{% else %}<a href="/asset/{{ticket_asset.id}}">◇ {{ticket_asset.asset_id}}</a>{% endif %}{% endif %}</div></div>
  <div class="ticket-detail-owner"><small>VYTVORIL</small><b>{{ticket_creator.name if ticket_creator else 'Používateľ'}}</b><span>{{ticket_creator.email if ticket_creator else '—'}}</span><small>PRIRADENÉ</small><b>{{ticket_assigned.name if ticket_assigned else 'Nepriradené'}}</b></div>
 </div>
 <div class="ticket-detail-grid">
