@@ -144,8 +144,6 @@ class Launcher(tk.Tk):
             fill="#D9E4F1",
             font=("Segoe UI", 13, "bold"),
             width=220,
-            spacing1=4,
-            spacing3=4,
         )
         left.create_text(
             34,
@@ -155,7 +153,6 @@ class Launcher(tk.Tk):
             fill="#8299B4",
             font=("Segoe UI", 9),
             width=220,
-            spacing3=3,
         )
         left.create_text(
             34,
