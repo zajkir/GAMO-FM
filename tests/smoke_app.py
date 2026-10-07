@@ -232,6 +232,36 @@ assert r.status_code in (302, 303)
 incident = app.one("select * from incidents where asset_id=? and title=?", (asset["id"], "QA incident"))
 assert incident
 
+# Regression: resolved incidents and cancelled workorders are not active,
+# overdue or notification-worthy anywhere in the application.
+r = client.post(
+    "/add/incident",
+    data={
+        "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA resolved incident",
+        "severity": "Kritická", "status": "Vyriešená", "reported": "2026-10-06",
+        "impact": "Resolved", "cause": "Resolved", "cost": "0"
+    },
+)
+assert r.status_code in (302, 303)
+r = client.post(
+    "/add/workorder",
+    data={
+        "_csrf": csrf(), "asset_id": str(asset["id"]), "title": "QA cancelled overdue",
+        "kind": "PM", "priority": "Kritická", "status": "Zrušené", "due": "2020-01-01",
+        "supplier": "", "technician": "", "cost": "0", "description": "Cancelled"
+    },
+)
+assert r.status_code in (302, 303)
+active_notifications = client.get("/api/notifications").get_json()
+assert not any(x.get("title") == "QA resolved incident" for x in active_notifications)
+assert not any(x.get("title") == "QA cancelled overdue" for x in active_notifications)
+building_page = client.get(f"/building/{building['id']}")
+assert building_page.status_code == 200
+assert b"GAMO DIGITAL TWIN" in building_page.data
+assert b'data-floor-incidents="1"' in building_page.data
+dashboard_page = client.get("/")
+assert dashboard_page.status_code == 200
+
 # ----- Facility editing regression coverage -----
 r = client.post(
     f"/edit/building/{building['id']}",
@@ -333,6 +363,23 @@ r = client.post(
 )
 assert r.status_code in (302, 303)
 assert client.get("/api/setting?section=smoke-test").get_json()["value"] == "tenant-value"
+
+viewer_id = app.x_system(
+    "insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)",
+    ("Settings Viewer", "settings-viewer@example.test", "Viewer", "Aktívny", app.generate_password_hash("ViewerPass2026!"), gamo_org_id, False if app.USING_POSTGRES else 0),
+)
+viewer_client = app.app.test_client()
+with viewer_client.session_transaction() as sess:
+    sess["user_id"] = viewer_id
+    sess["user_name"] = "Settings Viewer"
+    sess["user_role"] = "Viewer"
+    sess["organization_id"] = gamo_org_id
+    sess["organization_code"] = "GAMO"
+    sess["must_change_password"] = False
+    sess["csrf"] = "viewer-csrf"
+r = viewer_client.post("/settings/save", data={"_csrf": "viewer-csrf", "section": "forbidden", "value": "x"})
+assert r.status_code == 403
+assert app.one_system("select v from organization_settings where organization_id=? and k=?", (gamo_org_id, "forbidden")) is None
 
 r = client.get("/reports/export.xlsx")
 assert r.status_code == 200
@@ -738,6 +785,11 @@ assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in customer_notificat
 customer_ticket_after_gamo = client.get(f"/ticket/{ticket['id']}")
 assert customer_ticket_after_gamo.status_code == 200
 assert b"GAMO support vid" in customer_ticket_after_gamo.data
+assert b"GAMO Support" in customer_ticket_after_gamo.data
+live_messages = client.get(f"/api/ticket/{ticket['id']}/messages?after=0").get_json()["messages"]
+support_messages = [m for m in live_messages if "GAMO support vid" in m.get("body", "")]
+assert support_messages and support_messages[-1]["support"] is True
+assert support_messages[-1]["sender_role"] == "GAMO Support"
 r = client.post(
     "/privacy/support-access",
     data={
