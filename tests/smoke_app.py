@@ -18,6 +18,7 @@ os.environ["GAMO_ADMIN_PASSWORD"] = "TestGamo2026!"
 os.environ["GAMO_HTTPS"] = "0"
 
 import app
+from db_migrations import _migration_12
 
 client = app.app.test_client()
 
@@ -746,6 +747,76 @@ auth_count = app.one_system(
     (customer["id"],),
 )["n"]
 assert auth_count > 0
+
+# ----- Rich demo seed for the customer's fdsfsdf building -----
+demo_building = app.one_system(
+    "select * from buildings where organization_id=? and lower(name)=?",
+    (customer["id"], "fdsfsdf"),
+)
+if not demo_building:
+    demo_bid = app.x_system(
+        "insert into buildings(code,name,address,manager,customer,status,organization_id) values(?,?,?,?,?,?,?)",
+        ("FDSFSDF", "fdsfsdf", "", "", customer["name"], "Aktívna", customer["id"]),
+    )
+    demo_building = app.one_system("select * from buildings where id=?", (demo_bid,))
+
+with app.con(system=True) as db:
+    _migration_12(db, app.USING_POSTGRES)
+    db.commit()
+
+demo_bid = demo_building["id"]
+assert app.one_system(
+    "select count(*) n from floors where building_id=?", (demo_bid,)
+)["n"] >= 3
+assert app.one_system(
+    "select count(*) n from rooms r join floors f on f.id=r.floor_id where f.building_id=?", (demo_bid,)
+)["n"] >= 8
+assert app.one_system(
+    "select count(*) n from assets where building_id=? and organization_id=?", (demo_bid, customer["id"])
+)["n"] >= 12
+assert app.one_system(
+    "select count(*) n from workorders w join assets a on a.id=w.asset_id where a.building_id=?", (demo_bid,)
+)["n"] >= 7
+assert app.one_system(
+    "select count(*) n from incidents i join assets a on a.id=i.asset_id where a.building_id=?", (demo_bid,)
+)["n"] >= 4
+assert app.one_system(
+    "select count(*) n from documents where building_id=?", (demo_bid,)
+)["n"] >= 3
+assert app.one_system(
+    "select count(*) n from tickets where organization_id=? and building_id=?", (customer["id"], demo_bid)
+)["n"] >= 3
+assert app.one_system(
+    "select count(*) n from ticket_messages where organization_id=? and ticket_id in (select id from tickets where building_id=?)",
+    (customer["id"], demo_bid),
+)["n"] >= 7
+demo_ahu = app.one_system(
+    "select id from assets where organization_id=? and asset_id=?",
+    (customer["id"], "HVAC-900001"),
+)
+assert demo_ahu
+assert app.one_system(
+    "select count(*) n from assets where organization_id=? and parent_id=?",
+    (customer["id"], demo_ahu["id"]),
+)["n"] >= 2
+
+# The seed is idempotent and stays inside this customer.
+before_demo_assets = app.one_system(
+    "select count(*) n from assets where building_id=? and organization_id=?",
+    (demo_bid, customer["id"]),
+)["n"]
+with app.con(system=True) as db:
+    _migration_12(db, app.USING_POSTGRES)
+    db.commit()
+after_demo_assets = app.one_system(
+    "select count(*) n from assets where building_id=? and organization_id=?",
+    (demo_bid, customer["id"]),
+)["n"]
+assert before_demo_assets == after_demo_assets
+assert app.one_system(
+    "select count(*) n from assets where asset_id like ? and organization_id<>?",
+    ("HVAC-900%", customer["id"]),
+)["n"] == 0
 
 # Production restart regression: RLS may already be active with an empty users table.
 if app.USING_POSTGRES:

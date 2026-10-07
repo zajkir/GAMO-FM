@@ -3,7 +3,7 @@
 Migrations are additive and idempotent. They never drop customer tables or data.
 The same migration history works with PostgreSQL (hosted) and SQLite (desktop).
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def _columns(db, table, using_postgres):
@@ -695,6 +695,292 @@ def _migration_11(db, using_postgres):
                END $$"""
         )
 
+
+def _migration_12(db, using_postgres):
+    """Populate the customer's fdsfsdf building with rich, tenant-isolated demo data."""
+    ph = "%s" if using_postgres else "?"
+
+    targets = db.execute(
+        f"""select b.id building_id,b.organization_id,o.name organization_name
+            from buildings b
+            join organizations o on o.id=b.organization_id
+            where o.code<>'GAMO'
+              and (lower(trim(b.name))={ph} or lower(trim(b.code))={ph})
+            order by b.id""",
+        ("fdsfsdf", "fdsfsdf"),
+    ).fetchall()
+    if not targets:
+        return
+
+    def value(row, key, index=0):
+        if row is None:
+            return None
+        try:
+            return row[key]
+        except Exception:
+            return row[index]
+
+    def insert_id(pg_sql, sqlite_sql, args):
+        cur = db.execute(pg_sql if using_postgres else sqlite_sql, args)
+        if using_postgres:
+            row = cur.fetchone()
+            return value(row, "id")
+        return cur.lastrowid
+
+    today = datetime.utcnow().date()
+
+    for target in targets:
+        building_id = value(target, "building_id")
+        organization_id = value(target, "organization_id")
+        organization_name = value(target, "organization_name")
+
+        admin = db.execute(
+            f"""select id,name from users
+                where organization_id={ph} and status='Aktívny'
+                order by case when role='Administrator' then 0 when role='Facility Manager' then 1 else 2 end,id
+                limit 1""",
+            (organization_id,),
+        ).fetchone()
+        admin_id = value(admin, "id") if admin else None
+        admin_name = value(admin, "name") if admin else "Demo používateľ"
+
+        db.execute(
+            f"""update buildings
+                set address=case when coalesce(trim(address),'')='' then {ph} else address end,
+                    manager=case when coalesce(trim(manager),'')='' then {ph} else manager end,
+                    customer=case when coalesce(trim(customer),'')='' or customer='GAMO a.s.' then {ph} else customer end,
+                    status='Aktívna'
+                where id={ph} and organization_id={ph}""",
+            ("Testovacia 24, Banská Bystrica", admin_name, organization_name, building_id, organization_id),
+        )
+
+        def ensure_floor(code, name):
+            row = db.execute(
+                f"select id from floors where building_id={ph} and lower(code)=lower({ph}) limit 1",
+                (building_id, code),
+            ).fetchone()
+            if row:
+                return value(row, "id")
+            return insert_id(
+                "insert into floors(building_id,code,name) values(%s,%s,%s) returning id",
+                "insert into floors(building_id,code,name) values(?,?,?)",
+                (building_id, code, name),
+            )
+
+        floor1 = ensure_floor("1.NP", "Prízemie")
+        floor2 = ensure_floor("2.NP", "Administratíva")
+        floor3 = ensure_floor("3.NP", "Technické podlažie")
+
+        def ensure_room(floor_id, code, name, area, tenant, zone):
+            row = db.execute(
+                f"select id from rooms where floor_id={ph} and lower(code)=lower({ph}) limit 1",
+                (floor_id, code),
+            ).fetchone()
+            if row:
+                return value(row, "id")
+            return insert_id(
+                "insert into rooms(floor_id,code,name,area,tenant,zone) values(%s,%s,%s,%s,%s,%s) returning id",
+                "insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",
+                (floor_id, code, name, area, tenant, zone),
+            )
+
+        rooms = {
+            "LOBBY": ensure_room(floor1, "LOBBY", "Recepcia a vstupná hala", 74.5, organization_name, "Verejná"),
+            "SERVER": ensure_room(floor1, "SERVER-01", "Serverovňa", 31.8, organization_name, "Kritická"),
+            "TECH": ensure_room(floor1, "TECH-01", "Technická miestnosť", 42.0, organization_name, "Technická"),
+            "OFFICE": ensure_room(floor2, "OFFICE-201", "Open space", 186.4, organization_name, "Administratíva"),
+            "MEET": ensure_room(floor2, "MEET-202", "Zasadacia miestnosť", 48.2, organization_name, "Administratíva"),
+            "ELE": ensure_room(floor2, "ELE-203", "Elektro rozvodňa", 27.6, organization_name, "Kritická"),
+            "HVAC": ensure_room(floor3, "HVAC-301", "Strojovňa VZT", 96.1, organization_name, "Technická"),
+            "ARCH": ensure_room(floor3, "ARCH-302", "Archív a sklad", 63.3, organization_name, "Prevádzka"),
+        }
+
+        floor_for = {
+            "LOBBY": floor1, "SERVER": floor1, "TECH": floor1,
+            "OFFICE": floor2, "MEET": floor2, "ELE": floor2,
+            "HVAC": floor3, "ARCH": floor3,
+        }
+
+        def ensure_asset(asset_id, name, room_key, profession, grp, typ, manufacturer, model, serial,
+                         system_id, status, criticality, service, revision, price, ip, protocol, notes):
+            row = db.execute(
+                f"select id from assets where organization_id={ph} and upper(asset_id)=upper({ph}) limit 1",
+                (organization_id, asset_id),
+            ).fetchone()
+            if row:
+                return value(row, "id")
+            args = (
+                asset_id, name, building_id, floor_for[room_key], rooms[room_key], profession, grp, typ,
+                manufacturer, model, serial, system_id, None, status, criticality, service, revision, price,
+                (today - timedelta(days=550)).isoformat(), (today + timedelta(days=545)).isoformat(),
+                ip, protocol, notes, organization_id,
+            )
+            return insert_id(
+                """insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,installed,warranty,ip,protocol,notes,organization_id)
+                   values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+                """insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,installed,warranty,ip,protocol,notes,organization_id)
+                   values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                args,
+            )
+
+        assets = {}
+        assets["AHU"] = ensure_asset("HVAC-900001", "VZT jednotka AHU-1", "HVAC", "HVAC", "Vzduchotechnika", "AHU", "Daikin", "D-AHU 8500", "AHU-FDS-001", "SYS-HVAC-01", "Prevádzka", "A", 3, 12, 28400, "10.30.1.20", "BACnet", "Hlavná VZT jednotka pre kancelárske podlažia.")
+        assets["FAN"] = ensure_asset("HVAC-900002", "Prívodný ventilátor AHU-1", "HVAC", "HVAC", "Vzduchotechnika", "FAN", "Ziehl-Abegg", "ZA-ECBlue", "FAN-FDS-002", "SYS-HVAC-01", "Prevádzka", "B", 6, 12, 4200, "10.30.1.21", "Modbus", "Podriadený asset VZT jednotky.")
+        assets["COOL"] = ensure_asset("HVAC-900003", "Chladiaci modul AHU-1", "HVAC", "HVAC", "Chladenie", "DX", "Daikin", "ERQ250", "DX-FDS-003", "SYS-HVAC-01", "Servis", "B", 6, 12, 8900, "10.30.1.22", "Modbus", "Testovací asset v stave Servis.")
+        assets["ELE"] = ensure_asset("ELE-900001", "Hlavný rozvádzač NN", "ELE", "ELE", "Silnoprúd", "LV-SWITCHBOARD", "Schneider Electric", "PrismaSeT", "ELE-FDS-001", "SYS-ELE-01", "Prevádzka", "A", 12, 12, 36500, "10.30.2.10", "Modbus TCP", "Hlavné napájanie objektu.")
+        assets["UPS"] = ensure_asset("UPS-900001", "UPS serverovne 20 kVA", "SERVER", "UPS", "Záložné napájanie", "UPS", "Eaton", "93PS 20kVA", "UPS-FDS-001", "SYS-UPS-01", "Servis", "A", 6, 12, 17400, "10.30.2.30", "SNMP", "Kapacita batérií je predmetom servisnej kontroly.")
+        assets["CCTV"] = ensure_asset("CCTV-900001", "Kamera hlavného vstupu", "LOBBY", "CCTV", "Kamerový systém", "IP-CAM", "Axis", "P3265-LVE", "CAM-FDS-001", "SYS-CCTV-01", "Prevádzka", "C", 12, 24, 780, "10.30.3.40", "ONVIF", "Vstupná kamera s nočným režimom.")
+        assets["ACS"] = ensure_asset("ACS-900001", "Čítačka vstupných kariet", "LOBBY", "ACS", "Prístupový systém", "READER", "HID", "Signo 20", "ACS-FDS-001", "SYS-ACS-01", "Prevádzka", "B", 12, 24, 430, "10.30.3.50", "OSDP", "Hlavný vstup zamestnancov.")
+        assets["EPS"] = ensure_asset("EPS-900001", "EPS ústredňa", "TECH", "EPS", "Požiarna signalizácia", "FACP", "Siemens", "FC2020", "EPS-FDS-001", "SYS-EPS-01", "Prevádzka", "A", 6, 12, 12800, "10.30.4.10", "BACnet", "Požiarna ústredňa objektu.")
+        assets["ZTI"] = ensure_asset("ZTI-900001", "Obehové čerpadlo vody", "TECH", "ZTI", "Vodné hospodárstvo", "PUMP", "Grundfos", "MAGNA3", "ZTI-FDS-001", "SYS-ZTI-01", "Porucha", "B", 6, 12, 3100, "10.30.5.20", "Modbus", "Nasimulovaná porucha pre test incidentov.")
+        assets["MAR"] = ensure_asset("MAR-900001", "BMS regulátor budovy", "SERVER", "MAR", "Meranie a regulácia", "DDC", "Siemens", "PXC4", "MAR-FDS-001", "SYS-BMS-01", "Prevádzka", "A", 6, 12, 9400, "10.30.1.5", "BACnet/IP", "Centrálny regulátor BMS.")
+        assets["ENM"] = ensure_asset("ENM-900001", "Hlavný elektromer", "ELE", "ENM", "Energetický monitoring", "METER", "Schneider Electric", "PM8000", "ENM-FDS-001", "SYS-ENM-01", "Prevádzka", "B", 12, 24, 1900, "10.30.2.15", "Modbus TCP", "Fakturačný a prevádzkový energetický monitoring.")
+        assets["PO"] = ensure_asset("PO-900001", "Hasiaci prístroj CO2", "SERVER", "PO", "Požiarna ochrana", "EXTINGUISHER", "Gloria", "KS5SE", "PO-FDS-001", "SYS-PO-01", "Prevádzka", "C", 12, 12, 165, "", "", "Kontrolný PO asset pre revízne termíny.")
+
+        db.execute(f"update assets set parent_id={ph} where id in ({ph},{ph}) and organization_id={ph}", (assets["AHU"], assets["FAN"], assets["COOL"], organization_id))
+
+        def ensure_workorder(asset_key, title, kind, priority, status, due_days, supplier, technician, cost, description):
+            aid = assets[asset_key]
+            row = db.execute(
+                f"select id from workorders where asset_id={ph} and title={ph} limit 1",
+                (aid, title),
+            ).fetchone()
+            if row:
+                return value(row, "id")
+            due = (today + timedelta(days=due_days)).isoformat()
+            return insert_id(
+                "insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id",
+                "insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)",
+                (aid, title, kind, priority, status, due, supplier, technician, cost, description),
+            )
+
+        ensure_workorder("AHU", "Preventívna údržba VZT", "PM", "Stredná", "Plánované", 14, "KlimaServis SK", "M. Kováč", 420, "Výmena filtrov, kontrola remeňov a meranie prietokov.")
+        ensure_workorder("UPS", "Test batériového modulu UPS", "REV", "Vysoká", "Prebieha", 3, "PowerCare s.r.o.", "J. Horváth", 690, "Kapacitný test batérií a kontrola bypassu.")
+        ensure_workorder("EPS", "Ročná odborná prehliadka EPS", "REV", "Vysoká", "Plánované", 28, "FireTech SK", "P. Novák", 840, "Kompletná revízia EPS podľa servisného plánu.")
+        ensure_workorder("ZTI", "Oprava obehového čerpadla", "OPR", "Kritická", "Prebieha", 1, "AquaServis", "R. Malík", 1250, "Diagnostika ložísk, tesnenia a frekvenčného meniča.")
+        ensure_workorder("ELE", "Termovízna kontrola rozvádzača", "REV", "Stredná", "Ukončené", -18, "ElektroCheck", "D. Urban", 510, "Kontrola spojov a teplotných anomálií.")
+        ensure_workorder("CCTV", "Čistenie a kontrola kamery", "PM", "Nízka", "Ukončené", -9, "SecureVision", "A. Bielik", 95, "Čistenie optiky a kontrola záznamu.")
+        ensure_workorder("PO", "Kontrola hasiaceho prístroja", "REV", "Stredná", "Plánované", -5, "FireTech SK", "P. Novák", 28, "Úmyselne po termíne pre test dashboardu a reportov.")
+
+        def ensure_incident(asset_key, title, severity, status, reported_days, impact, cause, cost):
+            aid = assets[asset_key]
+            row = db.execute(
+                f"select id from incidents where asset_id={ph} and title={ph} limit 1",
+                (aid, title),
+            ).fetchone()
+            if row:
+                return value(row, "id")
+            reported = (today + timedelta(days=reported_days)).isoformat()
+            return insert_id(
+                "insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(%s,%s,%s,%s,%s,%s,%s,%s) returning id",
+                "insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)",
+                (aid, title, severity, status, reported, impact, cause, cost),
+            )
+
+        ensure_incident("ZTI", "Pokles tlaku v cirkulačnom okruhu", "Kritická", "Rieši sa", -1, "Obmedzená dodávka teplej vody na 2. a 3. NP.", "Opotrebované tesnenie čerpadla.", 380)
+        ensure_incident("UPS", "Znížená kapacita UPS batérií", "Vysoká", "Pridelená", -3, "Skrátená doba zálohy serverovne.", "Batériový modul pod odporúčanou kapacitou.", 0)
+        ensure_incident("CCTV", "Výpadok obrazu kamery pri vstupe", "Stredná", "Vyriešená", -12, "Dočasne bez obrazu hlavného vstupu.", "Poškodený patch kábel.", 74)
+        ensure_incident("AHU", "Kolísanie teploty v open space", "Stredná", "Otvorená", -2, "Teplotný komfort na 2. NP.", "Potrebná kontrola regulácie a klapiek.", 0)
+
+        event_specs = [
+            ("AHU", "DEMO_SEED", "Testovacia VZT jednotka zaevidovaná", "Asset vytvorený pre komplexný test Asset 360."),
+            ("AHU", "SERVICE", "Výmena filtrov", "Simulovaná servisná história: filtre F7 vymenené."),
+            ("UPS", "DIAGNOSTIC", "Kapacitný test UPS", "Zistená znížená kapacita batériového modulu."),
+            ("ZTI", "FAULT", "Porucha obehového čerpadla", "Incident vytvorený pre test prevádzkového workflow."),
+            ("ELE", "REVISION", "Termovízna kontrola", "Bez kritických tepelných anomálií."),
+        ]
+        for asset_key, event_type, title, detail in event_specs:
+            aid = assets[asset_key]
+            exists = db.execute(
+                f"select id from asset_events where organization_id={ph} and asset_id={ph} and title={ph} limit 1",
+                (organization_id, aid, title),
+            ).fetchone()
+            if not exists:
+                db.execute(
+                    f"""insert into asset_events(asset_id,organization_id,user_id,user_name,event_type,title,detail)
+                        values({ph},{ph},{ph},{ph},{ph},{ph},{ph})""",
+                    (aid, organization_id, admin_id, admin_name, event_type, title, detail),
+                )
+
+        documents = [
+            ("TEST_prevadzkovy_manual.txt", "Technická", "TESTOVACÍ PREVÁDZKOVÝ MANUÁL\nBudova fdsfsdf\n\nObsahuje testovacie technické údaje pre GAMO Facility Platform.\n"),
+            ("TEST_plan_revizii.txt", "Revízie", "TESTOVACÍ PLÁN REVÍZIÍ\nEPS: 12 mesiacov\nELE: 12 mesiacov\nUPS: 12 mesiacov\nPO: 12 mesiacov\n"),
+            ("TEST_havarijny_postup.txt", "Prevádzka", "TESTOVACÍ HAVARIJNÝ POSTUP\n1. Identifikovať incident.\n2. Informovať facility managera.\n3. Vytvoriť incident/ticket.\n4. Zaznamenať náklady a uzatvorenie.\n"),
+        ]
+        for name, category, text in documents:
+            exists = db.execute(
+                f"select id from documents where building_id={ph} and name={ph} limit 1",
+                (building_id, name),
+            ).fetchone()
+            if not exists:
+                blob = text.encode("utf-8")
+                db.execute(
+                    f"insert into documents(building_id,name,category,mime,size,data) values({ph},{ph},{ph},{ph},{ph},{ph})",
+                    (building_id, name, category, "text/plain; charset=utf-8", len(blob), blob),
+                )
+
+        staff = db.execute(
+            f"""select id,name from users
+                where organization_id={ph} and status='Aktívny'
+                  and role in ('Facility Manager','Administrator','Technik','Servisný technik')
+                order by case when role='Facility Manager' then 0 when role='Administrator' then 1 else 2 end,id
+                limit 1""",
+            (organization_id,),
+        ).fetchone()
+        staff_id = value(staff, "id") if staff else admin_id
+        staff_name = value(staff, "name") if staff else admin_name
+
+        ticket_specs = [
+            ("TKT-DEMO-001", "V kanceláriách je príliš teplo", "Budova", "Vysoká", "Rieši sa", assets["AHU"],
+             [("Zákazník – test", "Na 2. NP je od rána približne 26 °C. Prosím o kontrolu VZT."),
+              (staff_name, "Ticket som prevzal. Skontrolujeme reguláciu AHU-1 a polohu klapiek."),
+              ("Zákazník – test", "Ďakujem, problém je najvýraznejší v open space OFFICE-201.")]),
+            ("TKT-DEMO-002", "Výmena prístupovej karty", "Prístup", "Stredná", "Čaká na zákazníka", assets["ACS"],
+             [("Zákazník – test", "Potrebujeme zablokovať starú kartu a pripraviť novú."),
+              (staff_name, "Starú kartu sme zablokovali. Pošlite prosím meno držiteľa novej karty.")]),
+            ("TKT-DEMO-003", "UPS hlási servisné upozornenie", "Porucha", "Kritická", "Otvorený", assets["UPS"],
+             [("Zákazník – test", "Na UPS svieti servisná výstraha. Serverovňa zatiaľ funguje."),
+              (staff_name, "Evidujem. Vytvorený je kapacitný test batériového modulu.")]),
+        ]
+        for ticket_no, subject, category, priority, status, asset_id, messages in ticket_specs:
+            row = db.execute(
+                f"select id from tickets where organization_id={ph} and ticket_no={ph} limit 1",
+                (organization_id, ticket_no),
+            ).fetchone()
+            if row:
+                ticket_id = value(row, "id")
+            else:
+                ticket_id = insert_id(
+                    """insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id)
+                       values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+                    """insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id)
+                       values(?,?,?,?,?,?,?,?,?,?)""",
+                    (organization_id, ticket_no, admin_id, staff_id, subject, category, priority, status, building_id, asset_id),
+                )
+            for sender_name, body in messages:
+                exists = db.execute(
+                    f"select id from ticket_messages where ticket_id={ph} and organization_id={ph} and body={ph} limit 1",
+                    (ticket_id, organization_id, body),
+                ).fetchone()
+                if not exists:
+                    sender_id = staff_id if sender_name == staff_name else admin_id
+                    db.execute(
+                        f"""insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body)
+                            values({ph},{ph},{ph},{ph},{ph})""",
+                        (ticket_id, organization_id, sender_id, sender_name, body),
+                    )
+
+        marker = db.execute(
+            f"select id from audit_log where organization_id={ph} and action='DEMO_DATA_SEEDED' and detail like {ph} limit 1",
+            (organization_id, "%fdsfsdf%"),
+        ).fetchone()
+        if not marker:
+            db.execute(
+                f"""insert into audit_log(user_id,user_name,action,detail,ip,organization_id)
+                    values({ph},{ph},'DEMO_DATA_SEEDED',{ph},'',{ph})""",
+                (admin_id, admin_name, "Budova fdsfsdf naplnená testovacími dátami: priestory, assety, servis, incidenty, dokumenty a tickety.", organization_id),
+            )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -707,6 +993,7 @@ MIGRATIONS = (
     (9, "tenant_referential_integrity", _migration_9),
     (10, "customer_security_gdpr_controls", _migration_10),
     (11, "tenant_ticketing_and_messages", _migration_11),
+    (12, "seed_fdsfsdf_demo_data", _migration_12),
 )
 
 
