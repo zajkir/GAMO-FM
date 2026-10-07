@@ -56,6 +56,16 @@ with con() as c:
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
+ # Server-side RBAC: only administrators may access administration/user/configuration endpoints.
+ role=session.get('user_role','Viewer')
+ admin_endpoints={'admin','update_user','delete_user','save_setting'}
+ if request.endpoint in admin_endpoints or request.path.startswith('/admin') or request.path.startswith('/settings/'):
+  if role!='Administrator':
+   flash('Na túto časť nemáš administrátorské oprávnenie.','error')
+   return redirect('/')
+ if request.endpoint=='add' and request.view_args and request.view_args.get('what')=='user' and role!='Administrator':
+  flash('Používateľov môže spravovať iba administrátor.','error')
+  return redirect('/')
 
 @app.route('/login',methods=['GET','POST'])
 def login():
