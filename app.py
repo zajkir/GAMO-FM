@@ -1064,7 +1064,10 @@ def buildings(): return render_template('index.html',page='buildings',buildings=
 def building(i):
  b=one('select * from buildings where id=? and organization_id=?',(i,org_id()))
  if not b: abort(404)
- return render_template('index.html',page='building',b=b,floors=q('select * from floors where building_id=?',(i,)),rooms=q("select r.*,f.code floor,(select count(*) from assets a where a.room_id=r.id) asset_count,(select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status not in ('Ukončená','Vyriešená')) incident_count from rooms r join floors f on f.id=r.floor_id where f.building_id=?",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=?',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
+ return render_template('index.html',page='building',b=b,floors=q('select * from floors where building_id=?',(i,)),rooms=q("""select r.id,r.floor_id,r.code,r.name,coalesce(r.area,0) area,r.tenant,r.zone,f.code floor,
+  (select count(*) from assets a where a.room_id=r.id) asset_count,
+  (select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status not in ('Ukončená','Vyriešená')) incident_count
+  from rooms r join floors f on f.id=r.floor_id where f.building_id=? order by f.id,r.code""",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=? order by a.asset_id',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
 @app.post('/building/<int:i>/document')
 def upload_building_document(i):
  if not can('documents_write'): abort(403)
@@ -1679,16 +1682,28 @@ def add(what):
    flash(f'Asset {aid} bol vytvorený.','success')
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
-   if not (f.get('title') or '').strip() or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(f.get('asset_id')): raise ValueError()
-   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description']))
-   asset_event(f.get('asset_id'),'WORKORDER_CREATE','Nový pracovný príkaz',f"{f.get('kind','')} · {f.get('title','')}")
-   audit('WORKORDER_CREATE',f.get('title','')); flash('Pracovný príkaz bol vytvorený.','success')
+   title=(f.get('title') or '').strip(); asset_id=f.get('asset_id'); due=(f.get('due') or '').strip()
+   if not title or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(asset_id): raise ValueError('Skontroluj asset, typ, prioritu, stav a názov pracovného príkazu.')
+   if due:
+    try: datetime.strptime(due[:10],'%Y-%m-%d')
+    except ValueError: raise ValueError('Termín pracovného príkazu nemá platný dátum.')
+   try: cost=max(0,float(f.get('cost') or 0))
+   except (TypeError,ValueError): raise ValueError('Náklad pracovného príkazu musí byť platné číslo.')
+   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip()))
+   asset_event(asset_id,'WORKORDER_CREATE','Nový pracovný príkaz',f"{f.get('kind','')} · {title}")
+   audit('WORKORDER_CREATE',title); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident':
    allowed_severity={'Nízka','Stredná','Vysoká','Kritická','Havária'}; allowed_status={'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'}
-   if not (f.get('title') or '').strip() or f.get('severity') not in allowed_severity or f.get('status') not in allowed_status or not owns_asset(f.get('asset_id')): raise ValueError()
-   x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost']))
-   asset_event(f.get('asset_id'),'INCIDENT_CREATE','Incident zaevidovaný',f"{f.get('severity','')} · {f.get('title','')}")
-   audit('INCIDENT_CREATE',f.get('title','')); flash('Incident bol zaevidovaný.','success')
+   title=(f.get('title') or '').strip(); asset_id=f.get('asset_id'); reported=(f.get('reported') or '').strip()
+   if not title or f.get('severity') not in allowed_severity or f.get('status') not in allowed_status or not owns_asset(asset_id): raise ValueError('Skontroluj asset, závažnosť, stav a názov incidentu.')
+   if reported:
+    try: datetime.strptime(reported[:10],'%Y-%m-%d')
+    except ValueError: raise ValueError('Dátum nahlásenia incidentu nie je platný.')
+   try: cost=max(0,float(f.get('cost') or 0))
+   except (TypeError,ValueError): raise ValueError('Náklad incidentu musí byť platné číslo.')
+   x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),cost))
+   asset_event(asset_id,'INCIDENT_CREATE','Incident zaevidovaný',f"{f.get('severity','')} · {title}")
+   audit('INCIDENT_CREATE',title); flash('Incident bol zaevidovaný.','success')
   elif what=='user':
    if not plan_allows('users'):
     flash('Licenčný limit používateľov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/admin#usersAdmin')
@@ -1698,6 +1713,8 @@ def add(what):
    if one('select id from users where lower(email)=?',(email,)): raise IntegrityError()
    x('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id(),True if USING_POSTGRES else 1))
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
+ except HTTPException:
+  raise
  except IntegrityError:
   flash('Záznam sa nepodarilo uložiť pre konflikt v databáze. Skontroluj unikátne kódy a identifikátory.','error')
  except ValueError as exc:
