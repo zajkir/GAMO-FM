@@ -575,6 +575,122 @@ def _migration_10(db, using_postgres):
                     WITH CHECK ({platform} OR organization_id={tenant})"""
             )
 
+
+def _migration_11(db, using_postgres):
+    """Tenant-isolated customer ticketing and in-app conversation threads."""
+    if using_postgres:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS tickets(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                ticket_no TEXT NOT NULL,
+                created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                subject TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'Požiadavka',
+                priority TEXT NOT NULL DEFAULT 'Stredná',
+                status TEXT NOT NULL DEFAULT 'Nový',
+                building_id BIGINT,
+                asset_id BIGINT,
+                created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                closed_at TIMESTAMPTZ,
+                customer_last_read_at TIMESTAMPTZ,
+                staff_last_read_at TIMESTAMPTZ,
+                UNIQUE(organization_id,ticket_no)
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS ticket_messages(
+                id BIGSERIAL PRIMARY KEY,
+                ticket_id BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                sender_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                sender_name TEXT,
+                body TEXT NOT NULL,
+                created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+    else:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS tickets(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                ticket_no TEXT NOT NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                subject TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'Požiadavka',
+                priority TEXT NOT NULL DEFAULT 'Stredná',
+                status TEXT NOT NULL DEFAULT 'Nový',
+                building_id INTEGER,
+                asset_id INTEGER,
+                created TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated TEXT DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT,
+                customer_last_read_at TEXT,
+                staff_last_read_at TEXT,
+                UNIQUE(organization_id,ticket_no)
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS ticket_messages(
+                id INTEGER PRIMARY KEY,
+                ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                sender_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                sender_name TEXT,
+                body TEXT NOT NULL,
+                created TEXT DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_org_updated ON tickets(organization_id,updated)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_org_status ON tickets(organization_id,status)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket_created ON ticket_messages(ticket_id,created)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_ticket_messages_org ON ticket_messages(organization_id,created)")
+
+    if using_postgres:
+        platform = "current_setting('gamo.platform_admin', true) = '1'"
+        tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+        for table in ("tickets","ticket_messages"):
+            predicate = f"({platform} OR organization_id={tenant})"
+            db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+            db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+            db.execute(f"DROP POLICY IF EXISTS gamo_tenant_{table} ON {table}")
+            db.execute(
+                f"""CREATE POLICY gamo_tenant_{table} ON {table}
+                    USING ({predicate}) WITH CHECK ({predicate})"""
+            )
+
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tickets_id_org ON tickets(id,organization_id)")
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_tickets_building_org') THEN
+                   ALTER TABLE tickets ADD CONSTRAINT fk_tickets_building_org
+                   FOREIGN KEY(building_id,organization_id)
+                   REFERENCES buildings(id,organization_id) ON DELETE SET NULL;
+                 END IF;
+               END $$"""
+        )
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_tickets_asset_org') THEN
+                   ALTER TABLE tickets ADD CONSTRAINT fk_tickets_asset_org
+                   FOREIGN KEY(asset_id,organization_id)
+                   REFERENCES assets(id,organization_id) ON DELETE SET NULL;
+                 END IF;
+               END $$"""
+        )
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ticket_messages_ticket_org') THEN
+                   ALTER TABLE ticket_messages ADD CONSTRAINT fk_ticket_messages_ticket_org
+                   FOREIGN KEY(ticket_id,organization_id)
+                   REFERENCES tickets(id,organization_id) ON DELETE CASCADE;
+                 END IF;
+               END $$"""
+        )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -586,6 +702,7 @@ MIGRATIONS = (
     (8, "totp_mfa_and_recovery_codes", _migration_8),
     (9, "tenant_referential_integrity", _migration_9),
     (10, "customer_security_gdpr_controls", _migration_10),
+    (11, "tenant_ticketing_and_messages", _migration_11),
 )
 
 
