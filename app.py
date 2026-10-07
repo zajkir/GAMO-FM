@@ -66,6 +66,33 @@ def owns_asset(asset_id):
  oid=org_id()
  return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
 
+def next_asset_id(profession,oid=None):
+ oid=oid or org_id()
+ prefix=''.join(ch for ch in (profession or 'ASSET').upper() if ch.isalnum())[:10] or 'ASSET'
+ rows=q('select asset_id from assets where organization_id=? and upper(asset_id) like ?',(oid,f'{prefix}-%'))
+ used=set()
+ for row in rows:
+  value=str(row['asset_id'] or '').upper()
+  if value.startswith(prefix+'-'):
+   tail=value[len(prefix)+1:]
+   if tail.isdigit(): used.add(int(tail))
+ n=1
+ while n in used: n+=1
+ return f'{prefix}-{n:06d}'
+
+def ticket_staff():
+ return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
+
+def next_ticket_no():
+ rows=q("select ticket_no from tickets where organization_id=? and ticket_no like ?",(org_id(),'TKT-%'))
+ nums=[int(str(r['ticket_no'])[4:]) for r in rows if str(r['ticket_no'] or '')[4:].isdigit()]
+ return f"TKT-{(max(nums) if nums else 0)+1:06d}"
+
+def ticket_record(ticket_id):
+ t=one('select * from tickets where id=? and organization_id=?',(ticket_id,org_id()))
+ if not t: return None
+ return t if ticket_staff() or t['created_by']==session.get('user_id') else None
+
 def asset_parent_allowed(asset_id,parent_id):
  if not parent_id: return True
  try: current=int(parent_id); target=int(asset_id)
@@ -524,7 +551,7 @@ def ctx():
  brand_name=(org['branding_name'] or org['name']) if org else 'GAMO a.s.'
  brand_color=(org['brand_color'] or '#E31B23') if org else '#E31B23'
  brand_tagline=(org['brand_tagline'] or 'FACILITY MANAGEMENT') if org else 'FACILITY MANAGEMENT'
- return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),can=can)
+ return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
@@ -588,6 +615,108 @@ def dashboard():
  }; report['total_cost']=report['maintenance_cost']+report['incident_cost']
  profession_sql="select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0)::numeric,2) value from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? group by a.profession order by value desc limit 6" if USING_POSTGRES else "select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0),2) value from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? group by a.profession order by value desc limit 6"
  return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=q(profession_sql,(oid,)),buildings=q('select * from buildings where organization_id=?',(oid,)),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc limit 6',(oid,)),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc limit 5',(oid,)))
+@app.route('/tickets')
+def tickets():
+ oid=org_id(); uid=session.get('user_id'); staff=ticket_staff()
+ base="""select t.*,cu.name creator_name,au.name assigned_name,b.code building_code,a.asset_id asset_code,
+  (select count(*) from ticket_messages m where m.ticket_id=t.id) message_count
+  from tickets t
+  left join users cu on cu.id=t.created_by
+  left join users au on au.id=t.assigned_to
+  left join buildings b on b.id=t.building_id
+  left join assets a on a.id=t.asset_id
+  where t.organization_id=?"""
+ params=[oid]
+ if not staff:
+  base+=" and t.created_by=?"; params.append(uid)
+ base+=" order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"
+ rows=q(base,tuple(params))
+ stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka')}
+ buildings=q('select id,code,name from buildings where organization_id=? order by name',(oid,))
+ assets=q('select id,asset_id,name,building_id from assets where organization_id=? order by asset_id',(oid,))
+ staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by case role when 'Facility Manager' then 0 when 'Administrator' then 1 else 2 end,name",(oid,))
+ return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users)
+
+@app.post('/tickets/create')
+def ticket_create():
+ oid=org_id(); uid=session.get('user_id'); f=request.form
+ subject=(f.get('subject') or '').strip()[:160]; body=(f.get('message') or '').strip()[:5000]
+ category=(f.get('category') or 'Požiadavka').strip(); priority=(f.get('priority') or 'Stredná').strip()
+ building_id=f.get('building_id') or None; asset_id=f.get('asset_id') or None
+ if not subject or len(body)<2:
+  flash('Ticket potrebuje predmet a úvodnú správu.','error'); return redirect('/tickets')
+ if category not in {'Požiadavka','Porucha','Prístup','Budova','Asset','Iné'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
+ if building_id and not owns_building(building_id): abort(404)
+ if asset_id:
+  asset=one('select id,building_id from assets where id=? and organization_id=?',(asset_id,oid))
+  if not asset: abort(404)
+  if building_id and str(asset['building_id'])!=str(building_id):
+   flash('Vybraný asset nepatrí do zvolenej budovy.','error'); return redirect('/tickets')
+  if not building_id: building_id=asset['building_id']
+ assigned=f.get('assigned_to') if ticket_staff() else None
+ if assigned and not one("select id from users where id=? and organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik')",(assigned,oid)): abort(404)
+ if not assigned:
+  manager=one("select id from users where organization_id=? and status='Aktívny' and id<>? and role in ('Facility Manager','Administrator') order by case role when 'Facility Manager' then 0 else 1 end,id limit 1",(oid,uid))
+  assigned=manager['id'] if manager else None
+ no=next_ticket_no(); now=datetime.utcnow().isoformat(timespec='seconds')+'Z'
+ try:
+  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
+ except IntegrityError:
+  no=next_ticket_no()
+  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
+ mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+ x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
+ audit('TICKET_CREATE',f'{no} · {subject}'); flash(f'Ticket {no} bol vytvorený.','success')
+ return redirect(f'/ticket/{tid}')
+
+@app.get('/ticket/<int:i>')
+def ticket_detail(i):
+ t=ticket_record(i)
+ if not t: abort(404)
+ creator=one('select id,name,email,role from users where id=? and organization_id=?',(t['created_by'],org_id())) if t['created_by'] else None
+ assigned=one('select id,name,email,role from users where id=? and organization_id=?',(t['assigned_to'],org_id())) if t['assigned_to'] else None
+ building=one('select id,code,name from buildings where id=? and organization_id=?',(t['building_id'],org_id())) if t['building_id'] else None
+ asset=one('select id,asset_id,name from assets where id=? and organization_id=?',(t['asset_id'],org_id())) if t['asset_id'] else None
+ messages=q('select m.*,u.role sender_role from ticket_messages m left join users u on u.id=m.sender_user_id where m.ticket_id=? and m.organization_id=? order by m.id',(i,org_id()))
+ last_message_id=messages[-1]['id'] if messages else 0
+ if t['created_by']==session.get('user_id'):
+  x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,org_id()))
+ elif ticket_staff():
+  x('update tickets set staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,org_id()))
+ staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by name",(org_id(),))
+ return render_template('index.html',page='ticket',ticket=t,ticket_creator=creator,ticket_assigned=assigned,ticket_building=building,ticket_asset=asset,ticket_messages=messages,ticket_staff_users=staff_users,ticket_is_staff=ticket_staff())
+
+@app.post('/ticket/<int:i>/message')
+def ticket_message(i):
+ t=ticket_record(i)
+ if not t: abort(404)
+ body=(request.form.get('message') or '').strip()[:5000]
+ if not body:
+  flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
+ uid=session.get('user_id'); is_creator=t['created_by']==uid
+ mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,org_id(),uid,session.get('user_name','Používateľ'),body))
+ if is_creator:
+  new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
+  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,org_id()))
+ else:
+  new_status='Otvorený' if t['status']=='Nový' else t['status']
+  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,org_id()))
+ audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
+ return redirect(f'/ticket/{i}#conversation')
+
+@app.post('/ticket/<int:i>/manage')
+def ticket_manage(i):
+ if not ticket_staff(): abort(403)
+ t=ticket_record(i)
+ if not t: abort(404)
+ status=(request.form.get('status') or '').strip(); priority=(request.form.get('priority') or '').strip(); assigned=request.form.get('assigned_to') or None
+ if status not in {'Nový','Otvorený','Rieši sa','Čaká na zákazníka','Vyriešený','Uzavretý'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
+ if assigned and not one("select id from users where id=? and organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik')",(assigned,org_id())): abort(404)
+ closed=datetime.utcnow().isoformat(timespec='seconds')+'Z' if status=='Uzavretý' else None
+ x('update tickets set status=?,priority=?,assigned_to=?,closed_at=?,updated=CURRENT_TIMESTAMP,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(status,priority,assigned,closed,i,org_id()))
+ audit('TICKET_UPDATE',f"{t['ticket_no']} · {status} · {priority}"); flash('Ticket bol aktualizovaný.','success')
+ return redirect(f'/ticket/{i}')
+
 @app.route('/reports')
 def reports():
  if not can('reports_view'): abort(403)
@@ -977,6 +1106,8 @@ def create_organization_backup_archive(oid,privileged=False):
  data['access_log']=[dict(r) for r in read_all('select * from customer_access_log where target_organization_id=? order by id',(oid,))]
  data['auth_events']=[dict(r) for r in read_all('select * from auth_events where organization_id=? order by id',(oid,))]
  data['privacy_requests']=[dict(r) for r in read_all('select * from privacy_requests where organization_id=? order by id',(oid,))]
+ data['tickets']=[dict(r) for r in read_all('select * from tickets where organization_id=? order by id',(oid,))]
+ data['ticket_messages']=[dict(r) for r in read_all('select * from ticket_messages where organization_id=? order by id',(oid,))]
  docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
  files={}
  for name,rows in data.items():
@@ -1398,20 +1529,29 @@ def add(what):
   elif what=='asset':
    if not plan_allows('assets'):
     flash('Licenčný limit počtu assetov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/assets')
-   aid=f.get('asset_id','').strip().upper(); name=(f.get('name') or '').strip(); building_id=f.get('building_id')
-   floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id')
-   profession=(f.get('profession') or '').strip(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
-   if not aid or not name or not building_id or not floor_id or not room_id or not profession or not grp or not asset_type: raise ValueError()
+   name=(f.get('name') or '').strip(); building_id=f.get('building_id'); floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id') or None
+   profession=(f.get('profession') or '').strip().upper(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
+   if not name: raise ValueError('Zadaj názov zariadenia.')
+   if not building_id or not floor_id or not room_id: raise ValueError('Vyber budovu, podlažie aj miestnosť.')
+   if not profession or not grp or not asset_type: raise ValueError('Profesia, skupina a typ zariadenia sú povinné.')
    if not owns_building(building_id): abort(404)
-   if floor_id and not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError()
-   if room_id and (not floor_id or not one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id()))): raise ValueError()
-   if parent_id and not owns_asset(parent_id): raise ValueError()
-   if one('select a.id from assets a join buildings b on b.id=a.building_id where upper(a.asset_id)=? and b.organization_id=?',(aid,org_id())): flash(f'Asset ID {aid} už existuje.','error')
-   else:
-    values=tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes'])
-    new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values+(org_id(),))
-    asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {f.get('name','')}")
-    flash('Asset bol vytvorený.','success')
+   if not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError('Vybrané podlažie nepatrí do zvolenej budovy.')
+   if not one('select r.id from rooms r join floors fl on fl.id=r.floor_id join buildings b on b.id=fl.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id())): raise ValueError('Vybraná miestnosť nepatrí do zvoleného podlažia.')
+   if parent_id and not owns_asset(parent_id): raise ValueError('Parent asset nepatrí do tvojej organizácie.')
+   status=(f.get('status') or 'Prevádzka').strip(); criticality=(f.get('criticality') or 'B').strip()
+   if status not in {'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'}: raise ValueError('Neplatný stav assetu.')
+   if criticality not in {'A','B','C'}: raise ValueError('Neplatná kritickosť assetu.')
+   try:
+    service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+   except (TypeError,ValueError): raise ValueError('Servisný interval, revízia a cena musia byť platné čísla.')
+   manual_aid=(f.get('asset_id') or '').strip().upper(); aid=manual_aid or next_asset_id(profession)
+   if one('select id from assets where organization_id=? and upper(asset_id)=?',(org_id(),aid)):
+    if manual_aid: raise ValueError(f'Asset ID {aid} už v tvojej organizácii existuje. Zmeň ho alebo nechaj pole prázdne pre automatické ID.')
+    aid=next_asset_id(profession)
+   values=(aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip() or None,(f.get('model') or '').strip() or None,(f.get('serial') or '').strip() or None,(f.get('system_id') or '').strip() or None,parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip() or None,(f.get('protocol') or '').strip() or None,(f.get('notes') or '').strip() or None,org_id())
+   new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values)
+   asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {name}"); audit('ASSET_CREATE',f'{aid} · {name}')
+   flash(f'Asset {aid} bol vytvorený.','success')
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
    if not (f.get('title') or '').strip() or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(f.get('asset_id')): raise ValueError()
@@ -1433,8 +1573,10 @@ def add(what):
    if one('select id from users where lower(email)=?',(email,)): raise IntegrityError()
    x('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id(),True if USING_POSTGRES else 1))
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
- except (IntegrityError,ValueError):
-  flash('Záznam sa nepodarilo uložiť. Skontroluj duplicity a zadané hodnoty.','error')
+ except IntegrityError:
+  flash('Záznam sa nepodarilo uložiť pre konflikt v databáze. Skontroluj unikátne kódy a identifikátory.','error')
+ except ValueError as exc:
+  flash(str(exc) or 'Záznam sa nepodarilo uložiť. Skontroluj zadané hodnoty.','error')
  except Exception:
   flash('Pri ukladaní nastala chyba. Dáta neboli poškodené.','error')
  target={'incident':'/incidents','workorder':'/maintenance','asset':'/assets','user':'/admin','building':'/buildings'}.get(what)
@@ -1651,6 +1793,11 @@ def api_asset_options():
   where b.organization_id=? order by a.asset_id""",(org_id(),))
  return jsonify([dict(r) for r in rows])
 
+@app.get('/api/assets/next-id')
+def api_asset_next_id():
+ profession=(request.args.get('profession') or 'ASSET').strip()
+ return jsonify({'asset_id':next_asset_id(profession)})
+
 @app.get('/api/search')
 def api_search():
  term=(request.args.get('q') or '').strip()
@@ -1666,6 +1813,12 @@ def api_search():
   where organization_id=? and (code like ? or name like ? or address like ?)
   order by name limit 5""",(oid,like,like,like)):
   out.append({'kind':'Budova','title':f"{r['code']} · {r['name']}",'subtitle':r['address'] or '','url':f"/building/{r['id']}"})
+ if ticket_staff():
+  ticket_rows=q("select id,ticket_no,subject,status,priority from tickets where organization_id=? and (ticket_no like ? or subject like ?) order by updated desc limit 5",(oid,like,like))
+ else:
+  ticket_rows=q("select id,ticket_no,subject,status,priority from tickets where organization_id=? and created_by=? and (ticket_no like ? or subject like ?) order by updated desc limit 5",(oid,session.get('user_id'),like,like))
+ for r in ticket_rows:
+  out.append({'kind':'Ticket','title':f"{r['ticket_no']} · {r['subject']}",'subtitle':f"{r['priority']} · {r['status']}",'url':f"/ticket/{r['id']}"})
  return jsonify(out[:12])
 
 @app.get('/api/health')
@@ -1700,6 +1853,21 @@ def api_notifications():
   where b.organization_id=? and w.status!='Ukončené' order by w.id desc limit 8""",(oid,)):
   overdue=bool(r['due'] and str(r['due'])[:10]<today_iso)
   out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':'Po termíne' if overdue else r['status'],'level':'red' if overdue else 'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
+ uid=session.get('user_id')
+ if ticket_staff():
+  ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
+   where t.organization_id=? and t.created_by<>? and exists(
+    select 1 from ticket_messages m where m.ticket_id=t.id and m.sender_user_id=t.created_by
+    and m.id>coalesce(t.staff_last_read_message_id,0))
+   order by t.updated desc limit 5""",(oid,uid))
+ else:
+  ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
+   where t.organization_id=? and t.created_by=? and exists(
+    select 1 from ticket_messages m where m.ticket_id=t.id and (m.sender_user_id is null or m.sender_user_id<>t.created_by)
+    and m.id>coalesce(t.customer_last_read_message_id,0))
+   order by t.updated desc limit 5""",(oid,uid))
+ for r in ticket_rows:
+  out.insert(0,{'key':f"ticket-unread:{r['id']}:{r['updated']}",'title':f"{r['ticket_no']} · {r['subject']}",'subtitle':'Nová správa v tickete','status':r['status'],'level':'red' if r['priority']=='Kritická' else 'blue','url':f"/ticket/{r['id']}",'created_at':str(r['updated'] or '')})
  if session.get('user_role')=='Administrator':
   org=one('select license_until,plan from organizations where id=?',(oid,))
   if org and org['license_until']:
