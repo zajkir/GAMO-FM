@@ -2,6 +2,16 @@ name: Build and release GAMO FM for Windows
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'launcher.py'
+      - 'desktop.py'
+      - 'updater.py'
+      - 'desktop_config.json'
+      - 'update_config.json'
+      - 'version.json'
+      - 'installer/**'
+      - '.github/workflows/build-windows.yml'
   push:
     tags:
       - 'v*'
