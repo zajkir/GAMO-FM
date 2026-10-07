@@ -130,10 +130,31 @@ def _migration_3(db, using_postgres):
         db.execute("CREATE INDEX IF NOT EXISTS idx_buildings_org_code ON buildings(organization_id,code)")
 
 
+
+
+def _migration_4(db, using_postgres):
+    """Do not force existing live customers back through first-run onboarding."""
+    if using_postgres:
+        db.execute(
+            """UPDATE organizations o
+               SET onboarding_complete=TRUE
+               WHERE o.code='GAMO'
+                  OR EXISTS (SELECT 1 FROM buildings b WHERE b.organization_id=o.id)"""
+        )
+    else:
+        db.execute(
+            """UPDATE organizations
+               SET onboarding_complete=1
+               WHERE code='GAMO'
+                  OR EXISTS (SELECT 1 FROM buildings b WHERE b.organization_id=organizations.id)"""
+        )
+
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
     (3, "tenant_safe_business_identifiers", _migration_3),
+    (4, "preserve_existing_customer_onboarding_state", _migration_4),
 )
 
 
