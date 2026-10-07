@@ -296,10 +296,10 @@ def api_health():
 @app.get('/api/notifications')
 def api_notifications():
  out=[]
- for r in q("select i.id,i.title,i.status,a.id aid,a.asset_id from incidents i join assets a on a.id=i.asset_id where i.status!='Ukončená' order by i.id desc limit 6"):
-  out.append({'title':r['title'],'subtitle':r['asset_id'],'status':r['status'],'level':'red','url':f"/asset/{r['aid']}"})
- for r in q("select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w join assets a on a.id=w.asset_id where w.status!='Ukončené' order by w.due limit 6"):
-  out.append({'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':r['status'],'level':'blue','url':f"/asset/{r['aid']}"})
+ for r in q("select i.id,i.title,i.status,i.reported,a.id aid,a.asset_id from incidents i join assets a on a.id=i.asset_id where i.status!='Ukončená' order by i.id desc limit 6"):
+  out.append({'key':f"incident:{r['id']}",'title':r['title'],'subtitle':r['asset_id'],'status':r['status'],'level':'red','url':f"/asset/{r['aid']}",'created_at':r['reported'] or ''})
+ for r in q("select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w join assets a on a.id=w.asset_id where w.status!='Ukončené' order by w.id desc limit 6"):
+  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':r['status'],'level':'blue','url':f"/asset/{r['aid']}",'created_at':''})
  return jsonify(out[:10])
 @app.get('/api/setting')
 def api_setting():
