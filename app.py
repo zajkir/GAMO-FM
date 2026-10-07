@@ -268,10 +268,11 @@ def admin():
    (select u.email from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_email,
    (select u.last_login from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_last_login
    from organizations o where o.code<>'GAMO' order by o.name""")
+  active_customers=sum(1 for o in organizations if o['status']=='Aktívny' and o['license_status']=='Aktívna' and (not o['license_until'] or str(o['license_until'])[:10]>=date.today().isoformat()))
   customer_stats={
    'total':len(organizations),
-   'active':sum(1 for o in organizations if o['status']=='Aktívny' and o['license_status']=='Aktívna' and (not o['license_until'] or str(o['license_until'])[:10]>=date.today().isoformat())),
-   'paused':sum(1 for o in organizations if o['status']!='Aktívny' or o['license_status']!='Aktívna'),
+   'active':active_customers,
+   'paused':len(organizations)-active_customers,
    'users':sum(int(o['users_count'] or 0) for o in organizations),
    'buildings':sum(int(o['buildings_count'] or 0) for o in organizations)
   }
