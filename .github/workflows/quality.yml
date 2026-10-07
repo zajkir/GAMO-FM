@@ -26,3 +26,5 @@ jobs:
         run: python -m py_compile app.py db_migrations.py desktop.py updater.py
       - name: Check JavaScript syntax
         run: node --check static/app.js
+      - name: Run runtime smoke tests
+        run: python tests/smoke_app.py
