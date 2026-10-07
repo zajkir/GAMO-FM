@@ -83,7 +83,7 @@ async function checkSystemHealth(){
   const text=online?'● SYSTÉM ONLINE':'● SYSTÉM PROBLÉM';
   [global,control].forEach(el=>{if(el){el.textContent=text;el.classList.toggle('health-offline',!online);el.classList.toggle('health-online',online)}});
   const db=document.querySelector('#healthDb'),api=document.querySelector('#healthApi'),lat=document.querySelector('#healthLatency'),sys=document.querySelector('#healthSystem');
-  if(db) db.innerHTML='<i>'+(data.database==='online'?'✓':'!')+'</i> Databáza <b>'+(data.database==='online'?'Online':'Chyba')+'</b>';
+  if(db) db.innerHTML='<i>'+(data.database==='online'?'✓':'!')+'</i> Databáza <b>'+(data.database==='online'?'Online · '+(data.database_engine||'DB'):'Chyba')+'</b>';
   if(api) api.innerHTML='<i>'+(data.api==='online'?'✓':'!')+'</i> API server <b>'+(data.api==='online'?'Online':'Chyba')+'</b>';
   if(lat) lat.innerHTML='<i>↗</i> Odozva <b>'+browserMs+' ms</b>';
   if(sys) sys.innerHTML='<i>'+(online?'✓':'!')+'</i> Systém <b>'+(online?'Online':'Problém')+'</b>';
