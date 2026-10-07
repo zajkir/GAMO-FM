@@ -259,17 +259,27 @@ def incidents(): return render_template('index.html',page='incidents',incidents=
 @app.route('/admin')
 def admin():
  org=one('select * from organizations where id=?',(org_id(),))
- organizations=[]
+ organizations=[]; customer_stats={'total':0,'active':0,'paused':0,'users':0,'buildings':0}
  if is_gamo_admin():
   organizations=q("""select o.*,
    (select count(*) from users u where u.organization_id=o.id) users_count,
-   (select count(*) from buildings b where b.organization_id=o.id) buildings_count
-   from organizations o order by case when o.code='GAMO' then 0 else 1 end,o.name""")
+   (select count(*) from buildings b where b.organization_id=o.id) buildings_count,
+   (select u.name from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_name,
+   (select u.email from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_email,
+   (select u.last_login from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_last_login
+   from organizations o where o.code<>'GAMO' order by o.name""")
+  customer_stats={
+   'total':len(organizations),
+   'active':sum(1 for o in organizations if o['status']=='Aktívny' and o['license_status']=='Aktívna' and (not o['license_until'] or str(o['license_until'])[:10]>=date.today().isoformat())),
+   'paused':sum(1 for o in organizations if o['status']!='Aktívny' or o['license_status']!='Aktívna'),
+   'users':sum(int(o['users_count'] or 0) for o in organizations),
+   'buildings':sum(int(o['buildings_count'] or 0) for o in organizations)
+  }
  audit_rows=q('select al.* from audit_log al join users u on u.id=al.user_id where u.organization_id=? order by al.id desc limit 20',(org_id(),))
  return render_template('index.html',page='admin',
   users=q('select * from users where organization_id=? order by name',(org_id(),)),
   buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
-  audit_rows=audit_rows,organizations=organizations,current_admin_org=org)
+  audit_rows=audit_rows,organizations=organizations,customer_stats=customer_stats,current_admin_org=org)
 
 @app.post('/platform/customer')
 def platform_customer():
