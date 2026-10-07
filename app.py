@@ -876,13 +876,142 @@ def admin():
   buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
   audit_rows=audit_rows,organizations=organizations,customer_stats=customer_stats,current_admin_org=org)
 
+def audit_for_org(target_org_id,action,detail=''):
+ try:
+  x_system("insert into audit_log(user_id,user_name,action,detail,ip,organization_id) values(?,?,?,?,?,?)",(
+   session.get('user_id'),session.get('user_name','Systém'),action,(detail or '')[:1000],
+   request.headers.get('X-Forwarded-For',request.remote_addr or ''),target_org_id
+  ))
+ except Exception:
+  pass
+
+def security_snapshot(oid,privileged=False):
+ read_one=one_system if privileged else one
+ org=read_one('select * from organizations where id=?',(oid,))
+ if not org: return {'score':0,'warnings':['Organizácia neexistuje.']}
+ active=int(read_one("select count(*) n from users where organization_id=? and status='Aktívny'",(oid,))['n'])
+ mfa=int(read_one("select count(*) n from users where organization_id=? and status='Aktívny' and mfa_enabled=?",(oid,True if USING_POSTGRES else 1))['n'])
+ admins=int(read_one("select count(*) n from users where organization_id=? and role='Administrator' and status='Aktívny'",(oid,))['n'])
+ admin_mfa=int(read_one("select count(*) n from users where organization_id=? and role='Administrator' and status='Aktívny' and mfa_enabled=?",(oid,True if USING_POSTGRES else 1))['n'])
+ coverage=round((mfa/active*100),1) if active else 100.0
+ warnings=[]; score=0
+ if USING_POSTGRES: score+=25
+ else: warnings.append('Desktop/SQLite režim nemá databázové RLS.')
+ if bool(org['mfa_required']): score+=20
+ else: warnings.append('MFA nie je povinné pre organizáciu.')
+ if admins and admin_mfa==admins: score+=20
+ else: warnings.append(f'{max(0,admins-admin_mfa)} aktívnych administrátorov nemá MFA.')
+ score+=round(15*(coverage/100))
+ if not support_access_active(org): score+=10
+ else: warnings.append('GAMO support prístup je momentálne aktívny.')
+ backup_ok=(org['backup_last_verified_status']=='OK' and bool(org['backup_last_verified_at']))
+ if backup_ok: score+=10
+ else: warnings.append('Integrita posledného zákazníckeho backupu nebola overená.')
+ return {
+  'score':min(100,int(score)),'active_users':active,'mfa_users':mfa,'mfa_coverage':coverage,
+  'admins':admins,'admin_mfa':admin_mfa,'mfa_required':bool(org['mfa_required']),
+  'support_active':support_access_active(org),'backup_ok':backup_ok,
+  'backup_verified_at':org['backup_last_verified_at'],'warnings':warnings
+ }
+
+def apply_retention_if_due(oid,force=False):
+ org=one('select * from organizations where id=?',(oid,))
+ if not org: return 0
+ last=org['retention_last_run']
+ if last and not force:
+  try:
+   dt=datetime.fromisoformat(str(last).replace('Z','+00:00'))
+   now=datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+   if now-dt<timedelta(hours=24): return 0
+  except Exception:
+   pass
+ days=max(365,min(3650,int(org['retention_days'] or 3650)))
+ cutoff=(datetime.utcnow()-timedelta(days=days)).isoformat(timespec='seconds')+'Z'
+ deleted=0
+ with con() as db:
+  cur=db.execute(_sql('delete from auth_events where organization_id=? and created<?'),(oid,cutoff)); deleted+=max(0,cur.rowcount or 0)
+  cur=db.execute(_sql('delete from customer_access_log where target_organization_id=? and created<?'),(oid,cutoff)); deleted+=max(0,cur.rowcount or 0)
+  db.execute(_sql('update organizations set retention_last_run=CURRENT_TIMESTAMP where id=?'),(oid,))
+  db.commit()
+ audit('RETENTION_RUN',f'{days} dní · odstránených {deleted} bezpečnostných logov')
+ return deleted
+
+def create_organization_backup_archive(oid,privileged=False):
+ read_one=one_system if privileged else one
+ read_all=q_system if privileged else q
+ org=read_one('select * from organizations where id=?',(oid,))
+ if not org: abort(404)
+ data={}
+ data['buildings']=[dict(r) for r in read_all('select * from buildings where organization_id=? order by id',(oid,))]
+ data['floors']=[dict(r) for r in read_all('select f.* from floors f join buildings b on b.id=f.building_id where b.organization_id=? order by f.id',(oid,))]
+ data['rooms']=[dict(r) for r in read_all('select r.* from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where b.organization_id=? order by r.id',(oid,))]
+ data['assets']=[dict(r) for r in read_all('select a.* from assets a where a.organization_id=? order by a.id',(oid,))]
+ data['workorders']=[dict(r) for r in read_all('select w.* from workorders w join assets a on a.id=w.asset_id where a.organization_id=? order by w.id',(oid,))]
+ data['incidents']=[dict(r) for r in read_all('select x.* from incidents x join assets a on a.id=x.asset_id where a.organization_id=? order by x.id',(oid,))]
+ data['users']=[dict(r) for r in read_all('select id,name,email,role,status,last_login,organization_id,mfa_enabled,mfa_enabled_at,erased_at from users where organization_id=? order by id',(oid,))]
+ data['settings']=[dict(r) for r in read_all('select k,v from organization_settings where organization_id=? order by k',(oid,))]
+ data['asset_events']=[dict(r) for r in read_all('select * from asset_events where organization_id=? order by id',(oid,))]
+ data['access_log']=[dict(r) for r in read_all('select * from customer_access_log where target_organization_id=? order by id',(oid,))]
+ data['auth_events']=[dict(r) for r in read_all('select * from auth_events where organization_id=? order by id',(oid,))]
+ data['privacy_requests']=[dict(r) for r in read_all('select * from privacy_requests where organization_id=? order by id',(oid,))]
+ docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
+ files={}
+ for name,rows in data.items():
+  files[f'data/{name}.json']=json.dumps(rows,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+ doc_meta=[]
+ for d in docs:
+  item={k:d[k] for k in ['id','building_id','name','category','mime','size','uploaded']}
+  safe=os.path.basename(d['name'] or f"document_{d['id']}")
+  path=f"documents/{d['id']}_{safe}"
+  item['archive_path']=path; doc_meta.append(item)
+  files[path]=bytes(d['data']) if d['data'] is not None else b''
+ files['data/documents.json']=json.dumps(doc_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+ checksums={path:hashlib.sha256(blob).hexdigest() for path,blob in files.items()}
+ manifest={
+  'format':'GAMO_ORGANIZATION_BACKUP_V3','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
+  'organization':{k:org[k] for k in ['id','code','name','status','plan','license_status','license_until','branding_name','brand_color','brand_tagline','privacy_contact','data_region','retention_days','mfa_required','created'] if k in org.keys()},
+  'privacy':{'password_hashes_included':False,'mfa_secrets_included':False,'support_access_active':support_access_active(org)},
+  'counts':{name:len(rows) for name,rows in data.items()} | {'documents':len(doc_meta)},
+  'checksums_sha256':checksums,
+  'note':'Password hashes, TOTP secrets and recovery codes are intentionally excluded.'
+ }
+ stream=io.BytesIO()
+ with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as z:
+  z.writestr('manifest.json',json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
+  for path,blob in files.items(): z.writestr(path,blob)
+ filename=f"GAMO_backup_{org['code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+ return stream.getvalue(),filename,manifest
+
+def verify_organization_backup_bytes(blob):
+ try:
+  with zipfile.ZipFile(io.BytesIO(blob),'r') as z:
+   manifest=json.loads(z.read('manifest.json').decode('utf-8'))
+   if manifest.get('format')!='GAMO_ORGANIZATION_BACKUP_V3': return False,'Neplatný formát backupu.'
+   checks=manifest.get('checksums_sha256') or {}
+   required={'data/buildings.json','data/assets.json','data/users.json','data/documents.json'}
+   if not required.issubset(set(checks)): return False,'Backup nemá všetky povinné dátové súbory.'
+   for path,expected in checks.items():
+    if path not in z.namelist(): return False,f'Chýba {path}.'
+    if hashlib.sha256(z.read(path)).hexdigest()!=expected: return False,f'Checksum nesedí: {path}.'
+  return True,'Všetky súbory a SHA-256 checksumy sú v poriadku.'
+ except Exception as exc:
+  return False,f'Backup sa nepodarilo overiť: {exc}'
+
 @app.get('/privacy')
 def privacy_center():
  if support_mode(): abort(403)
  org=one('select * from organizations where id=?',(org_id(),))
  if not org or session.get('user_role')!='Administrator': abort(403)
+ try: apply_retention_if_due(org_id(),False)
+ except Exception: pass
+ org=one('select * from organizations where id=?',(org_id(),))
  access_rows=q('select * from customer_access_log where target_organization_id=? order by id desc limit 50',(org_id(),))
- return render_template('index.html',page='privacy',privacy_org=org,support_active=support_access_active(org),access_rows=access_rows,rls_enabled=USING_POSTGRES)
+ auth_rows=q('select * from auth_events where organization_id=? order by id desc limit 30',(org_id(),))
+ privacy_users=q('select id,name,email,role,status,last_login,mfa_enabled,mfa_enabled_at,erased_at from users where organization_id=? order by case when role=\'Administrator\' then 0 else 1 end,name',(org_id(),))
+ privacy_requests=q('select p.*,u.name subject_name from privacy_requests p left join users u on u.id=p.subject_user_id where p.organization_id=? order by p.id desc limit 30',(org_id(),))
+ return render_template('index.html',page='privacy',privacy_org=org,support_active=support_access_active(org),
+  access_rows=access_rows,auth_rows=auth_rows,privacy_users=privacy_users,privacy_requests=privacy_requests,
+  security=security_snapshot(org_id()),rls_enabled=USING_POSTGRES)
 
 @app.post('/privacy/settings')
 def privacy_settings():
@@ -890,11 +1019,80 @@ def privacy_settings():
  org=one('select * from organizations where id=?',(org_id(),))
  if not org or session.get('user_role')!='Administrator': abort(403)
  contact=(request.form.get('privacy_contact') or '').strip()[:160]
- try: retention=max(30,min(3650,int(request.form.get('retention_days') or 3650)))
+ try: retention=max(365,min(3650,int(request.form.get('retention_days') or 3650)))
  except (TypeError,ValueError): retention=3650
- x('update organizations set privacy_contact=?,retention_days=? where id=?',(contact,retention,org_id()))
- audit('PRIVACY_SETTINGS',f'retention={retention}')
- flash('Nastavenia súkromia boli uložené.','success')
+ mfa_required=request.form.get('mfa_required')=='1'
+ x('update organizations set privacy_contact=?,retention_days=?,mfa_required=? where id=?',(contact,retention,True if (USING_POSTGRES and mfa_required) else (1 if mfa_required else (False if USING_POSTGRES else 0)),org_id()))
+ audit('PRIVACY_SETTINGS',f'retention={retention} · mfa_required={mfa_required}')
+ current=one('select mfa_enabled from users where id=?',(session.get('user_id'),))
+ if mfa_required and current and not bool(current['mfa_enabled']):
+  flash('Povinné MFA bolo zapnuté. Najprv zabezpeč svoj administrátorský účet.','success')
+  return redirect('/account/mfa')
+ flash('Nastavenia súkromia a bezpečnostnej politiky boli uložené.','success')
+ return redirect('/privacy')
+
+@app.post('/privacy/retention/run')
+def privacy_retention_run():
+ if support_mode() or session.get('user_role')!='Administrator': abort(403)
+ deleted=apply_retention_if_due(org_id(),True)
+ flash(f'Retenčná politika bola vykonaná. Odstránených bezpečnostných logov: {deleted}.','success')
+ return redirect('/privacy')
+
+@app.post('/privacy/backup/verify')
+def privacy_backup_verify():
+ if support_mode() or session.get('user_role')!='Administrator': abort(403)
+ blob,_,_=create_organization_backup_archive(org_id(),False)
+ ok,detail=verify_organization_backup_bytes(blob)
+ status='OK' if ok else 'FAILED'
+ x('update organizations set backup_last_verified_at=CURRENT_TIMESTAMP,backup_last_verified_status=? where id=?',(status,org_id()))
+ audit('BACKUP_VERIFY',f'{status} · {detail}')
+ flash(('Backup integrity: '+detail), 'success' if ok else 'error')
+ return redirect('/privacy')
+
+@app.get('/privacy/user/<int:i>/export.json')
+def privacy_user_export(i):
+ if support_mode() or session.get('user_role')!='Administrator': abort(403)
+ u=one('select id,name,email,role,status,last_login,mfa_enabled,mfa_enabled_at,erased_at,organization_id from users where id=? and organization_id=?',(i,org_id()))
+ if not u: abort(404)
+ payload={
+  'format':'GAMO_PERSONAL_DATA_EXPORT_V1','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
+  'account':dict(u),
+  'audit_events':[dict(r) for r in q('select created,action,detail,ip from audit_log where organization_id=? and user_id=? order by id',(org_id(),i))],
+  'asset_events':[dict(r) for r in q('select created,event_type,title,detail from asset_events where organization_id=? and user_id=? order by id',(org_id(),i))],
+  'support_events':[dict(r) for r in q('select created,action,reason,ip from customer_access_log where target_organization_id=? and actor_user_id=? order by id',(org_id(),i))],
+  'auth_events':[dict(r) for r in q('select created,event,success,detail,ip,user_agent from auth_events where organization_id=? and user_id=? order by id',(org_id(),i))]
+ }
+ x('insert into privacy_requests(organization_id,subject_user_id,request_type,status,requested_by,note,completed_at) values(?,?,?,?,?,?,CURRENT_TIMESTAMP)',(org_id(),i,'EXPORT','COMPLETED',session.get('user_id'),'Osobné údaje exportované administrátorom.'))
+ audit('GDPR_USER_EXPORT',f'user_id={i}')
+ response=app.response_class(json.dumps(payload,ensure_ascii=False,indent=2,default=str),mimetype='application/json')
+ response.headers['Content-Disposition']=f'attachment; filename=GAMO_personal_data_{i}_{date.today().isoformat()}.json'
+ response.headers['Cache-Control']='no-store'
+ return response
+
+@app.post('/privacy/user/<int:i>/anonymize')
+def privacy_user_anonymize(i):
+ if support_mode() or session.get('user_role')!='Administrator': abort(403)
+ u=one('select * from users where id=? and organization_id=?',(i,org_id()))
+ if not u: abort(404)
+ if i==session.get('user_id'):
+  flash('Vlastný aktívny účet nie je možné anonymizovať.','error'); return redirect('/privacy')
+ if (request.form.get('confirm_text') or '').strip().upper()!='ANONYMIZE':
+  flash('Pre anonymizáciu napíš presne ANONYMIZE.','error'); return redirect('/privacy')
+ if u['role']=='Administrator' and u['status']=='Aktívny' and one("select count(*) n from users where organization_id=? and role='Administrator' and status='Aktívny'",(org_id(),))['n']<=1:
+  flash('Posledného aktívneho administrátora nie je možné anonymizovať.','error'); return redirect('/privacy')
+ anon_name=f'Anonymizovaný používateľ #{i}'; anon_email=f'deleted+{org_id()}-{i}@anonymized.invalid'
+ with con() as db:
+  db.execute(_sql("""update users set name=?,email=?,role='Viewer',status='Neaktívny',
+   password_hash=?,last_login=NULL,must_change_password=?,mfa_secret=NULL,mfa_recovery_codes=NULL,
+   mfa_enabled=?,mfa_enabled_at=NULL,erased_at=CURRENT_TIMESTAMP where id=? and organization_id=?"""),
+   (anon_name,anon_email,generate_password_hash(secrets.token_urlsafe(32)),False if USING_POSTGRES else 0,False if USING_POSTGRES else 0,i,org_id()))
+  db.execute(_sql("update audit_log set user_name='Anonymizovaný používateľ' where organization_id=? and user_id=?"),(org_id(),i))
+  db.execute(_sql("update asset_events set user_name='Anonymizovaný používateľ' where organization_id=? and user_id=?"),(org_id(),i))
+  db.execute(_sql("update customer_access_log set actor_name='Anonymizovaný používateľ' where target_organization_id=? and actor_user_id=?"),(org_id(),i))
+  db.execute(_sql('insert into privacy_requests(organization_id,subject_user_id,request_type,status,requested_by,note,completed_at) values(?,?,?,?,?,?,CURRENT_TIMESTAMP)'),(org_id(),i,'ANONYMIZE','COMPLETED',session.get('user_id'),'Účet a priame identifikátory boli anonymizované; prevádzkové záznamy ostali zachované.'))
+  db.commit()
+ audit('GDPR_USER_ANONYMIZE',f'user_id={i}')
+ flash('Používateľ bol anonymizovaný. Prevádzková história ostala zachovaná bez priamych identifikátorov.','success')
  return redirect('/privacy')
 
 @app.post('/privacy/support-access')
@@ -904,6 +1102,8 @@ def privacy_support_access():
  if not org or org['code']=='GAMO' or session.get('user_role')!='Administrator': abort(403)
  action=request.form.get('action')
  reason=(request.form.get('reason') or '').strip()[:500]
+ if action!='revoke' and len(reason)<5:
+  flash('Pri povolení support prístupu uveď dôvod alebo číslo ticketu.','error'); return redirect('/privacy')
  if action=='revoke':
   x('update organizations set support_access_enabled=?,support_access_until=? where id=?',(False if USING_POSTGRES else 0,None,org_id()))
   customer_access(org_id(),'SUPPORT_ACCESS_REVOKED',reason or 'Prístup GAMO bol odvolaný zákazníkom.')
@@ -982,45 +1182,12 @@ def platform_customer_backup(i):
  return build_organization_backup(i,privileged=True)
 
 def build_organization_backup(oid,privileged=False):
- read_one=one_system if privileged else one
- read_all=q_system if privileged else q
- org=read_one('select * from organizations where id=?',(oid,))
- if not org: abort(404)
- data={}
- data['buildings']=[dict(r) for r in read_all('select * from buildings where organization_id=? order by id',(oid,))]
- data['floors']=[dict(r) for r in read_all('select f.* from floors f join buildings b on b.id=f.building_id where b.organization_id=? order by f.id',(oid,))]
- data['rooms']=[dict(r) for r in read_all('select r.* from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where b.organization_id=? order by r.id',(oid,))]
- data['assets']=[dict(r) for r in read_all('select a.* from assets a where a.organization_id=? order by a.id',(oid,))]
- data['workorders']=[dict(r) for r in read_all('select w.* from workorders w join assets a on a.id=w.asset_id where a.organization_id=? order by w.id',(oid,))]
- data['incidents']=[dict(r) for r in read_all('select x.* from incidents x join assets a on a.id=x.asset_id where a.organization_id=? order by x.id',(oid,))]
- data['users']=[dict(r) for r in read_all('select id,name,email,role,status,last_login,organization_id from users where organization_id=? order by id',(oid,))]
- data['settings']=[dict(r) for r in read_all('select k,v from organization_settings where organization_id=? order by k',(oid,))]
- data['asset_events']=[dict(r) for r in read_all('select * from asset_events where organization_id=? order by id',(oid,))]
- data['access_log']=[dict(r) for r in read_all('select * from customer_access_log where target_organization_id=? order by id',(oid,))]
- docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
- manifest={
-  'format':'GAMO_ORGANIZATION_BACKUP_V2','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
-  'organization':{k:org[k] for k in ['id','code','name','status','plan','license_status','license_until','branding_name','brand_color','brand_tagline','privacy_contact','data_region','retention_days','created'] if k in org.keys()},
-  'privacy':{'password_hashes_included':False,'support_access_active':support_access_active(org)},
-  'note':'Password hashes are intentionally excluded. Documents are stored in the documents/ folder.'
- }
- stream=io.BytesIO()
- with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as z:
-  z.writestr('manifest.json',json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
-  for name,rows in data.items():
-   z.writestr(f'data/{name}.json',json.dumps(rows,ensure_ascii=False,indent=2,default=str))
-  doc_meta=[]
-  for d in docs:
-   item={k:d[k] for k in ['id','building_id','name','category','mime','size','uploaded']}
-   safe=os.path.basename(d['name'] or f"document_{d['id']}")
-   path=f"documents/{d['id']}_{safe}"
-   item['archive_path']=path; doc_meta.append(item)
-   z.writestr(path,bytes(d['data']) if d['data'] is not None else b'')
-  z.writestr('data/documents.json',json.dumps(doc_meta,ensure_ascii=False,indent=2,default=str))
- stream.seek(0)
- audit('BACKUP_EXPORT',f"{org['code']} · organization export")
- filename=f"GAMO_backup_{org['code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
- return send_file(stream,mimetype='application/zip',as_attachment=True,download_name=filename)
+ blob,filename,manifest=create_organization_backup_archive(oid,privileged)
+ if privileged: audit_for_org(oid,'BACKUP_EXPORT',f"{manifest['organization']['code']} · GAMO support export")
+ else: audit('BACKUP_EXPORT',f"{manifest['organization']['code']} · organization export")
+ response=send_file(io.BytesIO(blob),mimetype='application/zip',as_attachment=True,download_name=filename)
+ response.headers['Cache-Control']='no-store'
+ return response
 
 @app.get('/platform/customer/<int:i>')
 def platform_customer_detail(i):
@@ -1047,7 +1214,7 @@ def platform_customer_detail(i):
  customer_users=[]; customer_buildings=[]; recent_incidents=[]; recent_orders=[]; customer_audit=[]
  if support_active:
   customer_access(i,'GAMO_SUPPORT_DATA_VIEW','Customer 360 sensitive data viewed during active support access.')
-  customer_users=q_system('select id,name,email,role,status,last_login from users where organization_id=? order by case when role=\'Administrator\' then 0 else 1 end,name',(i,))
+  customer_users=q_system('select id,name,email,role,status,last_login,mfa_enabled,mfa_enabled_at,erased_at from users where organization_id=? order by case when role=\'Administrator\' then 0 else 1 end,name',(i,))
   customer_buildings=q_system("""select b.*,
    (select count(*) from floors f where f.building_id=b.id) floors_count,
    (select count(*) from assets a where a.building_id=b.id) assets_count,
@@ -1063,12 +1230,13 @@ def platform_customer_detail(i):
  last_backup=one_system("select created from audit_log where organization_id=? and action='BACKUP_EXPORT' order by id desc limit 1",(i,))
  last_login=one_system("select max(last_login) last_login from users where organization_id=?",(i,))
  access_rows=q_system('select * from customer_access_log where target_organization_id=? order by id desc limit 20',(i,))
+ customer_security=security_snapshot(i,True)
  limits=PLAN_LIMITS.get((customer['plan'] or 'BASIC'),PLAN_LIMITS['BASIC'])
  return render_template('index.html',page='customer',customer=customer,customer_stats=customer_stats,
   customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
   recent_orders=recent_orders,license_days=license_days,customer_limits=limits,customer_audit=customer_audit,
   customer_last_backup=(last_backup['created'] if last_backup else None),customer_last_login=(last_login['last_login'] if last_login else None),
-  support_access=support_active,customer_access_rows=access_rows)
+  support_access=support_active,customer_access_rows=access_rows,customer_security=customer_security)
 
 @app.post('/platform/customer/<int:i>/reset-admin-password')
 def platform_customer_reset_admin_password(i):
@@ -1088,6 +1256,22 @@ def platform_customer_reset_admin_password(i):
  customer_access(i,'GAMO_ADMIN_PASSWORD_RESET',f"Reset hesla administrátora {admin_user['email']}.")
  audit('CUSTOMER_ADMIN_PASSWORD_RESET',f"{customer['code']} · {admin_user['email']}")
  flash('Dočasné heslo zákazníckeho administrátora bolo zmenené.','success')
+ return redirect(f'/platform/customer/{i}#customerUsers')
+
+@app.post('/platform/customer/<int:i>/reset-admin-mfa')
+def platform_customer_reset_admin_mfa(i):
+ if not is_gamo_admin(): abort(403)
+ customer=one_system('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ if not customer: abort(404)
+ if not support_access_active(customer):
+  flash('Reset MFA vyžaduje aktívny support prístup udelený zákazníkom.','error')
+  return redirect(f'/platform/customer/{i}#customerUsers')
+ admin_user=one_system("select id,email from users where organization_id=? and role='Administrator' order by id limit 1",(i,))
+ if not admin_user: abort(404)
+ x_system('update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=? where id=?',(None,None,False if USING_POSTGRES else 0,None,admin_user['id']))
+ customer_access(i,'GAMO_ADMIN_MFA_RESET',f"Reset MFA administrátora {admin_user['email']}.")
+ audit_for_org(i,'CUSTOMER_ADMIN_MFA_RESET',f"Reset MFA {admin_user['email']}")
+ flash('MFA administrátora bolo resetované. Ak organizácia vyžaduje MFA, pri ďalšom prihlásení ho musí nastaviť znova.','success')
  return redirect(f'/platform/customer/{i}#customerUsers')
 
 @app.post('/platform/customer/<int:i>/branding')
@@ -1118,7 +1302,7 @@ def platform_customer():
  license_status=f.get('license_status') or 'Aktívna'
  license_until=(f.get('license_until') or '').strip() or None
  if not code or not name or not admin_name or not email or len(password)<10:
-  flash('Vyplň povinné údaje. Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect('/admin#customersAdmin')
+  flash('Vyplň povinné údaje. Dočasné heslo musí mať aspoň 10 znakov.','error'); return redirect('/admin#customersAdmin')
  if plan not in {'BASIC','BUSINESS','ENTERPRISE'} or license_status not in {'Aktívna','Pozastavená'}:
   flash('Neplatný licenčný plán alebo stav.','error'); return redirect('/admin#customersAdmin')
  if one_system('select id from organizations where upper(code)=?',(code,)) or one_system('select id from users where lower(email)=?',(email,)):
@@ -1126,10 +1310,10 @@ def platform_customer():
  try:
   with con(system=True) as db:
    if USING_POSTGRES:
-    row=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact) values(?,?,?,?,?,?,?,?) returning id'),(code,name,'Aktívny',plan,license_status,license_until,name,email)).fetchone()
+    row=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact,mfa_required) values(?,?,?,?,?,?,?,?,?) returning id'),(code,name,'Aktívny',plan,license_status,license_until,name,email,True)).fetchone()
     oid=row['id']
    else:
-    cur=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact) values(?,?,?,?,?,?,?,?)'),(code,name,'Aktívny',plan,license_status,license_until,name,email)); oid=cur.lastrowid
+    cur=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact,mfa_required) values(?,?,?,?,?,?,?,?,?)'),(code,name,'Aktívny',plan,license_status,license_until,name,email,1)); oid=cur.lastrowid
    db.execute(_sql('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)'),(admin_name,email,'Administrator','Aktívny',generate_password_hash(password),oid,True if USING_POSTGRES else 1))
    db.commit()
   audit('CUSTOMER_CREATE',f'{code} · {name} · {plan}')
