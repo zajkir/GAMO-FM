@@ -94,9 +94,46 @@ def _migration_2(db, using_postgres):
         db.execute("CREATE INDEX IF NOT EXISTS idx_asset_events_org ON asset_events(organization_id,created)")
 
 
+
+
+def _migration_3(db, using_postgres):
+    """Make business identifiers tenant-safe instead of globally unique."""
+    asset_cols = _columns(db, "assets", using_postgres)
+    if "organization_id" not in asset_cols:
+        if using_postgres:
+            db.execute("ALTER TABLE assets ADD COLUMN organization_id BIGINT")
+        else:
+            db.execute("ALTER TABLE assets ADD COLUMN organization_id INTEGER")
+    if using_postgres:
+        db.execute(
+            """UPDATE assets a SET organization_id=b.organization_id
+               FROM buildings b
+               WHERE a.organization_id IS NULL AND a.building_id=b.id"""
+        )
+        # Legacy tables used global UNIQUE constraints. Commercial tenants need
+        # to be able to reuse codes such as A or HVAC-000001 independently.
+        db.execute("ALTER TABLE buildings DROP CONSTRAINT IF EXISTS buildings_code_key")
+        db.execute("ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_asset_id_key")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_buildings_org_code ON buildings(organization_id,upper(code))")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_org_asset_id ON assets(organization_id,upper(asset_id))")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_assets_org ON assets(organization_id)")
+    else:
+        db.execute(
+            """UPDATE assets SET organization_id=(
+                SELECT organization_id FROM buildings WHERE buildings.id=assets.building_id
+            ) WHERE organization_id IS NULL"""
+        )
+        # SQLite desktop databases historically had global UNIQUE constraints.
+        # Keep them intact for backwards compatibility; the composite indexes
+        # document and accelerate the tenant-aware model.
+        db.execute("CREATE INDEX IF NOT EXISTS idx_assets_org ON assets(organization_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_buildings_org_code ON buildings(organization_id,code)")
+
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
+    (3, "tenant_safe_business_identifiers", _migration_3),
 )
 
 
