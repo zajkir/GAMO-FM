@@ -78,7 +78,7 @@
        data-floor-assets="{{fa|length}}"
        data-floor-incidents="{{alerts}}"
        data-floor-area="{{floor_area|round(1)}}"
-       data-floor-faults="{{fa|selectattr('status','in',['Porucha','Mimo prevádzky'])|list|length}}"
+       data-floor-faults="{{(fa|selectattr('status','equalto','Porucha')|list|length) + (fa|selectattr('status','equalto','Mimo prevádzky')|list|length)}}"
        data-floor-critical="{{fa|selectattr('criticality','equalto','A')|list|length}}"
        onclick="twinSelectFloor(this)"
        aria-label="{{f.code}} {{f.name}}, {{fr|length}} miestností, {{fa|length}} assetov">
