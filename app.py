@@ -97,7 +97,7 @@ def init():
    c.execute("insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)",('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!'))))
 init()
 with con() as c:
- c.execute("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?",(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
+ c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
 
 @app.before_request
 def require_login():
