@@ -835,7 +835,7 @@ def add(what):
    if not owns_building(building_id): abort(404)
    floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id')
    if floor_id and not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError()
-   if room_id and not one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and b.id=? and b.organization_id=?',(room_id,building_id,org_id())): raise ValueError()
+   if room_id and (not floor_id or not one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id()))): raise ValueError()
    if parent_id and not owns_asset(parent_id): raise ValueError()
    if one('select a.id from assets a join buildings b on b.id=a.building_id where upper(a.asset_id)=? and b.organization_id=?',(aid,org_id())): flash(f'Asset ID {aid} už existuje.','error')
    else:
@@ -964,6 +964,18 @@ def status(what,i):
   if row: asset_event(row['asset_id'],'INCIDENT_STATUS','Zmena stavu incidentu',f"{row['title']} → {new_status}")
  audit('STATUS_CHANGE',f'{what}:{i} → {new_status}')
  return redirect(request.referrer or '/')
+
+@app.get('/api/buildings/options')
+def api_building_options():
+ rows=q('select id,code,name,address from buildings where organization_id=? order by name',(org_id(),))
+ return jsonify([dict(r) for r in rows])
+
+@app.get('/api/floors/options')
+def api_floor_options():
+ rows=q("""select f.id,f.code,f.name,b.id building_id,b.code building_code,b.name building_name
+  from floors f join buildings b on b.id=f.building_id
+  where b.organization_id=? order by b.name,f.id""",(org_id(),))
+ return jsonify([dict(r) for r in rows])
 
 @app.route('/api/floors/<int:b>')
 def api_floors(b):
