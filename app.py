@@ -1,6 +1,6 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time, io
+import sqlite3, os, json, secrets, time, io, zipfile
 try:
  import psycopg
  from psycopg.rows import dict_row
@@ -356,6 +356,55 @@ def admin():
   users=q('select * from users where organization_id=? order by name',(org_id(),)),
   buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
   audit_rows=audit_rows,organizations=organizations,customer_stats=customer_stats,current_admin_org=org)
+
+@app.get('/backup/my')
+def backup_my_organization():
+ if session.get('user_role')!='Administrator': abort(403)
+ return build_organization_backup(org_id())
+
+@app.get('/platform/customer/<int:i>/backup')
+def platform_customer_backup(i):
+ if not is_gamo_admin(): abort(403)
+ customer=one('select id from organizations where id=? and code<>?',(i,'GAMO'))
+ if not customer: abort(404)
+ return build_organization_backup(i)
+
+def build_organization_backup(oid):
+ org=one('select * from organizations where id=?',(oid,))
+ if not org: abort(404)
+ data={}
+ data['buildings']=[dict(r) for r in q('select * from buildings where organization_id=? order by id',(oid,))]
+ data['floors']=[dict(r) for r in q('select f.* from floors f join buildings b on b.id=f.building_id where b.organization_id=? order by f.id',(oid,))]
+ data['rooms']=[dict(r) for r in q('select r.* from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where b.organization_id=? order by r.id',(oid,))]
+ data['assets']=[dict(r) for r in q('select a.* from assets a join buildings b on b.id=a.building_id where b.organization_id=? order by a.id',(oid,))]
+ data['workorders']=[dict(r) for r in q('select w.* from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id',(oid,))]
+ data['incidents']=[dict(r) for r in q('select x.* from incidents x join assets a on a.id=x.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by x.id',(oid,))]
+ data['users']=[dict(r) for r in q('select id,name,email,role,status,last_login,organization_id from users where organization_id=? order by id',(oid,))]
+ data['settings']=[dict(r) for r in q('select k,v from organization_settings where organization_id=? order by k',(oid,))]
+ data['asset_events']=[dict(r) for r in q('select * from asset_events where organization_id=? order by id',(oid,))]
+ docs=q('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
+ manifest={
+  'format':'GAMO_ORGANIZATION_BACKUP_V1','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
+  'organization':{k:org[k] for k in ['id','code','name','status','plan','license_status','license_until','branding_name','brand_color','brand_tagline','created'] if k in org.keys()},
+  'note':'Password hashes are intentionally excluded. Documents are stored in the documents/ folder.'
+ }
+ stream=io.BytesIO()
+ with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as z:
+  z.writestr('manifest.json',json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
+  for name,rows in data.items():
+   z.writestr(f'data/{name}.json',json.dumps(rows,ensure_ascii=False,indent=2,default=str))
+  doc_meta=[]
+  for d in docs:
+   item={k:d[k] for k in ['id','building_id','name','category','mime','size','uploaded']}
+   safe=os.path.basename(d['name'] or f"document_{d['id']}")
+   path=f"documents/{d['id']}_{safe}"
+   item['archive_path']=path; doc_meta.append(item)
+   z.writestr(path,bytes(d['data']) if d['data'] is not None else b'')
+  z.writestr('data/documents.json',json.dumps(doc_meta,ensure_ascii=False,indent=2,default=str))
+ stream.seek(0)
+ audit('BACKUP_EXPORT',f"{org['code']} · organization export")
+ filename=f"GAMO_backup_{org['code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+ return send_file(stream,mimetype='application/zip',as_attachment=True,download_name=filename)
 
 @app.get('/platform/customer/<int:i>')
 def platform_customer_detail(i):
