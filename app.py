@@ -290,6 +290,57 @@ def admin():
   buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
   audit_rows=audit_rows,organizations=organizations,customer_stats=customer_stats,current_admin_org=org)
 
+@app.get('/platform/customer/<int:i>')
+def platform_customer_detail(i):
+ if not is_gamo_admin(): abort(403)
+ customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ if not customer: abort(404)
+ customer_stats={
+  'users':one('select count(*) n from users where organization_id=?',(i,))['n'],
+  'active_users':one("select count(*) n from users where organization_id=? and status='Aktívny'",(i,))['n'],
+  'buildings':one('select count(*) n from buildings where organization_id=?',(i,))['n'],
+  'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(i,))['n'],
+  'open_incidents':one("select count(*) n from incidents x join assets a on a.id=x.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and x.status!='Ukončená'",(i,))['n'],
+  'open_orders':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status!='Ukončené'",(i,))['n'],
+  'maintenance_cost':one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(i,))['n'],
+  'incident_cost':one('select coalesce(sum(x.cost),0) n from incidents x join assets a on a.id=x.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(i,))['n']
+ }
+ customer_stats['total_cost']=customer_stats['maintenance_cost']+customer_stats['incident_cost']
+ license_days=None
+ if customer['license_until']:
+  try: license_days=(datetime.strptime(str(customer['license_until'])[:10],'%Y-%m-%d').date()-date.today()).days
+  except Exception: license_days=None
+ customer_users=q('select id,name,email,role,status,last_login from users where organization_id=? order by case when role=\'Administrator\' then 0 else 1 end,name',(i,))
+ customer_buildings=q("""select b.*,
+  (select count(*) from floors f where f.building_id=b.id) floors_count,
+  (select count(*) from assets a where a.building_id=b.id) assets_count,
+  (select count(*) from incidents x join assets a on a.id=x.asset_id where a.building_id=b.id and x.status!='Ukončená') incidents_count
+  from buildings b where b.organization_id=? order by b.name""",(i,))
+ recent_incidents=q("""select x.*,a.asset_id,a.name asset,b.name building from incidents x
+  join assets a on a.id=x.asset_id join buildings b on b.id=a.building_id
+  where b.organization_id=? order by x.id desc limit 6""",(i,))
+ recent_orders=q("""select w.*,a.asset_id,a.name asset,b.name building from workorders w
+  join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
+  where b.organization_id=? order by w.id desc limit 6""",(i,))
+ return render_template('index.html',page='customer',customer=customer,customer_stats=customer_stats,
+  customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
+  recent_orders=recent_orders,license_days=license_days)
+
+@app.post('/platform/customer/<int:i>/branding')
+def platform_customer_branding(i):
+ if not is_gamo_admin(): abort(403)
+ customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ if not customer: abort(404)
+ name=(request.form.get('branding_name') or customer['name']).strip()[:80]
+ tagline=(request.form.get('brand_tagline') or 'FACILITY MANAGEMENT').strip()[:80]
+ color=(request.form.get('brand_color') or '#E31B23').strip().upper()
+ if len(color)!=7 or not color.startswith('#') or any(ch not in '0123456789ABCDEF' for ch in color[1:]):
+  flash('Farba brandingu musí byť vo formáte #RRGGBB.','error'); return redirect(f'/platform/customer/{i}#branding')
+ x('update organizations set branding_name=?,brand_color=?,brand_tagline=? where id=?',(name,color,tagline,i))
+ audit('CUSTOMER_BRANDING',f"{customer['code']} · {name} · {color}")
+ flash('Branding zákazníka bol uložený.','success')
+ return redirect(f'/platform/customer/{i}#branding')
+
 @app.post('/platform/customer')
 def platform_customer():
  if not is_gamo_admin(): abort(403)
@@ -338,7 +389,7 @@ def platform_customer_update(i):
  x('update organizations set plan=?,license_status=?,license_until=?,status=? where id=?',(plan,license_status,license_until,org_status,i))
  audit('CUSTOMER_UPDATE',f"{customer['code']} · {plan} · {license_status}")
  flash('Nastavenia zákazníka boli uložené.','success')
- return redirect('/admin#customersAdmin')
+ return redirect(f"/platform/customer/{i}" if request.form.get('return_to')=='detail' else '/admin#customersAdmin')
 
 @app.route('/add/<what>',methods=['GET','POST'])
 def add(what):
