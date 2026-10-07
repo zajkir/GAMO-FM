@@ -71,6 +71,16 @@ with psycopg.connect(url, row_factory=dict_row) as db:
         )
     """)
     db.execute("""
+        create table users(
+            id bigserial primary key,
+            name text,
+            email text,
+            role text,
+            status text,
+            organization_id bigint
+        )
+    """)
+    db.execute("""
         create table workorders(
             id bigserial primary key,
             asset_id bigint,
