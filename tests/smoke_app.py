@@ -140,6 +140,58 @@ assert r.status_code in (302, 303)
 asset = app.one("select * from assets where asset_id=? and organization_id=?", ("QA-000001", gamo_org_id))
 assert asset
 
+# Regression: new asset may leave Asset ID empty; server must generate a tenant-safe ID.
+r = client.post(
+    "/add/asset",
+    data={
+        "_csrf": csrf(),
+        "asset_id": "",
+        "name": "Automatic HVAC Asset",
+        "building_id": str(building["id"]),
+        "floor_id": str(floor["id"]),
+        "room_id": str(room["id"]),
+        "profession": "HVAC",
+        "grp": "VZT",
+        "type": "AHU",
+        "status": "Prevádzka",
+        "criticality": "B",
+        "service_months": "6",
+        "revision_months": "12",
+        "purchase_price": "0",
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+auto_asset = app.one(
+    "select * from assets where organization_id=? and name=?",
+    (gamo_org_id, "Automatic HVAC Asset"),
+)
+assert auto_asset and auto_asset["asset_id"] == "HVAC-000001"
+assert client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"] == "HVAC-000002"
+
+# A manually duplicated ID must be rejected without creating another row.
+before_auto = app.one("select count(*) n from assets where organization_id=?", (gamo_org_id,))["n"]
+r = client.post(
+    "/add/asset",
+    data={
+        "_csrf": csrf(),
+        "asset_id": "HVAC-000001",
+        "name": "Duplicate Must Not Save",
+        "building_id": str(building["id"]),
+        "floor_id": str(floor["id"]),
+        "room_id": str(room["id"]),
+        "profession": "HVAC",
+        "grp": "VZT",
+        "type": "AHU",
+        "status": "Prevádzka",
+        "criticality": "B",
+    },
+)
+assert r.status_code in (302, 303)
+after_auto = app.one("select count(*) n from assets where organization_id=?", (gamo_org_id,))["n"]
+assert before_auto == after_auto
+assert app.one("select id from assets where organization_id=? and name=?", (gamo_org_id, "Duplicate Must Not Save")) is None
+
 r = client.post(
     "/add/workorder",
     data={
@@ -366,6 +418,92 @@ private_building = app.one_system(
 )
 assert private_building
 
+# ----- Customer ticket + in-app manager conversation -----
+# Create a normal customer requester and a Facility Manager. Their sessions are
+# prepared directly so this smoke test focuses on authorization and ticket flow.
+bool_true = True if app.USING_POSTGRES else 1
+bool_false = False if app.USING_POSTGRES else 0
+requester_id = app.x_system(
+    "insert into users(name,email,role,status,password_hash,organization_id,must_change_password,mfa_enabled) values(?,?,?,?,?,?,?,?)",
+    ("Customer Requester", "requester@example.test", "Viewer", "Aktívny", app.generate_password_hash("Requester2026!"), customer["id"], bool_false, bool_true),
+)
+manager_id = app.x_system(
+    "insert into users(name,email,role,status,password_hash,organization_id,must_change_password,mfa_enabled) values(?,?,?,?,?,?,?,?)",
+    ("Facility Manager QA", "manager@example.test", "Facility Manager", "Aktívny", app.generate_password_hash("Manager2026!"), customer["id"], bool_false, bool_true),
+)
+requester = app.one_system("select * from users where id=?", (requester_id,))
+manager = app.one_system("select * from users where id=?", (manager_id,))
+assert requester and manager
+
+def force_user_session(user, org_code="SMOKE"):
+    with client.session_transaction() as sess:
+        sess.clear()
+        sess["user_id"] = user["id"]
+        sess["user_name"] = user["name"]
+        sess["user_role"] = user["role"]
+        sess["organization_id"] = user["organization_id"]
+        sess["organization_code"] = org_code
+        sess["must_change_password"] = False
+        sess["csrf"] = "smoke-csrf-ticket"
+
+force_user_session(requester)
+assert client.get("/tickets").status_code == 200
+r = client.post(
+    "/tickets/create",
+    data={
+        "_csrf": csrf(),
+        "subject": "Nefunguje klimatizácia",
+        "category": "Porucha",
+        "priority": "Vysoká",
+        "building_id": str(private_building["id"]),
+        "asset_id": "",
+        "message": "Prosím správcu o kontrolu klimatizácie v kancelárii.",
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+ticket = app.one_system(
+    "select * from tickets where organization_id=? and created_by=?",
+    (customer["id"], requester["id"]),
+)
+assert ticket and ticket["ticket_no"] == "TKT-000001"
+assert ticket["assigned_to"] == manager["id"]
+assert client.get(f"/ticket/{ticket['id']}").status_code == 200
+assert client.post(
+    f"/ticket/{ticket['id']}/manage",
+    data={"_csrf": csrf(), "status": "Rieši sa", "priority": "Vysoká"},
+).status_code == 403
+
+force_user_session(manager)
+manager_list = client.get("/tickets")
+assert manager_list.status_code == 200 and b"Nefunguje klimatiz" in manager_list.data
+r = client.post(
+    f"/ticket/{ticket['id']}/message",
+    data={"_csrf": csrf(), "message": "Požiadavku som prevzal, prídem ju skontrolovať."},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+r = client.post(
+    f"/ticket/{ticket['id']}/manage",
+    data={
+        "_csrf": csrf(),
+        "status": "Čaká na zákazníka",
+        "priority": "Vysoká",
+        "assigned_to": str(manager["id"]),
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+
+force_user_session(requester)
+notifications = client.get("/api/notifications").get_json()
+assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in notifications)
+thread = client.get(f"/ticket/{ticket['id']}")
+assert thread.status_code == 200 and "Požiadavku som prevzal".encode("utf-8") in thread.data
+
+# Restore the customer administrator for the remaining privacy/IDOR suite.
+force_user_session(smoke_admin)
+
 # ----- Adversarial cross-tenant / IDOR tests -----
 assert client.get("/api/buildings/options").status_code == 200
 assert all(x["id"] != building["id"] for x in client.get("/api/buildings/options").get_json())
@@ -469,6 +607,10 @@ with zipfile.ZipFile(io.BytesIO(backup_bytes), "r") as z:
     assert all("password_hash" not in u for u in users_export)
     assert all("mfa_secret" not in u for u in users_export)
     assert all("mfa_recovery_codes" not in u for u in users_export)
+    assert "data/tickets.json" in z.namelist()
+    assert "data/ticket_messages.json" in z.namelist()
+    ticket_export = json.loads(z.read("data/tickets.json"))
+    assert any(t["ticket_no"] == ticket["ticket_no"] for t in ticket_export)
 
 # Secondary customer account for GDPR export/anonymization.
 r = client.post(
@@ -523,6 +665,7 @@ assert r.status_code in (302, 303)
 r = client.get(f"/platform/customer/{customer['id']}")
 assert r.status_code == 200
 assert b"Private Customer Building" not in r.data
+assert client.get(f"/ticket/{ticket['id']}").status_code == 404
 assert b"CUSTOMER SECURITY POSTURE" in r.data
 r = client.get(f"/platform/customer/{customer['id']}/backup", follow_redirects=False)
 assert r.status_code in (302, 303)
