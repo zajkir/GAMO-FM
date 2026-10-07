@@ -89,7 +89,8 @@ def support_access_active(org):
 
 def customer_access(target_org_id,action,reason=''):
  try:
-  x('insert into customer_access_log(target_organization_id,actor_user_id,actor_name,action,reason,ip) values(?,?,?,?,?,?)',(target_org_id,session.get('user_id'),session.get('user_name','Systém'),action,(reason or '')[:500],request.headers.get('X-Forwarded-For',request.remote_addr or '')))
+  writer=x if target_org_id==org_id() else x_system
+  writer('insert into customer_access_log(target_organization_id,actor_user_id,actor_name,action,reason,ip) values(?,?,?,?,?,?)',(target_org_id,session.get('user_id'),session.get('user_name','Systém'),action,(reason or '')[:500],request.headers.get('X-Forwarded-For',request.remote_addr or '')))
  except Exception:
   pass
 
@@ -132,7 +133,7 @@ def con(system=False):
    oid=''; platform_admin='1'
   else:
    oid=str(session.get('organization_id') or '')
-   platform_admin='1' if session.get('organization_code')=='GAMO' and session.get('user_role')=='Administrator' else '0'
+   platform_admin='0'
   db.execute("select set_config('gamo.organization_id',%s,false)",(oid,))
   db.execute("select set_config('gamo.platform_admin',%s,false)",(platform_admin,))
   return db
@@ -147,6 +148,15 @@ def q_system(sql,a=()):
  with con(system=True) as c:return c.execute(_sql(sql),a).fetchall()
 def x(sql,a=()):
  with con() as c:
+  statement=_sql(sql)
+  lower=statement.lstrip().lower()
+  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
+  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
+   statement+=' RETURNING id'
+   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
+  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+def x_system(sql,a=()):
+ with con(system=True) as c:
   statement=_sql(sql)
   lower=statement.lstrip().lower()
   no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
