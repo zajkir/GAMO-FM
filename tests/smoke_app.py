@@ -75,4 +75,15 @@ r = client.get("/assets")
 assert r.status_code == 200
 assert b"HVAC-000001" not in r.data
 
+r = client.get("/api/buildings/options")
+assert r.status_code == 200 and r.get_json() == []
+
+r = client.get("/reports/export.xlsx")
+assert r.status_code == 200
+empty_book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
+assert "Súhrn" in empty_book.sheetnames
+
+r = client.post("/settings/save", data={"section": "missing-csrf", "value": "x"})
+assert r.status_code == 400
+
 print("GAMO smoke test OK")
