@@ -227,7 +227,7 @@ def maintenance(): return render_template('index.html',page='maintenance',orders
 @app.route('/incidents')
 def incidents(): return render_template('index.html',page='incidents',incidents=q('select i.*,a.asset_id,a.name asset from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),)))
 @app.route('/admin')
-def admin(): return render_template('index.html',page='admin',users=q('select * from users'),buildings=q('select * from buildings'),audit_rows=q('select * from audit_log order by id desc limit 20'))
+def admin(): return render_template('index.html',page='admin',users=q('select * from users where organization_id=?',(org_id(),)),buildings=q('select * from buildings where organization_id=?',(org_id(),)),audit_rows=q('select * from audit_log order by id desc limit 20'))
 @app.route('/add/<what>',methods=['GET','POST'])
 def add(what):
  if request.method=='GET':
@@ -237,9 +237,9 @@ def add(what):
   if what=='building':
    code=f.get('code','').strip().upper(); name=f.get('name','').strip()
    if not code or not name: flash('Kód a názov budovy sú povinné.','error')
-   elif one('select id from buildings where upper(code)=?',(code,)): flash(f'Budova s kódom {code} už existuje.','error')
+   elif one('select id from buildings where upper(code)=? and organization_id=?',(code,org_id())): flash(f'Budova s kódom {code} už existuje.','error')
    else:
-    bid=x('insert into buildings(code,name,address,manager,customer) values(?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),f.get('customer','').strip() or 'GAMO a.s.'))
+    bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),f.get('customer','').strip() or 'GAMO a.s.',org_id()))
     floor_count=max(0,min(50,int(f.get('floors_count') or 0)))
     for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
@@ -259,7 +259,7 @@ def add(what):
    x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost'])); audit('INCIDENT_CREATE',f.get('title','')); flash('Incident bol zaevidovaný.','success')
   elif what=='user':
    pwd=f.get('password') or 'GamoFM2026!'
-   x('insert into users(name,email,role,status,password_hash) values(?,?,?,?,?)',(f['name'],f['email'].strip().lower(),f['role'],f['status'],generate_password_hash(pwd))); flash('Používateľ bol vytvorený.','success')
+   x('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',(f['name'],f['email'].strip().lower(),f['role'],f['status'],generate_password_hash(pwd),org_id())); flash('Používateľ bol vytvorený.','success')
  except (IntegrityError,ValueError):
   flash('Záznam sa nepodarilo uložiť. Skontroluj duplicity a zadané hodnoty.','error')
  except Exception:
