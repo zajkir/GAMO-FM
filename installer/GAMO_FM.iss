@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.6"
+#define MyAppVersion "9.0.0.7"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -22,7 +22,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 CloseApplications=yes
-RestartApplications=yes
+CloseApplicationsFilter={#MyAppExeName}
+RestartApplications=no
 UninstallDisplayIcon={app}\{#MyLauncherExeName}
 VersionInfoVersion={#MyAppVersion}
 ; Používateľské dáta sú zámerne mimo {app} v %LOCALAPPDATA%\GAMO_FM.
@@ -41,3 +42,23 @@ Name: "desktopicon"; Description: "Vytvoriť ikonu na ploche"; GroupDescription:
 
 [Run]
 Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launcher"; Flags: nowait postinstall skipifsilent
+
+
+[Code]
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  { The launcher contains no unsaved customer data. Close an older launcher
+    before Restart Manager scans files, so upgrades never show a confusing
+    "application is using files" prompt for GAMO_Launcher.exe. }
+  Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    '/IM "{#MyLauncherExeName}" /T',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  Result := True;
+end;
