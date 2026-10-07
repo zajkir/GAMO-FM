@@ -150,11 +150,98 @@ def _migration_4(db, using_postgres):
         )
 
 
+
+
+def _migration_5(db, using_postgres):
+    """Customer privacy controls and transparent GAMO support-access history."""
+    org_cols = _columns(db, "organizations", using_postgres)
+    additions = {
+        "support_access_enabled": "BOOLEAN DEFAULT FALSE" if using_postgres else "INTEGER DEFAULT 0",
+        "support_access_until": "TIMESTAMPTZ" if using_postgres else "TEXT",
+        "privacy_contact": "TEXT",
+        "data_region": "TEXT DEFAULT 'Oregon, USA'",
+        "retention_days": "INTEGER DEFAULT 3650",
+    }
+    for column, definition in additions.items():
+        if column not in org_cols:
+            db.execute(f"ALTER TABLE organizations ADD COLUMN {column} {definition}")
+    if using_postgres:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS customer_access_log(
+                id BIGSERIAL PRIMARY KEY,
+                target_organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                actor_user_id BIGINT,
+                actor_name TEXT,
+                action TEXT NOT NULL,
+                reason TEXT,
+                created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                ip TEXT
+            )"""
+        )
+    else:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS customer_access_log(
+                id INTEGER PRIMARY KEY,
+                target_organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                actor_user_id INTEGER,
+                actor_name TEXT,
+                action TEXT NOT NULL,
+                reason TEXT,
+                created TEXT DEFAULT CURRENT_TIMESTAMP,
+                ip TEXT
+            )"""
+        )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_customer_access_target ON customer_access_log(target_organization_id,created)")
+
+
+def _migration_6(db, using_postgres):
+    """Database-enforced tenant isolation for PostgreSQL via Row Level Security."""
+    if not using_postgres:
+        return
+
+    direct = {
+        "organizations": "id",
+        "users": "organization_id",
+        "buildings": "organization_id",
+        "assets": "organization_id",
+        "organization_settings": "organization_id",
+        "asset_events": "organization_id",
+        "audit_log": "organization_id",
+        "customer_access_log": "target_organization_id",
+    }
+    platform = "current_setting('gamo.platform_admin', true) = '1'"
+    tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+
+    for table, column in direct.items():
+        policy = f"gamo_tenant_{table}"
+        predicate = f"({platform} OR {column} = {tenant})"
+        db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        db.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+        db.execute(f"CREATE POLICY {policy} ON {table} USING ({predicate}) WITH CHECK ({predicate})")
+
+    inherited = {
+        "floors": f"({platform} OR EXISTS (SELECT 1 FROM buildings b WHERE b.id=floors.building_id AND b.organization_id={tenant}))",
+        "rooms": f"({platform} OR EXISTS (SELECT 1 FROM floors f JOIN buildings b ON b.id=f.building_id WHERE f.id=rooms.floor_id AND b.organization_id={tenant}))",
+        "workorders": f"({platform} OR EXISTS (SELECT 1 FROM assets a WHERE a.id=workorders.asset_id AND a.organization_id={tenant}))",
+        "incidents": f"({platform} OR EXISTS (SELECT 1 FROM assets a WHERE a.id=incidents.asset_id AND a.organization_id={tenant}))",
+        "documents": f"({platform} OR EXISTS (SELECT 1 FROM buildings b WHERE b.id=documents.building_id AND b.organization_id={tenant}))",
+    }
+    for table, predicate in inherited.items():
+        policy = f"gamo_tenant_{table}"
+        db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        db.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+        db.execute(f"CREATE POLICY {policy} ON {table} USING ({predicate}) WITH CHECK ({predicate})")
+
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
     (3, "tenant_safe_business_identifiers", _migration_3),
     (4, "preserve_existing_customer_onboarding_state", _migration_4),
+    (5, "customer_privacy_controls", _migration_5),
+    (6, "postgres_row_level_security", _migration_6),
 )
 
 
