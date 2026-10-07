@@ -282,3 +282,15 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .customer-filterbar>select{min-height:40px;border:1px solid #dde4ed;border-radius:10px;background:#fff;padding:0 10px;color:#344054;font-weight:700;font-size:10px}
 @media(max-width:900px){.customer-filterbar{grid-template-columns:1fr 1fr}.customer-searchbox{grid-column:1/-1}}
 @media(max-width:620px){.customer-filterbar{grid-template-columns:1fr}.customer-searchbox{grid-column:auto}}
+
+
+/* Asset picker, license usage and Asset 360 audit trail */
+.asset-picker{width:100%;min-height:43px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:0 11px;color:var(--ink);font-weight:700}
+.asset-picker:focus{outline:none;border-color:#9cb8ff;box-shadow:0 0 0 3px #edf3ff}
+.asset-picker-note{display:block;margin-top:7px;color:var(--muted);font-size:10px;line-height:1.4}.asset-picker-note a{color:var(--blue);font-weight:800}
+.license-usage{display:grid;gap:12px;padding:0 20px 17px}.license-usage>div>div{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}.license-usage span{font-size:9px;font-weight:800;color:#6f7d91}.license-usage b{font-size:10px;color:#344054}
+.license-usage i{display:block;height:7px;border-radius:999px;background:#eef1f5;overflow:hidden}.license-usage em{display:block;height:100%;min-width:5px;border-radius:inherit;background:linear-gradient(90deg,var(--brand),#4b8af8)}
+.asset-audit-list article{display:grid;grid-template-columns:auto 1fr auto;gap:13px;align-items:start;padding:14px 18px;border-top:1px solid #eef1f5}.asset-audit-list article:first-child{border-top:0}
+.asset-audit-node{width:11px;height:11px;border-radius:50%;margin-top:4px;background:#4f7fe5;box-shadow:0 0 0 5px rgba(79,127,229,.09)}.asset-audit-node.red{background:#d94b5f;box-shadow:0 0 0 5px rgba(217,75,95,.09)}.asset-audit-node.green{background:#18a36b;box-shadow:0 0 0 5px rgba(24,163,107,.09)}
+.asset-audit-list article>div:nth-child(2){min-width:0}.asset-audit-list b,.asset-audit-list small,.asset-audit-list em{display:block}.asset-audit-list small{margin-top:4px;color:#5f6d82;font-size:10px}.asset-audit-list em{margin-top:5px;color:#99a3b3;font-size:9px;font-style:normal}
+.asset-audit-list article>span{padding:5px 7px;border-radius:8px;background:#f2f5fa;color:#65738a;font-size:8px;font-weight:900;letter-spacing:.04em;white-space:nowrap}
