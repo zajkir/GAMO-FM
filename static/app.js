@@ -152,8 +152,8 @@ function updateFacilityHealth(){
 document.addEventListener('DOMContentLoaded',()=>{
  updateFacilityHealth();
  const n=(location.hash||'').replace('#','');
- if(['overview','spaces','technology','documents'].includes(n)){
-  const buttons=[...document.querySelectorAll('.building-tabs button')],map={overview:0,spaces:1,technology:2,documents:3};
+ if(['overview','spaces','technology','documents','twin'].includes(n)){
+  const buttons=[...document.querySelectorAll('.building-tabs button')],map={overview:0,spaces:1,technology:2,documents:3,twin:4};
   if(buttons[map[n]])buildingTab(n,buttons[map[n]]);
  }
 });
