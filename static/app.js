@@ -1,5 +1,5 @@
 const defs={
-building:[['code','Kód','A'],['name','Názov budovy',''],['address','Adresa',''],['manager','Správca','Facility Management']],
+building:[['customer','Zákazník / vlastník','GAMO a.s.'],['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adresa',''],['manager','Správca','Facility Management'],['floors_count','Počet podlaží pre 3D model','3']],
 floor:[['building_id','ID budovy','1'],['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
 room:[['floor_id','ID podlažia','1'],['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],['area','Plocha m²','25'],['tenant','Nájomca','GAMO'],['zone','Zóna','']],
 asset:[['asset_id','Asset ID','HVAC-000010'],['name','Názov zariadenia',''],['building_id','ID budovy','1'],['floor_id','ID podlažia','1'],['room_id','ID miestnosti','1'],['profession','Profesia','HVAC'],['grp','Skupina','VRV systém'],['type','Typ','VRV-IN'],['manufacturer','Výrobca',''],['model','Model',''],['serial','Výrobné číslo',''],['system_id','System ID',''],['parent_id','Parent Asset ID',''],{name:'status',label:'Stav',type:'select',options:['Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'],value:'Prevádzka'},{name:'criticality',label:'Kritickosť',type:'select',options:['A','B','C'],value:'B'},['service_months','Servis interval mes.','6'],['revision_months','Revízia interval mes.','12'],['purchase_price','Cena €','0'],['ip','IP adresa',''],['protocol','Protokol',''],['notes','Poznámka','']],
@@ -159,3 +159,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 
 document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000)});
+
+function twinRotate(delta){const s=document.querySelector('.twin-stack');if(!s)return;const v=(parseInt(s.dataset.angle||'-18')+delta);s.dataset.angle=v;s.style.setProperty('--twin-angle',v+'deg')}
+function twinExplode(){const s=document.querySelector('.twin-stack');if(!s)return;s.classList.toggle('exploded')}
+function twinReset(){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle='-18';s.style.setProperty('--twin-angle','-18deg');s.classList.remove('exploded')}
