@@ -5,7 +5,7 @@ building:[['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adr
 floor:[{name:'building_id',label:'Budova',type:'building',required:true},['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
 room:[{name:'floor_id',label:'Podlažie',type:'floor',required:true},['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],{name:'area',label:'Plocha m²',type:'number',value:'25',step:'0.01',min:'0'},['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
 asset:[
- ['asset_id','Asset ID','HVAC-000010'],['name','Názov zariadenia',''],
+ {name:'asset_id',label:'Asset ID',type:'text',value:'',required:false,placeholder:'Automaticky podľa profesie'},['name','Názov zariadenia',''],
  {name:'building_id',label:'Budova',type:'building',required:true},
  {name:'floor_id',label:'Podlažie',type:'floor',required:true},
  {name:'room_id',label:'Miestnosť',type:'room',required:true},
@@ -119,7 +119,7 @@ function modal(t,editData=null){
   }else if(['building','floor','room'].includes(a.type)){
    control=`<select class="location-picker" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}"${required}><option>Načítavam…</option></select>`;
   }else{
-   const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.name==='password'?'minlength="10" autocomplete="new-password"':''].filter(Boolean).join(' ');
+   const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.placeholder?`placeholder="${escapeHtml(a.placeholder)}"`:'',a.name==='password'?'minlength="10" autocomplete="new-password"':''].filter(Boolean).join(' ');
    control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value??'')}"${required} ${attrs}>`;
   }
   h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}</div>`;
@@ -134,6 +134,11 @@ function modal(t,editData=null){
  document.querySelector('#micon').textContent=m[0];document.querySelector('#mkicker').textContent=editing?'EDIT · '+m[1]:m[1];document.querySelector('#mdesc').textContent=m[2];
  const save=document.querySelector('#mform .modal-actions .primary');if(save)save.textContent=editing?'Uložiť zmeny':'Uložiť záznam';
  document.querySelector('#modal').classList.add('show');
+ if(t==='asset'&&!editing){
+  const aid=host.querySelector('input[name="asset_id"]'),profession=host.querySelector('input[name="profession"]');
+  const preview=async()=>{if(!aid||aid.value.trim())return;try{const d=await fetchJson('/api/assets/next-id?profession='+encodeURIComponent(profession?.value||'ASSET'));aid.placeholder='Automaticky: '+d.asset_id}catch(e){aid.placeholder='Nechaj prázdne = automatické ID'}};
+  preview();profession?.addEventListener('input',preview);profession?.addEventListener('change',preview);
+ }
 }
 function editRecord(type,data){modal(type,data)}
 function closeM(){document.querySelector('#modal').classList.remove('show')}function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa nedá jednoducho vrátiť späť.'){
@@ -151,6 +156,14 @@ function filterOpsRows(filter,btn){
   let show=filter==='all'||(filter==='active'&&!['Ukončené','Zrušené','Ukončená','Vyriešená'].includes(status))||(filter==='overdue'&&overdue)||(filter==='critical'&&(priority==='Kritická'||['Kritická','Havária'].includes(severity)))||(filter==='done'&&['Ukončené','Ukončená','Vyriešená'].includes(status));
   row.style.display=show?'':'none';
  });
+}
+function openTicketModal(){const m=document.querySelector('#ticketCreateModal');if(m){m.classList.add('show');setTimeout(()=>m.querySelector('input[name="subject"]')?.focus(),50)}}
+function closeTicketModal(){document.querySelector('#ticketCreateModal')?.classList.remove('show')}
+function filterTicketAssets(){
+ const b=document.querySelector('#ticketBuilding'),a=document.querySelector('#ticketAsset');if(!a)return;
+ const bid=b?.value||'';
+ [...a.options].forEach((o,i)=>{if(i===0){o.hidden=false;return}o.hidden=!!bid&&o.dataset.building!==bid});
+ if(a.selectedOptions[0]?.hidden)a.value='';
 }
 function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
 function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
@@ -301,7 +314,7 @@ document.addEventListener('DOMContentLoaded',()=>{
  }
 });
 
-document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000)});
+document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000);const thread=document.querySelector('#ticketThread');if(thread)thread.scrollTop=thread.scrollHeight});
 
 function twinApply(){const s=document.querySelector('.twin-stack');if(!s)return;s.style.setProperty('--twin-angle',(s.dataset.angle||'-18')+'deg');s.style.setProperty('--twin-tilt',(s.dataset.tilt||'58')+'deg');s.style.setProperty('--twin-zoom',s.dataset.zoom||'1')}
 function twinRotate(delta){const s=document.querySelector('.twin-stack');if(!s)return;s.dataset.angle=parseFloat(s.dataset.angle||'-18')+delta;twinApply()}
