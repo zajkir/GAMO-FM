@@ -44,14 +44,17 @@ PLAN_LIMITS={
 def can(permission):
  return permission in ROLE_PERMISSIONS.get(session.get('user_role','Viewer'),{'view'})
 
-def org_id():
+def actor_org_id():
  return session.get('organization_id')
 
+def org_id():
+ return session.get('support_target_org_id') or actor_org_id()
+
+def support_mode():
+ return bool(session.get('support_target_org_id'))
+
 def is_gamo_admin():
- oid=org_id()
- if not oid or session.get('user_role')!='Administrator': return False
- org=one('select code from organizations where id=?',(oid,))
- return bool(org and org['code']=='GAMO')
+ return bool(not support_mode() and actor_org_id() and session.get('organization_code')=='GAMO' and session.get('user_role')=='Administrator')
 
 def owns_building(building_id):
  oid=org_id()
@@ -132,7 +135,7 @@ def con(system=False):
   if system or not has_request_context():
    oid=''; platform_admin='1'
   else:
-   oid=str(session.get('organization_id') or '')
+   oid=str(org_id() or '')
    platform_admin='0'
   db.execute("select set_config('gamo.organization_id',%s,false)",(oid,))
   db.execute("select set_config('gamo.platform_admin',%s,false)",(platform_admin,))
@@ -252,13 +255,19 @@ def security_headers(response):
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
- current=one('select id,status,role,organization_id from users where id=?',(session.get('user_id'),))
- if not current or current['status']!='Aktívny' or current['organization_id']!=org_id():
+ current=one_system('select id,status,role,organization_id from users where id=?',(session.get('user_id'),))
+ if not current or current['status']!='Aktívny' or current['organization_id']!=actor_org_id():
   session.clear(); return redirect(url_for('login'))
  if current['role']!=session.get('user_role'):
   session['user_role']=current['role']
- org=one('select * from organizations where id=?',(org_id(),)) if org_id() else None
- if org: session['organization_code']=org['code']
+ actor_org=one_system('select * from organizations where id=?',(actor_org_id(),)) if actor_org_id() else None
+ if actor_org: session['organization_code']=actor_org['code']
+ target=None
+ if support_mode():
+  target=one_system('select * from organizations where id=?',(session.get('support_target_org_id'),))
+  if not actor_org or actor_org['code']!='GAMO' or current['role']!='Administrator' or not target or not support_access_active(target):
+   session.pop('support_target_org_id',None); session.pop('support_target_name',None); session.pop('support_target_code',None); target=None
+ org=target or actor_org
  license_ok=bool(org and org['status']=='Aktívny' and org['license_status']=='Aktívna' and (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
  if not license_ok:
   session.clear()
@@ -319,7 +328,8 @@ def ctx():
  brand_name=(org['branding_name'] or org['name']) if org else 'GAMO a.s.'
  brand_color=(org['brand_color'] or '#E31B23') if org else '#E31B23'
  brand_tagline=(org['brand_tagline'] or 'FACILITY MANAGEMENT') if org else 'FACILITY MANAGEMENT'
- return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=bool(org and org['code']=='GAMO' and session.get('user_role')=='Administrator'),can=can)
+ return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),can=can)
+
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
  org=one('select * from organizations where id=?',(org_id(),))
@@ -687,6 +697,7 @@ def admin():
 
 @app.get('/privacy')
 def privacy_center():
+ if support_mode(): abort(403)
  org=one('select * from organizations where id=?',(org_id(),))
  if not org or session.get('user_role')!='Administrator': abort(403)
  access_rows=q('select * from customer_access_log where target_organization_id=? order by id desc limit 50',(org_id(),))
@@ -694,6 +705,7 @@ def privacy_center():
 
 @app.post('/privacy/settings')
 def privacy_settings():
+ if support_mode(): abort(403)
  org=one('select * from organizations where id=?',(org_id(),))
  if not org or session.get('user_role')!='Administrator': abort(403)
  contact=(request.form.get('privacy_contact') or '').strip()[:160]
@@ -706,6 +718,7 @@ def privacy_settings():
 
 @app.post('/privacy/support-access')
 def privacy_support_access():
+ if support_mode(): abort(403)
  org=one('select * from organizations where id=?',(org_id(),))
  if not org or org['code']=='GAMO' or session.get('user_role')!='Administrator': abort(403)
  action=request.form.get('action')
@@ -728,9 +741,36 @@ def privacy_support_access():
 
 @app.get('/backup/my')
 def backup_my_organization():
+ if support_mode(): abort(403)
  if session.get('user_role')!='Administrator': abort(403)
  customer_access(org_id(),'CUSTOMER_DATA_EXPORT','Export vytvorený administrátorom organizácie.')
  return build_organization_backup(org_id())
+
+@app.post('/platform/customer/<int:i>/support-enter')
+def platform_customer_support_enter(i):
+ if not is_gamo_admin(): abort(403)
+ customer=one_system('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ if not customer: abort(404)
+ if not support_access_active(customer):
+  flash('Zákazník nemá aktívny dočasný support prístup.','error')
+  return redirect(f'/platform/customer/{i}')
+ session['support_target_org_id']=customer['id']
+ session['support_target_name']=customer['name']
+ session['support_target_code']=customer['code']
+ customer_access(i,'GAMO_SUPPORT_SESSION_ENTER','GAMO vstúpilo do auditovaného support režimu zákazníka.')
+ audit('SUPPORT_SESSION_ENTER',f"{customer['code']} · {customer['name']}")
+ return redirect('/')
+
+@app.post('/support/exit')
+def support_exit():
+ target_id=session.get('support_target_org_id')
+ if not target_id: return redirect('/')
+ customer=one_system('select id,code,name from organizations where id=?',(target_id,))
+ if customer:
+  customer_access(target_id,'GAMO_SUPPORT_SESSION_EXIT','GAMO ukončilo auditovaný support režim.')
+  audit('SUPPORT_SESSION_EXIT',f"{customer['code']} · {customer['name']}")
+ session.pop('support_target_org_id',None); session.pop('support_target_name',None); session.pop('support_target_code',None)
+ return redirect(f'/platform/customer/{target_id}' if customer else '/admin')
 
 @app.get('/platform/customer/<int:i>/backup')
 def platform_customer_backup(i):
