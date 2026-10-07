@@ -111,6 +111,44 @@ def _show_startup_error(message):
     root.destroy()
 
 
+
+class DesktopApi:
+    """Small native bridge used by the web UI when running inside pywebview."""
+
+    def __init__(self):
+        self.window = None
+
+    def bind_window(self, window):
+        self.window = window
+
+    def toggle_fullscreen(self):
+        try:
+            if self.window:
+                self.window.toggle_fullscreen()
+                return True
+        except Exception as exc:
+            print(f'Fullscreen toggle failed: {exc}')
+        return False
+
+    def maximize(self):
+        try:
+            if self.window:
+                self.window.maximize()
+                return True
+        except Exception as exc:
+            print(f'Maximize failed: {exc}')
+        return False
+
+    def restore(self):
+        try:
+            if self.window:
+                self.window.restore()
+                return True
+        except Exception as exc:
+            print(f'Restore failed: {exc}')
+        return False
+
+
 def main():
     # The dedicated GAMO Launcher owns the update flow. Direct/manual launches
     # keep the legacy safety check for compatibility.
@@ -142,7 +180,8 @@ def main():
             raise RuntimeError('GAMO a.s. lokálny server sa nepodarilo spustiť.')
         target_url = f'http://{HOST}:{PORT}'
 
-    webview.create_window(
+    api = DesktopApi()
+    window = webview.create_window(
         f'GAMO a.s. {current_version()} — Facility Platform',
         target_url,
         width=1500,
@@ -151,8 +190,17 @@ def main():
         resizable=True,
         confirm_close=True,
         text_select=True,
+        js_api=api,
     )
-    webview.start(debug=False)
+    api.bind_window(window)
+
+    def maximize_after_start():
+        # Start maximized for readability while keeping the normal Windows title
+        # bar so the customer can restore/minimize the application normally.
+        time.sleep(0.25)
+        api.maximize()
+
+    webview.start(maximize_after_start, debug=False)
 
 
 if __name__ == '__main__':
