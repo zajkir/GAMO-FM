@@ -21,6 +21,8 @@ PrivilegesRequired=lowest
 CloseApplications=yes
 RestartApplications=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; Používateľské dáta sú zámerne mimo {app} v %LOCALAPPDATA%\GAMO_FM.
+; Installer ich pri upgrade ani odinštalovaní nemaže ani neprepisuje.
 
 [Files]
 Source: "..\dist\GAMO_FM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
