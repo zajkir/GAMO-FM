@@ -182,7 +182,7 @@ def init_postgres():
   """CREATE TABLE IF NOT EXISTS organizations(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,status TEXT DEFAULT 'Aktívny',plan TEXT DEFAULT 'INTERNAL',license_status TEXT DEFAULT 'Aktívna',license_until TEXT,branding_name TEXT,brand_color TEXT DEFAULT '#E31B23',brand_tagline TEXT DEFAULT 'FACILITY MANAGEMENT',created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)""",
   """CREATE TABLE IF NOT EXISTS platform_meta(k TEXT PRIMARY KEY,v TEXT)"""
  ]
- with con() as db:
+ with con(system=True) as db:
   for statement in schema: db.execute(statement)
   db.execute("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS customer TEXT DEFAULT 'GAMO a.s.'")
   db.execute("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS organization_id BIGINT")
@@ -194,9 +194,9 @@ def init_postgres():
   db.execute("UPDATE users SET organization_id=%s WHERE organization_id IS NULL",(gamo_org,))
   db.execute("UPDATE buildings SET organization_id=%s WHERE organization_id IS NULL",(gamo_org,))
   db.commit()
- run_migrations(con, True)
- if not one('select count(*) n from users')['n']:
-  x('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
+ run_migrations(lambda: con(system=True), True)
+ if not one_system('select count(*) n from users')['n']:
+  x_system('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
 def init():
  os.makedirs(DATA_DIR,exist_ok=True)
  if USING_POSTGRES:
