@@ -121,7 +121,7 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 @media(max-width:900px){.twin-stack{transform:scale(calc(var(--twin-zoom) * .76)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important}}
 
 /* Digital Twin geometry hotfix — stable architectural camera */
-.twin-stack{--twin-tilt:58deg!important;--twin-zoom:1.12;transform:scale(var(--twin-zoom)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important}
+.twin-stack{--twin-tilt:58deg;--twin-zoom:1.12;transform:scale(var(--twin-zoom)) rotateX(var(--twin-tilt)) rotateZ(var(--twin-angle))!important}
 .twin-building-sign{left:64px!important;top:118px!important;transform:translateZ(18px)!important}
 .twin-lobby{left:155px!important;top:270px!important;transform:translateZ(8px)!important}
 .floor-label{transform:none!important}
