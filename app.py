@@ -83,12 +83,17 @@ def next_asset_id(profession,oid=None):
 def ticket_staff():
  return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
 
+def platform_ticket_mode():
+ return is_gamo_admin()
+
 def next_ticket_no():
  rows=q("select ticket_no from tickets where organization_id=? and ticket_no like ?",(org_id(),'TKT-%'))
  nums=[int(str(r['ticket_no'])[4:]) for r in rows if str(r['ticket_no'] or '')[4:].isdigit()]
  return f"TKT-{(max(nums) if nums else 0)+1:06d}"
 
 def ticket_record(ticket_id):
+ if platform_ticket_mode():
+  return one_system('select * from tickets where id=?',(ticket_id,))
  t=one('select * from tickets where id=? and organization_id=?',(ticket_id,org_id()))
  if not t: return None
  return t if ticket_staff() or t['created_by']==session.get('user_id') else None
@@ -617,7 +622,28 @@ def dashboard():
  return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=q(profession_sql,(oid,)),buildings=q('select * from buildings where organization_id=?',(oid,)),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc limit 6',(oid,)),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc limit 5',(oid,)))
 @app.route('/tickets')
 def tickets():
- oid=org_id(); uid=session.get('user_id'); staff=ticket_staff()
+ uid=session.get('user_id')
+ if platform_ticket_mode():
+  base="""select t.*,o.name organization_name,o.code organization_code,cu.name creator_name,au.name assigned_name,
+    b.code building_code,a.asset_id asset_code,
+    (select count(*) from ticket_messages m where m.ticket_id=t.id) message_count,
+    (select count(*) from ticket_messages m left join users su on su.id=m.sender_user_id
+      where m.ticket_id=t.id and m.id>coalesce(t.platform_last_read_message_id,0)
+      and (m.sender_user_id is null or su.organization_id=t.organization_id)) platform_unread
+    from tickets t
+    join organizations o on o.id=t.organization_id
+    left join users cu on cu.id=t.created_by
+    left join users au on au.id=t.assigned_to
+    left join buildings b on b.id=t.building_id
+    left join assets a on a.id=t.asset_id
+    where o.code<>'GAMO'
+    order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"""
+  rows=q_system(base)
+  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if int(r['platform_unread'] or 0)>0)}
+  return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=True,
+   ticket_buildings=[],ticket_assets=[],ticket_staff_users=[],ticket_platform_inbox=True)
+
+ oid=org_id(); staff=ticket_staff()
  base="""select t.*,cu.name creator_name,au.name assigned_name,b.code building_code,a.asset_id asset_code,
   (select count(*) from ticket_messages m where m.ticket_id=t.id) message_count
   from tickets t
@@ -631,11 +657,11 @@ def tickets():
   base+=" and t.created_by=?"; params.append(uid)
  base+=" order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"
  rows=q(base,tuple(params))
- stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka')}
+ stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':0}
  buildings=q('select id,code,name from buildings where organization_id=? order by name',(oid,))
  assets=q('select id,asset_id,name,building_id from assets where organization_id=? order by asset_id',(oid,))
  staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by case role when 'Facility Manager' then 0 when 'Administrator' then 1 else 2 end,name",(oid,))
- return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users)
+ return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users,ticket_platform_inbox=False)
 
 @app.post('/tickets/create')
 def ticket_create():
@@ -673,18 +699,27 @@ def ticket_create():
 def ticket_detail(i):
  t=ticket_record(i)
  if not t: abort(404)
- creator=one('select id,name,email,role from users where id=? and organization_id=?',(t['created_by'],org_id())) if t['created_by'] else None
- assigned=one('select id,name,email,role from users where id=? and organization_id=?',(t['assigned_to'],org_id())) if t['assigned_to'] else None
- building=one('select id,code,name from buildings where id=? and organization_id=?',(t['building_id'],org_id())) if t['building_id'] else None
- asset=one('select id,asset_id,name from assets where id=? and organization_id=?',(t['asset_id'],org_id())) if t['asset_id'] else None
- messages=q('select m.*,u.role sender_role from ticket_messages m left join users u on u.id=m.sender_user_id where m.ticket_id=? and m.organization_id=? order by m.id',(i,org_id()))
+ platform_view=platform_ticket_mode()
+ oid=t['organization_id'] if platform_view else org_id()
+ read_one=one_system if platform_view else one
+ read_all=q_system if platform_view else q
+ write=x_system if platform_view else x
+ creator=read_one('select id,name,email,role from users where id=? and organization_id=?',(t['created_by'],oid)) if t['created_by'] else None
+ assigned=read_one('select id,name,email,role from users where id=? and organization_id=?',(t['assigned_to'],oid)) if t['assigned_to'] else None
+ building=read_one('select id,code,name from buildings where id=? and organization_id=?',(t['building_id'],oid)) if t['building_id'] else None
+ asset=read_one('select id,asset_id,name from assets where id=? and organization_id=?',(t['asset_id'],oid)) if t['asset_id'] else None
+ messages=read_all('select m.*,u.role sender_role,u.organization_id sender_org_id from ticket_messages m left join users u on u.id=m.sender_user_id where m.ticket_id=? and m.organization_id=? order by m.id',(i,oid))
  last_message_id=messages[-1]['id'] if messages else 0
- if t['created_by']==session.get('user_id'):
-  x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,org_id()))
+ if platform_view:
+  write('update tickets set platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,oid))
+  customer_access(oid,'TICKET_SUPPORT_VIEW',f"{t['ticket_no']} · ticket conversation")
+ elif t['created_by']==session.get('user_id'):
+  write('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,oid))
  elif ticket_staff():
-  x('update tickets set staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,org_id()))
- staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by name",(org_id(),))
- return render_template('index.html',page='ticket',ticket=t,ticket_creator=creator,ticket_assigned=assigned,ticket_building=building,ticket_asset=asset,ticket_messages=messages,ticket_staff_users=staff_users,ticket_is_staff=ticket_staff())
+  write('update tickets set staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,oid))
+ staff_users=read_all("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by name",(oid,))
+ customer_org=one_system('select id,code,name,support_access_enabled,support_access_until from organizations where id=?',(oid,)) if platform_view else None
+ return render_template('index.html',page='ticket',ticket=t,ticket_creator=creator,ticket_assigned=assigned,ticket_building=building,ticket_asset=asset,ticket_messages=messages,ticket_staff_users=staff_users,ticket_is_staff=(True if platform_view else ticket_staff()),ticket_platform_view=platform_view,ticket_customer_org=customer_org)
 
 @app.post('/ticket/<int:i>/message')
 def ticket_message(i):
@@ -693,28 +728,46 @@ def ticket_message(i):
  body=(request.form.get('message') or '').strip()[:5000]
  if not body:
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
- uid=session.get('user_id'); is_creator=t['created_by']==uid
- mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,org_id(),uid,session.get('user_name','Používateľ'),body))
- if is_creator:
-  new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
-  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,org_id()))
+ uid=session.get('user_id'); platform_view=platform_ticket_mode()
+ oid=t['organization_id'] if platform_view else org_id()
+ write=x_system if platform_view else x
+ mid=write('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
+ if platform_view:
+  new_status='Otvorený' if t['status'] in {'Nový','Uzavretý'} else t['status']
+  write('update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  customer_access(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
+  audit_for_org(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
  else:
-  new_status='Otvorený' if t['status']=='Nový' else t['status']
-  x('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,org_id()))
- audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
+  is_creator=t['created_by']==uid
+  if is_creator:
+   new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
+   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  else:
+   new_status='Otvorený' if t['status']=='Nový' else t['status']
+   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
  return redirect(f'/ticket/{i}#conversation')
 
 @app.post('/ticket/<int:i>/manage')
 def ticket_manage(i):
- if not ticket_staff(): abort(403)
+ platform_view=platform_ticket_mode()
+ if not platform_view and not ticket_staff(): abort(403)
  t=ticket_record(i)
  if not t: abort(404)
+ oid=t['organization_id'] if platform_view else org_id()
  status=(request.form.get('status') or '').strip(); priority=(request.form.get('priority') or '').strip(); assigned=request.form.get('assigned_to') or None
  if status not in {'Nový','Otvorený','Rieši sa','Čaká na zákazníka','Vyriešený','Uzavretý'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
- if assigned and not one("select id from users where id=? and organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik')",(assigned,org_id())): abort(404)
+ read_one=one_system if platform_view else one
+ write=x_system if platform_view else x
+ if assigned and not read_one("select id from users where id=? and organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik')",(assigned,oid)): abort(404)
  closed=datetime.utcnow().isoformat(timespec='seconds')+'Z' if status=='Uzavretý' else None
- x('update tickets set status=?,priority=?,assigned_to=?,closed_at=?,updated=CURRENT_TIMESTAMP,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(status,priority,assigned,closed,i,org_id()))
- audit('TICKET_UPDATE',f"{t['ticket_no']} · {status} · {priority}"); flash('Ticket bol aktualizovaný.','success')
+ write('update tickets set status=?,priority=?,assigned_to=?,closed_at=?,updated=CURRENT_TIMESTAMP where id=? and organization_id=?',(status,priority,assigned,closed,i,oid))
+ if platform_view:
+  customer_access(oid,'TICKET_SUPPORT_UPDATE',f"{t['ticket_no']} · {status} · {priority}")
+  audit_for_org(oid,'TICKET_SUPPORT_UPDATE',f"{t['ticket_no']} · {status} · {priority}")
+ else:
+  audit('TICKET_UPDATE',f"{t['ticket_no']} · {status} · {priority}")
+ flash('Ticket bol aktualizovaný.','success')
  return redirect(f'/ticket/{i}')
 
 @app.route('/reports')
@@ -1854,11 +1907,29 @@ def api_notifications():
   overdue=bool(r['due'] and str(r['due'])[:10]<today_iso)
   out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':'Po termíne' if overdue else r['status'],'level':'red' if overdue else 'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
  uid=session.get('user_id')
- if ticket_staff():
+ if platform_ticket_mode():
+  ticket_rows=q_system("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated,o.name organization_name
+   from tickets t join organizations o on o.id=t.organization_id
+   where o.code<>'GAMO' and exists(
+    select 1 from ticket_messages m left join users su on su.id=m.sender_user_id
+    where m.ticket_id=t.id and m.id>coalesce(t.platform_last_read_message_id,0)
+    and (m.sender_user_id is null or su.organization_id=t.organization_id))
+   order by t.updated desc limit 8""")
+ elif ticket_staff():
   ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
    where t.organization_id=? and t.created_by<>? and exists(
-    select 1 from ticket_messages m where m.ticket_id=t.id and m.sender_user_id=t.created_by
-    and m.id>coalesce(t.staff_last_read_message_id,0))
+    select 1 from ticket_messages m
+    where m.ticket_id=t.id and m.id>coalesce(t.staff_last_read_message_id,0)
+    and (
+      m.sender_user_id=t.created_by
+      or (
+        m.sender_user_id is not null
+        and not exists(
+          select 1 from users local_sender
+          where local_sender.id=m.sender_user_id and local_sender.organization_id=t.organization_id
+        )
+      )
+    ))
    order by t.updated desc limit 5""",(oid,uid))
  else:
   ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
@@ -1867,7 +1938,8 @@ def api_notifications():
     and m.id>coalesce(t.customer_last_read_message_id,0))
    order by t.updated desc limit 5""",(oid,uid))
  for r in ticket_rows:
-  out.insert(0,{'key':f"ticket-unread:{r['id']}:{r['updated']}",'title':f"{r['ticket_no']} · {r['subject']}",'subtitle':'Nová správa v tickete','status':r['status'],'level':'red' if r['priority']=='Kritická' else 'blue','url':f"/ticket/{r['id']}",'created_at':str(r['updated'] or '')})
+  subtitle=(f"{r['organization_name']} · nová správa od zákazníka" if platform_ticket_mode() else 'Nová správa v tickete')
+  out.insert(0,{'key':f"ticket-unread:{r['id']}:{r['updated']}",'title':f"{r['ticket_no']} · {r['subject']}",'subtitle':subtitle,'status':r['status'],'level':'red' if r['priority']=='Kritická' else 'blue','url':f"/ticket/{r['id']}",'created_at':str(r['updated'] or '')})
  if session.get('user_role')=='Administrator':
   org=one('select license_until,plan from organizations where id=?',(oid,))
   if org and org['license_until']:

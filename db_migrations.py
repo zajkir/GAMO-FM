@@ -981,6 +981,19 @@ def _migration_12(db, using_postgres):
                 (admin_id, admin_name, "Budova fdsfsdf naplnená testovacími dátami: priestory, assety, servis, incidenty, dokumenty a tickety.", organization_id),
             )
 
+
+def _migration_13(db, using_postgres):
+    """Platform support inbox read markers for GAMO administrators."""
+    cols = _columns(db, "tickets", using_postgres)
+    additions = {
+        "platform_last_read_at": "TIMESTAMPTZ" if using_postgres else "TEXT",
+        "platform_last_read_message_id": "BIGINT DEFAULT 0" if using_postgres else "INTEGER DEFAULT 0",
+    }
+    for column, definition in additions.items():
+        if column not in cols:
+            db.execute(f"ALTER TABLE tickets ADD COLUMN {column} {definition}")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_platform_updated ON tickets(updated)")
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -994,6 +1007,7 @@ MIGRATIONS = (
     (10, "customer_security_gdpr_controls", _migration_10),
     (11, "tenant_ticketing_and_messages", _migration_11),
     (12, "seed_fdsfsdf_demo_data", _migration_12),
+    (13, "platform_ticket_inbox", _migration_13),
 )
 
 

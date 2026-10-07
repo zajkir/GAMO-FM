@@ -660,21 +660,58 @@ assert app.one_system(
 r = client.post("/settings/save", data={"section": "missing-csrf", "value": "x"})
 assert r.status_code == 400
 
-# ----- GAMO customer view without consent -----
+# ----- GAMO platform support inbox without broad customer-data consent -----
 client.get("/logout")
 r = login_password("admin@gamo.sk", "TestGamo2026!")
 assert r.status_code in (302, 303)
 r = client.get(f"/platform/customer/{customer['id']}")
 assert r.status_code == 200
 assert b"Private Customer Building" not in r.data
-assert client.get(f"/ticket/{ticket['id']}").status_code == 404
 assert b"CUSTOMER SECURITY POSTURE" in r.data
+
+# Customer-created tickets are an explicit support communication channel:
+# GAMO may see/reply to that ticket, but still may not browse other tenant data.
+platform_inbox = client.get("/tickets")
+assert platform_inbox.status_code == 200
+assert b"Nefunguje klimatiz" in platform_inbox.data
+assert b"Smoke Customer" in platform_inbox.data
+platform_notifications = client.get("/api/notifications").get_json()
+assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in platform_notifications)
+platform_thread = client.get(f"/ticket/{ticket['id']}")
+assert platform_thread.status_code == 200
+assert "Prosím správcu".encode("utf-8") in platform_thread.data
+assert "Požiadavku som prevzal".encode("utf-8") in platform_thread.data
+assert client.get(f"/building/{private_building['id']}").status_code == 404
+
+r = client.post(
+    f"/ticket/{ticket['id']}/message",
+    data={"_csrf": csrf(), "message": "GAMO support vidí ticket a odpovedá priamo zákazníkovi."},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+r = client.post(
+    f"/ticket/{ticket['id']}/manage",
+    data={"_csrf": csrf(), "status": "Rieši sa", "priority": "Vysoká", "assigned_to": str(manager["id"])},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+assert app.one_system(
+    "select action from customer_access_log where target_organization_id=? and action='TICKET_SUPPORT_REPLY' order by id desc limit 1",
+    (customer["id"],),
+)
+
+# Full customer backup still requires explicit support consent.
 r = client.get(f"/platform/customer/{customer['id']}/backup", follow_redirects=False)
 assert r.status_code in (302, 303)
 
 # ----- Explicit customer consent (login requires MFA) -----
 client.get("/logout")
 login_with_mfa("smoke@example.test", "SmokeSecure2026!", smoke_mfa_secret)
+customer_notifications = client.get("/api/notifications").get_json()
+assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in customer_notifications)
+customer_ticket_after_gamo = client.get(f"/ticket/{ticket['id']}")
+assert customer_ticket_after_gamo.status_code == 200
+assert b"GAMO support vid" in customer_ticket_after_gamo.data
 r = client.post(
     "/privacy/support-access",
     data={
