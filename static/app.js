@@ -5,12 +5,49 @@ building:[['customer','Zákazník / vlastník',APP_BRAND],['code','Kód budovy',
 floor:[['building_id','ID budovy','1'],['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
 room:[['floor_id','ID podlažia','1'],['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],['area','Plocha m²','25'],['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
 asset:[['asset_id','Asset ID','HVAC-000010'],['name','Názov zariadenia',''],['building_id','ID budovy','1'],['floor_id','ID podlažia','1'],['room_id','ID miestnosti','1'],['profession','Profesia','HVAC'],['grp','Skupina','VRV systém'],['type','Typ','VRV-IN'],['manufacturer','Výrobca',''],['model','Model',''],['serial','Výrobné číslo',''],['system_id','System ID',''],['parent_id','Parent Asset ID',''],{name:'status',label:'Stav',type:'select',options:['Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'],value:'Prevádzka'},{name:'criticality',label:'Kritickosť',type:'select',options:['A','B','C'],value:'B'},['service_months','Servis interval mes.','6'],['revision_months','Revízia interval mes.','12'],['purchase_price','Cena €','0'],['ip','IP adresa',''],['protocol','Protokol',''],['notes','Poznámka','']],
-workorder:[['asset_id','Asset DB ID',currentAsset||'1'],{name:'title',label:'Názov pracovného príkazu',type:'select',options:['Preventívna údržba','Pravidelná revízia','Oprava poruchy','Havarijný zásah','Výmena zariadenia','Diagnostika','Kontrola zariadenia'],value:'Preventívna údržba'},{name:'kind',label:'Typ zásahu',type:'select',options:['PM','REV','OPR','VYM'],value:'PM'},{name:'priority',label:'Priorita',type:'select',options:['Nízka','Stredná','Vysoká','Kritická'],value:'Stredná'},{name:'status',label:'Stav',type:'select',options:['Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'],value:'Plánované'},['due','Termín',''],['supplier','Dodávateľ',''],['technician','Technik',''],['cost','Náklad €','0'],['description','Popis','']],
-incident:[['asset_id','Asset DB ID',currentAsset||'1'],['title','Názov incidentu',''],{name:'severity',label:'Závažnosť',type:'select',options:['Nízka','Stredná','Vysoká','Kritická','Havária'],value:'Stredná'},{name:'status',label:'Stav',type:'select',options:['Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'],value:'Otvorená'},['reported','Nahlásené',''],['impact','Dopad',''],['cause','Príčina',''],['cost','Náklad €','0']],
+workorder:[{name:'asset_id',label:'Asset',type:'asset',value:currentAsset||''},{name:'title',label:'Názov pracovného príkazu',type:'select',options:['Preventívna údržba','Pravidelná revízia','Oprava poruchy','Havarijný zásah','Výmena zariadenia','Diagnostika','Kontrola zariadenia'],value:'Preventívna údržba'},{name:'kind',label:'Typ zásahu',type:'select',options:['PM','REV','OPR','VYM'],value:'PM'},{name:'priority',label:'Priorita',type:'select',options:['Nízka','Stredná','Vysoká','Kritická'],value:'Stredná'},{name:'status',label:'Stav',type:'select',options:['Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'],value:'Plánované'},['due','Termín',''],['supplier','Dodávateľ',''],['technician','Technik',''],['cost','Náklad €','0'],['description','Popis','']],
+incident:[{name:'asset_id',label:'Asset',type:'asset',value:currentAsset||''},['title','Názov incidentu',''],{name:'severity',label:'Závažnosť',type:'select',options:['Nízka','Stredná','Vysoká','Kritická','Havária'],value:'Stredná'},{name:'status',label:'Stav',type:'select',options:['Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'],value:'Otvorená'},['reported','Nahlásené',''],['impact','Dopad',''],['cause','Príčina',''],['cost','Náklad €','0']],
 user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'select',options:['Administrator','Facility Manager','Technik','Servisný technik','Viewer'],value:'Technik'},{name:'status',label:'Stav používateľa',type:'select',options:['Aktívny','Neaktívny'],value:'Aktívny'},['password','Dočasné heslo','']]
 };
 function fieldDef(a){return Array.isArray(a)?{name:a[0],label:a[1],value:a[2],type:(a[0]=='password'?'password':'text')} : a}
-function modal(t){let f=defs[t],h='<div class="formgrid">';f.forEach((raw,i)=>{const a=fieldDef(raw),full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;if(a.type==='select'){control=`<select name="${a.name}" ${i<2?'required':''}>${a.options.map(o=>`<option value="${o}" ${o===a.value?'selected':''}>${o}</option>`).join('')}</select>`}else{control=`<input type="${a.type||'text'}" name="${a.name}" value="${a.value||''}" ${i<2?'required':''}>`}h+=`<div class="field ${full}"><label>${a.label}</label>${control}</div>`});h+='</div>';document.querySelector('#fields').innerHTML=h;const form=document.querySelector('#mform');form.action='/add/'+t;form.method='post';const titles={user:'Nový používateľ',incident:'Nahlásiť nový incident',workorder:'Nový pracovný príkaz',asset:'Nový asset',building:'Nová budova',floor:'Nové podlažie',room:'Nová miestnosť'};const meta={asset:['◇','ASSET REGISTER','Evidencia technického zariadenia, jeho umiestnenia, väzieb a servisných parametrov.'],building:['▦','FACILITY STRUCTURE','Vytvorenie nového objektu v portfóliu '+APP_BRAND],floor:['▤','FACILITY STRUCTURE','Nové podlažie a jeho zaradenie do objektu.'],room:['□','SPACE MANAGEMENT','Nová miestnosť, plocha, nájomca a prevádzková zóna.'],workorder:['✓','MAINTENANCE CONTROL','Naplánovanie údržby, revízie, opravy alebo servisného zásahu.'],incident:['!','INCIDENT CONTROL','Evidencia poruchy alebo havárie, jej závažnosti, dopadu a riešenia.'],user:['⌾','IDENTITY & ACCESS','Vytvorenie používateľského účtu, roly a prístupu do platformy.']};const m=meta[t]||['＋','GAMO OPERATIONS','Administrátorské vytvorenie záznamu v '+APP_BRAND];document.querySelector('#mtitle').textContent=titles[t]||'Nový záznam';document.querySelector('#micon').textContent=m[0];document.querySelector('#mkicker').textContent=m[1];document.querySelector('#mdesc').textContent=m[2];document.querySelector('#modal').classList.add('show')}
+function loadAssetOptions(select,preferred){
+ select.disabled=true;select.innerHTML='<option>Načítavam assety…</option>';
+ fetch('/api/assets/options',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('asset options');return r.json()}).then(items=>{
+  if(!items.length){
+   select.innerHTML='<option value="">Najprv vytvor asset v Asset registri</option>';select.disabled=true;
+   const note=document.createElement('small');note.className='asset-picker-note';note.innerHTML='V organizácii zatiaľ nie je žiadny asset. <a href="/assets">Otvoriť Asset register →</a>';select.parentElement.appendChild(note);return;
+  }
+  select.disabled=false;
+  select.innerHTML='<option value="">Vyber zariadenie…</option>'+items.map(x=>{
+   const location=[x.building,x.room].filter(Boolean).join(' / ');
+   const label=[x.asset_id,x.name,location].filter(Boolean).join(' · ');
+   return '<option value="'+x.id+'" '+(String(x.id)===String(preferred)?'selected':'')+'>'+escapeHtml(label)+'</option>';
+  }).join('');
+ }).catch(()=>{select.innerHTML='<option value="">Assety sa nepodarilo načítať</option>';select.disabled=true});
+}
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
+function modal(t){
+ const f=defs[t], host=document.querySelector('#fields'); let h='<div class="formgrid">';
+ f.forEach((raw,i)=>{
+  const a=fieldDef(raw),full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;
+  if(a.type==='select'){
+   control=`<select name="${a.name}" ${i<2?'required':''}>${a.options.map(o=>`<option value="${escapeHtml(o)}" ${o===a.value?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`;
+  }else if(a.type==='asset'){
+   control=`<select class="asset-picker" name="${a.name}" data-preferred="${escapeHtml(a.value||'')}" required><option>Načítavam assety…</option></select>`;
+  }else{
+   const extra=a.name==='password'?' minlength="8" autocomplete="new-password"':'';
+   control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value||'')}" ${i<2?'required':''}${extra}>`;
+  }
+  h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}</div>`;
+ });
+ h+='</div>';host.innerHTML=h;
+ host.querySelectorAll('.asset-picker').forEach(s=>loadAssetOptions(s,s.dataset.preferred));
+ const form=document.querySelector('#mform');form.action='/add/'+t;form.method='post';
+ const titles={user:'Nový používateľ',incident:'Nahlásiť nový incident',workorder:'Nový pracovný príkaz',asset:'Nový asset',building:'Nová budova',floor:'Nové podlažie',room:'Nová miestnosť'};
+ const meta={asset:['◇','ASSET REGISTER','Evidencia technického zariadenia, jeho umiestnenia, väzieb a servisných parametrov.'],building:['▦','FACILITY STRUCTURE','Vytvorenie nového objektu v portfóliu '+APP_BRAND],floor:['▤','FACILITY STRUCTURE','Nové podlažie a jeho zaradenie do objektu.'],room:['□','SPACE MANAGEMENT','Nová miestnosť, plocha, nájomca a prevádzková zóna.'],workorder:['✓','MAINTENANCE CONTROL','Naplánovanie údržby, revízie, opravy alebo servisného zásahu na konkrétnom zariadení.'],incident:['!','INCIDENT CONTROL','Evidencia poruchy alebo havárie na konkrétnom zariadení.'],user:['⌾','IDENTITY & ACCESS','Vytvorenie používateľského účtu, roly a prístupu do platformy.']};
+ const m=meta[t]||['＋','GAMO OPERATIONS','Administrátorské vytvorenie záznamu v '+APP_BRAND];
+ document.querySelector('#mtitle').textContent=titles[t]||'Nový záznam';document.querySelector('#micon').textContent=m[0];document.querySelector('#mkicker').textContent=m[1];document.querySelector('#mdesc').textContent=m[2];document.querySelector('#modal').classList.add('show');
+}
 function closeM(){document.querySelector('#modal').classList.remove('show')}function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
 function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
 const NOTIFICATION_READ_KEY='gamo_read_notifications_v1';
