@@ -66,6 +66,33 @@ def owns_asset(asset_id):
  oid=org_id()
  return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
 
+def next_asset_id(profession,oid=None):
+ oid=oid or org_id()
+ prefix=''.join(ch for ch in (profession or 'ASSET').upper() if ch.isalnum())[:10] or 'ASSET'
+ rows=q('select asset_id from assets where organization_id=? and upper(asset_id) like ?',(oid,f'{prefix}-%'))
+ used=set()
+ for row in rows:
+  value=str(row['asset_id'] or '').upper()
+  if value.startswith(prefix+'-'):
+   tail=value[len(prefix)+1:]
+   if tail.isdigit(): used.add(int(tail))
+ n=1
+ while n in used: n+=1
+ return f'{prefix}-{n:06d}'
+
+def ticket_staff():
+ return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
+
+def next_ticket_no():
+ rows=q("select ticket_no from tickets where organization_id=? and ticket_no like 'TKT-%'",(org_id(),))
+ nums=[int(str(r['ticket_no'])[4:]) for r in rows if str(r['ticket_no'] or '')[4:].isdigit()]
+ return f"TKT-{(max(nums) if nums else 0)+1:06d}"
+
+def ticket_record(ticket_id):
+ t=one('select * from tickets where id=? and organization_id=?',(ticket_id,org_id()))
+ if not t: return None
+ return t if ticket_staff() or t['created_by']==session.get('user_id') else None
+
 def asset_parent_allowed(asset_id,parent_id):
  if not parent_id: return True
  try: current=int(parent_id); target=int(asset_id)
@@ -524,7 +551,7 @@ def ctx():
  brand_name=(org['branding_name'] or org['name']) if org else 'GAMO a.s.'
  brand_color=(org['brand_color'] or '#E31B23') if org else '#E31B23'
  brand_tagline=(org['brand_tagline'] or 'FACILITY MANAGEMENT') if org else 'FACILITY MANAGEMENT'
- return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),can=can)
+ return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
@@ -977,6 +1004,8 @@ def create_organization_backup_archive(oid,privileged=False):
  data['access_log']=[dict(r) for r in read_all('select * from customer_access_log where target_organization_id=? order by id',(oid,))]
  data['auth_events']=[dict(r) for r in read_all('select * from auth_events where organization_id=? order by id',(oid,))]
  data['privacy_requests']=[dict(r) for r in read_all('select * from privacy_requests where organization_id=? order by id',(oid,))]
+ data['tickets']=[dict(r) for r in read_all('select * from tickets where organization_id=? order by id',(oid,))]
+ data['ticket_messages']=[dict(r) for r in read_all('select * from ticket_messages where organization_id=? order by id',(oid,))]
  docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
  files={}
  for name,rows in data.items():
@@ -1398,20 +1427,29 @@ def add(what):
   elif what=='asset':
    if not plan_allows('assets'):
     flash('Licenčný limit počtu assetov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/assets')
-   aid=f.get('asset_id','').strip().upper(); name=(f.get('name') or '').strip(); building_id=f.get('building_id')
-   floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id')
-   profession=(f.get('profession') or '').strip(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
-   if not aid or not name or not building_id or not floor_id or not room_id or not profession or not grp or not asset_type: raise ValueError()
+   name=(f.get('name') or '').strip(); building_id=f.get('building_id'); floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id') or None
+   profession=(f.get('profession') or '').strip().upper(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
+   if not name: raise ValueError('Zadaj názov zariadenia.')
+   if not building_id or not floor_id or not room_id: raise ValueError('Vyber budovu, podlažie aj miestnosť.')
+   if not profession or not grp or not asset_type: raise ValueError('Profesia, skupina a typ zariadenia sú povinné.')
    if not owns_building(building_id): abort(404)
-   if floor_id and not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError()
-   if room_id and (not floor_id or not one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id()))): raise ValueError()
-   if parent_id and not owns_asset(parent_id): raise ValueError()
-   if one('select a.id from assets a join buildings b on b.id=a.building_id where upper(a.asset_id)=? and b.organization_id=?',(aid,org_id())): flash(f'Asset ID {aid} už existuje.','error')
-   else:
-    values=tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes'])
-    new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values+(org_id(),))
-    asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {f.get('name','')}")
-    flash('Asset bol vytvorený.','success')
+   if not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError('Vybrané podlažie nepatrí do zvolenej budovy.')
+   if not one('select r.id from rooms r join floors fl on fl.id=r.floor_id join buildings b on b.id=fl.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id())): raise ValueError('Vybraná miestnosť nepatrí do zvoleného podlažia.')
+   if parent_id and not owns_asset(parent_id): raise ValueError('Parent asset nepatrí do tvojej organizácie.')
+   status=(f.get('status') or 'Prevádzka').strip(); criticality=(f.get('criticality') or 'B').strip()
+   if status not in {'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'}: raise ValueError('Neplatný stav assetu.')
+   if criticality not in {'A','B','C'}: raise ValueError('Neplatná kritickosť assetu.')
+   try:
+    service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+   except (TypeError,ValueError): raise ValueError('Servisný interval, revízia a cena musia byť platné čísla.')
+   manual_aid=(f.get('asset_id') or '').strip().upper(); aid=manual_aid or next_asset_id(profession)
+   if one('select id from assets where organization_id=? and upper(asset_id)=?',(org_id(),aid)):
+    if manual_aid: raise ValueError(f'Asset ID {aid} už v tvojej organizácii existuje. Zmeň ho alebo nechaj pole prázdne pre automatické ID.')
+    aid=next_asset_id(profession)
+   values=(aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip() or None,(f.get('model') or '').strip() or None,(f.get('serial') or '').strip() or None,(f.get('system_id') or '').strip() or None,parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip() or None,(f.get('protocol') or '').strip() or None,(f.get('notes') or '').strip() or None,org_id())
+   new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values)
+   asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {name}"); audit('ASSET_CREATE',f'{aid} · {name}')
+   flash(f'Asset {aid} bol vytvorený.','success')
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
    if not (f.get('title') or '').strip() or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(f.get('asset_id')): raise ValueError()
@@ -1433,8 +1471,10 @@ def add(what):
    if one('select id from users where lower(email)=?',(email,)): raise IntegrityError()
    x('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id(),True if USING_POSTGRES else 1))
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
- except (IntegrityError,ValueError):
-  flash('Záznam sa nepodarilo uložiť. Skontroluj duplicity a zadané hodnoty.','error')
+ except IntegrityError:
+  flash('Záznam sa nepodarilo uložiť pre konflikt v databáze. Skontroluj unikátne kódy a identifikátory.','error')
+ except ValueError as exc:
+  flash(str(exc) or 'Záznam sa nepodarilo uložiť. Skontroluj zadané hodnoty.','error')
  except Exception:
   flash('Pri ukladaní nastala chyba. Dáta neboli poškodené.','error')
  target={'incident':'/incidents','workorder':'/maintenance','asset':'/assets','user':'/admin','building':'/buildings'}.get(what)
@@ -1650,6 +1690,11 @@ def api_asset_options():
   left join rooms r on r.id=a.room_id
   where b.organization_id=? order by a.asset_id""",(org_id(),))
  return jsonify([dict(r) for r in rows])
+
+@app.get('/api/assets/next-id')
+def api_asset_next_id():
+ profession=(request.args.get('profession') or 'ASSET').strip()
+ return jsonify({'asset_id':next_asset_id(profession)})
 
 @app.get('/api/search')
 def api_search():
