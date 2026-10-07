@@ -812,28 +812,37 @@ def add(what):
    if not plan_allows('buildings'):
     flash('Licenčný limit počtu budov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/buildings')
    code=f.get('code','').strip().upper(); name=f.get('name','').strip()
+   try: floor_count=max(0,min(50,int(f.get('floors_count') or 0)))
+   except (TypeError,ValueError): raise ValueError()
    if not code or not name: flash('Kód a názov budovy sú povinné.','error')
    elif one('select id from buildings where upper(code)=? and organization_id=?',(code,org_id())): flash(f'Budova s kódom {code} už existuje.','error')
    else:
     owner=one('select name from organizations where id=?',(org_id(),))
-    customer_name=f.get('customer','').strip() or (owner['name'] if owner else 'GAMO a.s.')
+    customer_name=(owner['name'] if owner else 'GAMO a.s.')
     bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
-    floor_count=max(0,min(50,int(f.get('floors_count') or 0)))
     for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
   elif what=='floor':
-   if not owns_building(f.get('building_id')): abort(404)
-   x('insert into floors(building_id,code,name) values(?,?,?)',(f['building_id'],f['code'].strip(),f['name'].strip())); flash('Podlažie bolo pridané.','success')
+   building_id=f.get('building_id'); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
+   if not owns_building(building_id): abort(404)
+   if not code or not name or one('select id from floors where building_id=? and upper(code)=?',(building_id,code)): raise ValueError()
+   x('insert into floors(building_id,code,name) values(?,?,?)',(building_id,code,name)); audit('FLOOR_CREATE',f'{code} · {name}'); flash('Podlažie bolo pridané.','success')
   elif what=='room':
-   floor=one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.organization_id=?',(f.get('floor_id'),org_id()))
+   floor_id=f.get('floor_id'); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
+   floor=one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.organization_id=?',(floor_id,org_id()))
    if not floor: abort(404)
-   x('insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)',(f['floor_id'],f['code'].strip(),f['name'].strip(),f.get('area') or 0,f.get('tenant','').strip(),f.get('zone','').strip())); flash('Miestnosť bola pridaná.','success')
+   if not code or not name or one('select id from rooms where floor_id=? and upper(code)=?',(floor_id,code)): raise ValueError()
+   try: area=max(0,float(f.get('area') or 0))
+   except (TypeError,ValueError): raise ValueError()
+   x('insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)',(floor_id,code,name,area,f.get('tenant','').strip(),f.get('zone','').strip())); audit('ROOM_CREATE',f'{code} · {name}'); flash('Miestnosť bola pridaná.','success')
   elif what=='asset':
    if not plan_allows('assets'):
     flash('Licenčný limit počtu assetov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/assets')
-   aid=f.get('asset_id','').strip().upper(); building_id=f.get('building_id')
-   if not owns_building(building_id): abort(404)
+   aid=f.get('asset_id','').strip().upper(); name=(f.get('name') or '').strip(); building_id=f.get('building_id')
    floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id')
+   profession=(f.get('profession') or '').strip(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
+   if not aid or not name or not building_id or not floor_id or not room_id or not profession or not grp or not asset_type: raise ValueError()
+   if not owns_building(building_id): abort(404)
    if floor_id and not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError()
    if room_id and (not floor_id or not one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id()))): raise ValueError()
    if parent_id and not owns_asset(parent_id): raise ValueError()
@@ -845,13 +854,13 @@ def add(what):
     flash('Asset bol vytvorený.','success')
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
-   if f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(f.get('asset_id')): raise ValueError()
+   if not (f.get('title') or '').strip() or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(f.get('asset_id')): raise ValueError()
    x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description']))
    asset_event(f.get('asset_id'),'WORKORDER_CREATE','Nový pracovný príkaz',f"{f.get('kind','')} · {f.get('title','')}")
    audit('WORKORDER_CREATE',f.get('title','')); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident':
    allowed_severity={'Nízka','Stredná','Vysoká','Kritická','Havária'}; allowed_status={'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'}
-   if f.get('severity') not in allowed_severity or f.get('status') not in allowed_status or not owns_asset(f.get('asset_id')): raise ValueError()
+   if not (f.get('title') or '').strip() or f.get('severity') not in allowed_severity or f.get('status') not in allowed_status or not owns_asset(f.get('asset_id')): raise ValueError()
    x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost']))
    asset_event(f.get('asset_id'),'INCIDENT_CREATE','Incident zaevidovaný',f"{f.get('severity','')} · {f.get('title','')}")
    audit('INCIDENT_CREATE',f.get('title','')); flash('Incident bol zaevidovaný.','success')
