@@ -1,7 +1,10 @@
 #define MyAppName "GAMO a.s."
-#define MyAppVersion "9.0.0.5"
+#ifndef MyAppVersion
+#define MyAppVersion "9.0.0.6"
+#endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
+#define MyLauncherExeName "GAMO_Launcher.exe"
 
 [Setup]
 AppId={{A11D09C2-7E52-4FA7-9CF1-11F74231E35C}
@@ -20,19 +23,21 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 CloseApplications=yes
 RestartApplications=yes
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={app}\{#MyLauncherExeName}
+VersionInfoVersion={#MyAppVersion}
 ; Používateľské dáta sú zámerne mimo {app} v %LOCALAPPDATA%\GAMO_FM.
 ; Installer ich pri upgrade ani odinštalovaní nemaže ani neprepisuje.
 
 [Files]
 Source: "..\dist\GAMO_FM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist_launcher\GAMO_Launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\GAMO a.s."; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\GAMO a.s."; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\GAMO a.s."; Filename: "{app}\{#MyLauncherExeName}"
+Name: "{autodesktop}\GAMO a.s."; Filename: "{app}\{#MyLauncherExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Vytvoriť ikonu na ploche"; GroupDescription: "Ďalšie možnosti:"; Flags: checkedonce
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Spustiť GAMO a.s."; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launcher"; Flags: nowait postinstall skipifsilent

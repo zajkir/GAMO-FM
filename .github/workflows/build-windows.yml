@@ -2,6 +2,16 @@ name: Build and release GAMO FM for Windows
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'launcher.py'
+      - 'desktop.py'
+      - 'updater.py'
+      - 'desktop_config.json'
+      - 'update_config.json'
+      - 'version.json'
+      - 'installer/**'
+      - '.github/workflows/build-windows.yml'
   push:
     tags:
       - 'v*'
@@ -25,12 +35,17 @@ jobs:
       - name: Build desktop application
         run: pyinstaller --noconfirm --clean --windowed --name GAMO_FM --add-data "templates;templates" --add-data "static;static" --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
 
+      - name: Build GAMO Launcher
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_Launcher --distpath dist_launcher --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." launcher.py
+
       - name: Install Inno Setup
         run: choco install innosetup -y
 
       - name: Build installer
         shell: powershell
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\GAMO_FM.iss'
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\GAMO_FM.iss
 
       - uses: actions/upload-artifact@v4
         with:
@@ -46,13 +61,13 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $installer = Get-ChildItem dist_installer\*.exe | Select-Object -First 1
           $sha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
-          gh release create "${{ github.ref_name }}" $installer.FullName --title "GAMO FM $version" --notes "Automatické vydanie GAMO FM $version"
+          gh release create "${{ github.ref_name }}" $installer.FullName --title "GAMO a.s. $version" --notes "Automatické vydanie GAMO a.s. $version s Windows Launcherom"
           $download = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($installer.Name)"
           $manifest = @{
             version = $version
             installer_url = $download
             sha256 = $sha
-            notes = "GAMO FM $version – automatická aktualizácia"
+            notes = "GAMO a.s. $version – automatická aktualizácia cez GAMO Launcher"
           } | ConvertTo-Json
           git fetch origin main
           git checkout main

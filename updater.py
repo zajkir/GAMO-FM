@@ -57,22 +57,35 @@ def check_for_update():
     return manifest
 
 
-def download_update(manifest):
+def download_update(manifest, progress=None):
+    """Download and verify an installer.
+
+    progress, when provided, receives an integer percentage from 0 to 100.
+    """
     version = str(manifest['version'])
     url = str(manifest['installer_url'])
     expected = str(manifest['sha256']).lower()
     target = Path(tempfile.gettempdir()) / f'GAMO_FM_Setup_{version}.exe'
     req = urllib.request.Request(url, headers={'User-Agent': f'GAMO-FM/{current_version()}'})
+    downloaded = 0
+    if progress:
+        progress(0)
     with urllib.request.urlopen(req, timeout=30) as src, target.open('wb') as dst:
+        total = int(src.headers.get('Content-Length') or 0)
         while True:
             chunk = src.read(1024 * 1024)
             if not chunk:
                 break
             dst.write(chunk)
+            downloaded += len(chunk)
+            if progress and total:
+                progress(min(99, int(downloaded * 100 / total)))
     actual = hashlib.sha256(target.read_bytes()).hexdigest().lower()
     if actual != expected:
         target.unlink(missing_ok=True)
         raise ValueError('Kontrola aktualizácie zlyhala: SHA-256 nesedí.')
+    if progress:
+        progress(100)
     return target
 
 

@@ -112,7 +112,9 @@ def _show_startup_error(message):
 
 
 def main():
-    if _update_before_start():
+    # The dedicated GAMO Launcher owns the update flow. Direct/manual launches
+    # keep the legacy safety check for compatibility.
+    if os.environ.get('GAMO_SKIP_UPDATE') != '1' and _update_before_start():
         return
 
     mode = str(CONFIG.get('mode', 'cloud')).lower()
