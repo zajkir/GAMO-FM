@@ -855,14 +855,14 @@ def platform_customer_reset_admin_password(i):
 @app.post('/platform/customer/<int:i>/branding')
 def platform_customer_branding(i):
  if not is_gamo_admin(): abort(403)
- customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ customer=one_system('select * from organizations where id=? and code<>?',(i,'GAMO'))
  if not customer: abort(404)
  name=(request.form.get('branding_name') or customer['name']).strip()[:80]
  tagline=(request.form.get('brand_tagline') or 'FACILITY MANAGEMENT').strip()[:80]
  color=(request.form.get('brand_color') or '#E31B23').strip().upper()
  if len(color)!=7 or not color.startswith('#') or any(ch not in '0123456789ABCDEF' for ch in color[1:]):
   flash('Farba brandingu musí byť vo formáte #RRGGBB.','error'); return redirect(f'/platform/customer/{i}#branding')
- x('update organizations set branding_name=?,brand_color=?,brand_tagline=? where id=?',(name,color,tagline,i))
+ x_system('update organizations set branding_name=?,brand_color=?,brand_tagline=? where id=?',(name,color,tagline,i))
  audit('CUSTOMER_BRANDING',f"{customer['code']} · {name} · {color}")
  flash('Branding zákazníka bol uložený.','success')
  return redirect(f'/platform/customer/{i}#branding')
@@ -883,15 +883,15 @@ def platform_customer():
   flash('Vyplň povinné údaje. Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect('/admin#customersAdmin')
  if plan not in {'BASIC','BUSINESS','ENTERPRISE'} or license_status not in {'Aktívna','Pozastavená'}:
   flash('Neplatný licenčný plán alebo stav.','error'); return redirect('/admin#customersAdmin')
- if one('select id from organizations where upper(code)=?',(code,)) or one('select id from users where lower(email)=?',(email,)):
+ if one_system('select id from organizations where upper(code)=?',(code,)) or one_system('select id from users where lower(email)=?',(email,)):
   flash('Kód zákazníka alebo e-mail administrátora už existuje.','error'); return redirect('/admin#customersAdmin')
  try:
-  with con() as db:
+  with con(system=True) as db:
    if USING_POSTGRES:
-    row=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name) values(?,?,?,?,?,?,?) returning id'),(code,name,'Aktívny',plan,license_status,license_until,name)).fetchone()
+    row=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact) values(?,?,?,?,?,?,?,?) returning id'),(code,name,'Aktívny',plan,license_status,license_until,name,email)).fetchone()
     oid=row['id']
    else:
-    cur=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name) values(?,?,?,?,?,?,?)'),(code,name,'Aktívny',plan,license_status,license_until,name)); oid=cur.lastrowid
+    cur=db.execute(_sql('insert into organizations(code,name,status,plan,license_status,license_until,branding_name,privacy_contact) values(?,?,?,?,?,?,?,?)'),(code,name,'Aktívny',plan,license_status,license_until,name,email)); oid=cur.lastrowid
    db.execute(_sql('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)'),(admin_name,email,'Administrator','Aktívny',generate_password_hash(password),oid))
    db.commit()
   audit('CUSTOMER_CREATE',f'{code} · {name} · {plan}')
@@ -903,7 +903,7 @@ def platform_customer():
 @app.post('/platform/customer/<int:i>/update')
 def platform_customer_update(i):
  if not is_gamo_admin(): abort(403)
- customer=one('select * from organizations where id=?',(i,))
+ customer=one_system('select * from organizations where id=?',(i,))
  if not customer or customer['code']=='GAMO': abort(404)
  f=request.form
  plan=(f.get('plan') or customer['plan']).upper()
@@ -912,7 +912,7 @@ def platform_customer_update(i):
  license_until=(f.get('license_until') or '').strip() or None
  if plan not in {'BASIC','BUSINESS','ENTERPRISE'} or license_status not in {'Aktívna','Pozastavená'} or org_status not in {'Aktívny','Neaktívny'}:
   abort(400)
- x('update organizations set plan=?,license_status=?,license_until=?,status=? where id=?',(plan,license_status,license_until,org_status,i))
+ x_system('update organizations set plan=?,license_status=?,license_until=?,status=? where id=?',(plan,license_status,license_until,org_status,i))
  audit('CUSTOMER_UPDATE',f"{customer['code']} · {plan} · {license_status}")
  flash('Nastavenia zákazníka boli uložené.','success')
  return redirect(f"/platform/customer/{i}" if request.form.get('return_to')=='detail' else '/admin#customersAdmin')
