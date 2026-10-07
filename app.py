@@ -175,10 +175,25 @@ def logout():
 def ctx(): return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':session.get('organization_id')},can=can)
 @app.route('/')
 def dashboard():
- s={'assets':one('select count(*) n from assets')['n'],'buildings':one('select count(*) n from buildings')['n'],'rooms':one('select count(*) n from rooms')['n'],'open':one("select count(*) n from incidents where status!='Ukončená'")['n'],'critical':one("select count(*) n from assets where criticality='A'")['n'],'orders':one("select count(*) n from workorders where status!='Ukončené'")['n'],'high_incidents':one("select count(*) n from incidents where status!='Ukončená' and severity in ('Vysoká','Kritická','Havária')")['n'],'overdue':one("select count(*) n from workorders where status!='Ukončené' and due is not null and due!='' and date(due)<date('now')")['n']}
- report={'maintenance_cost':one('select coalesce(sum(cost),0) n from workorders')['n'],'incident_cost':one('select coalesce(sum(cost),0) n from incidents')['n'],'closed_orders':one("select count(*) n from workorders where status='Ukončené'")['n'],'total_orders':one('select count(*) n from workorders')['n']}; report['total_cost']=report['maintenance_cost']+report['incident_cost']
- profession_costs=q("select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0)::numeric,2) value from workorders w join assets a on a.id=w.asset_id group by a.profession order by value desc limit 6") if USING_POSTGRES else q("select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0),2) value from workorders w join assets a on a.id=w.asset_id group by a.profession order by value desc limit 6")
- return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=profession_costs,buildings=q('select * from buildings'),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id order by w.id desc limit 6'),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id order by i.id desc limit 5'))
+ oid=org_id()
+ s={
+  'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'buildings':one('select count(*) n from buildings where organization_id=?',(oid,))['n'],
+  'rooms':one('select count(*) n from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where b.organization_id=?',(oid,))['n'],
+  'open':one("select count(*) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and i.status!='Ukončená'",(oid,))['n'],
+  'critical':one("select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=? and a.criticality='A'",(oid,))['n'],
+  'orders':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status!='Ukončené'",(oid,))['n'],
+  'high_incidents':one("select count(*) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and i.status!='Ukončená' and i.severity in ('Vysoká','Kritická','Havária')",(oid,))['n'],
+  'overdue':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status!='Ukončené' and w.due is not null and w.due!='' and date(w.due)<date('now')",(oid,))['n']
+ }
+ report={
+  'maintenance_cost':one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'incident_cost':one('select coalesce(sum(i.cost),0) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'closed_orders':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status='Ukončené'",(oid,))['n'],
+  'total_orders':one('select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n']
+ }; report['total_cost']=report['maintenance_cost']+report['incident_cost']
+ profession_sql="select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0)::numeric,2) value from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? group by a.profession order by value desc limit 6" if USING_POSTGRES else "select coalesce(a.profession,'Iné') label,round(coalesce(sum(w.cost),0),2) value from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? group by a.profession order by value desc limit 6"
+ return render_template('index.html',page='dashboard',s=s,report=report,profession_costs=q(profession_sql,(oid,)),buildings=q('select * from buildings where organization_id=?',(oid,)),recent=q('select w.*,a.asset_id,a.name asset from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc limit 6',(oid,)),incidents=q('select i.*,a.asset_id from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc limit 5',(oid,)))
 @app.route('/buildings')
 def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b where b.organization_id=?',(org_id(),)))
 @app.route('/building/<int:i>')
