@@ -235,6 +235,18 @@ def _migration_6(db, using_postgres):
         db.execute(f"CREATE POLICY {policy} ON {table} USING ({predicate}) WITH CHECK ({predicate})")
 
 
+
+
+def _migration_7(db, using_postgres):
+    """Temporary passwords must be replaced by the user after first sign-in."""
+    user_cols = _columns(db, "users", using_postgres)
+    if "must_change_password" not in user_cols:
+        if using_postgres:
+            db.execute("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE")
+        else:
+            db.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
+
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -242,6 +254,7 @@ MIGRATIONS = (
     (4, "preserve_existing_customer_onboarding_state", _migration_4),
     (5, "customer_privacy_controls", _migration_5),
     (6, "postgres_row_level_security", _migration_6),
+    (7, "temporary_password_rotation", _migration_7),
 )
 
 
