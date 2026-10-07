@@ -10,7 +10,7 @@ os.environ['GAMO_DESKTOP'] = '1'
 from waitress import serve
 import webview
 from app import app
-from updater import check_for_update, download_update, launch_installer, current_version
+from updater import check_for_update, download_update, launch_installer, current_version, backup_user_data
 
 HOST = '127.0.0.1'
 PORT = 5050
@@ -45,6 +45,9 @@ def _update_before_start():
         yes = messagebox.askyesno('GAMO a.s. – aktualizácia', msg, parent=root)
         if yes:
             installer = download_update(manifest)
+            backup = backup_user_data('pre_update')
+            if backup:
+                print(f'User data backup created: {backup}')
             launch_installer(installer)
             root.destroy()
             return True
