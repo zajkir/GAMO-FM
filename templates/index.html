@@ -17,53 +17,82 @@
 {% elif page=='incidents' %}<section class="ops-hero incidents-hero"><div><span class="eyebrow">INCIDENT CONTROL</span><h2>Poruchy a havárie pod kontrolou.</h2><p>Rýchla evidencia udalostí, závažnosti, dopadu a stavu riešenia naprieč technológiami.</p></div><div class="ops-hero-art incident-art"><span>!</span><i></i><i></i><i></i></div>{% if can('incident_write') %}<button onclick="modal('incident')" class="danger">＋ Nahlásiť incident</button>{% endif %}</section><section class="card tablecard"><table><tr><th>ASSET</th><th>INCIDENT</th><th>ZÁVAŽNOSŤ</th><th>NAHLÁSENÉ</th><th>DOPAD</th><th>NÁKLAD</th><th>STAV</th></tr>{% for r in incidents %}<tr><td><b>{{r.asset_id}}</b><small>{{r.asset}}</small></td><td>{{r.title}}</td><td><span class="badge red">{{r.severity}}</span></td><td>{{r.reported}}</td><td>{{r.impact}}</td><td>{{r.cost}} €</td><td><form method="post" action="/status/incident/{{r.id}}"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="_csrf" value="{{csrf_token}}"><select name="status" onchange="this.form.submit()"><option>{{r.status}}</option><option>Otvorená</option><option>Pridelená</option><option>Rieši sa</option><option>Čaká na diel</option><option>Vyriešená</option><option>Ukončená</option></select></form></td></tr>{% endfor %}</table></section>
 {% else %}<div class="admin-v2-top"><div><span class="admin-kicker">GAMO a.s. / ADMINISTRATION</span><h2>Riadiace centrum systému</h2><p>Kompletná správa používateľov, dátového modelu, automatizácie a bezpečnosti.</p></div><div class="admin-version"><small>DESKTOP BUILD</small><b>9.0.0.5</b><span>● ONLINE</span></div></div>
 <div class="admin-v2-nav"><button class="active">Prehľad</button>{% if is_gamo_admin %}<button onclick="document.querySelector('#customersAdmin').scrollIntoView({behavior:'smooth'})">Zákazníci</button>{% endif %}<button onclick="document.querySelector('#usersAdmin').scrollIntoView({behavior:'smooth'})">Používatelia</button><button onclick="document.querySelector('#systemAdmin').scrollIntoView({behavior:'smooth'})">Konfigurácia</button><button onclick="document.querySelector('#securityAdmin').scrollIntoView({behavior:'smooth'})">Bezpečnosť</button><button onclick="document.querySelector('#systemTools').scrollIntoView({behavior:'smooth'})">Systém</button></div>
-<div class="admin-v2-metrics"><div class="adm-metric"><span class="adm-icon violet">♙</span><div><small>POUŽÍVATELIA</small><b>{{users|length}}</b><em>{{users|selectattr('status','equalto','Aktívny')|list|length}} aktívnych účtov</em></div></div><div class="adm-metric"><span class="adm-icon cyan">▦</span><div><small>SPRAVOVANÉ OBJEKTY</small><b>{{buildings|length}}</b><em>budovy v systéme</em></div></div><div class="adm-metric"><span class="adm-icon green">✓</span><div><small>STAV PLATFORMY</small><b>100%</b><em>všetky služby online</em></div></div><div class="adm-metric"><span class="adm-icon orange">↻</span><div><small>VERZIA</small><b>9.0.0.5</b><em>aktuálny desktop build</em></div></div></div>
+<div class="admin-v2-metrics">
 {% if is_gamo_admin %}
-<section class="admin-v2-panel" id="customersAdmin">
- <div class="adm-head"><div><span class="admin-kicker">GAMO CONTROL CENTER</span><h3>Zákazníci platformy</h3><p>Jedno miesto pre založenie firmy, licenciu a prvý administrátorský účet.</p></div><span class="admin-only">GAMO ONLY</span></div>
- <div class="admin-v2-metrics customer-metrics">
-  <div class="adm-metric"><span class="adm-icon violet">◈</span><div><small>ZÁKAZNÍCI</small><b>{{[organizations|length - 1,0]|max}}</b><em>externé organizácie</em></div></div>
-  <div class="adm-metric"><span class="adm-icon green">✓</span><div><small>AKTÍVNE LICENCIE</small><b>{{organizations|selectattr('license_status','equalto','Aktívna')|list|length - 1 if organizations else 0}}</b><em>bez interného GAMO účtu</em></div></div>
+<div class="adm-metric"><span class="adm-icon violet">◈</span><div><small>ZÁKAZNÍCI</small><b>{{customer_stats.total}}</b><em>externých organizácií</em></div></div>
+<div class="adm-metric"><span class="adm-icon green">✓</span><div><small>AKTÍVNE LICENCIE</small><b>{{customer_stats.active}}</b><em>{{customer_stats.paused}} pozastavených / neaktívnych</em></div></div>
+<div class="adm-metric"><span class="adm-icon cyan">♙</span><div><small>ÚČTY ZÁKAZNÍKOV</small><b>{{customer_stats.users}}</b><em>používateľov mimo GAMO</em></div></div>
+<div class="adm-metric"><span class="adm-icon orange">▦</span><div><small>OBJEKTY ZÁKAZNÍKOV</small><b>{{customer_stats.buildings}}</b><em>budov mimo interného GAMO</em></div></div>
+{% else %}
+<div class="adm-metric"><span class="adm-icon violet">♙</span><div><small>POUŽÍVATELIA</small><b>{{users|length}}</b><em>{{users|selectattr('status','equalto','Aktívny')|list|length}} aktívnych účtov</em></div></div>
+<div class="adm-metric"><span class="adm-icon cyan">▦</span><div><small>SPRAVOVANÉ OBJEKTY</small><b>{{buildings|length}}</b><em>budovy v systéme</em></div></div>
+<div class="adm-metric"><span class="adm-icon green">✓</span><div><small>STAV PLATFORMY</small><b>ONLINE</b><em>firemné prostredie aktívne</em></div></div>
+<div class="adm-metric"><span class="adm-icon orange">↻</span><div><small>VERZIA</small><b>9.0.0.5</b><em>aktuálny desktop build</em></div></div>
+{% endif %}
+</div>
+{% if is_gamo_admin %}
+<section class="admin-v2-panel customer-center" id="customersAdmin">
+ <div class="customer-center-head">
+  <div><span class="admin-kicker">GAMO CONTROL CENTER</span><h3>Zákazníci</h3><p>Prehľad všetkých firiem, licencií, účtov a objektov spravovaných cez GAMO platformu.</p></div>
+  <details class="customer-add">
+   <summary>＋ Nový zákazník</summary>
+   <div class="customer-add-popover">
+    <div class="customer-add-title"><div><span class="admin-kicker">NEW CUSTOMER</span><h4>Vytvoriť firemné prostredie</h4></div><small>Organizácia + prvý administrátor</small></div>
+    <form method="post" action="/platform/customer">
+     <input type="hidden" name="_csrf" value="{{csrf_token}}">
+     <div class="customer-form-grid">
+      <div class="field"><label>Kód firmy</label><input name="code" maxlength="30" required placeholder="ABC"></div>
+      <div class="field wide"><label>Názov firmy</label><input name="name" required placeholder="ABC s.r.o."></div>
+      <div class="field"><label>Licenčný plán</label><select name="plan"><option>BASIC</option><option selected>BUSINESS</option><option>ENTERPRISE</option></select></div>
+      <div class="field"><label>Platnosť licencie do</label><input type="date" name="license_until"></div>
+      <div class="field"><label>Admin meno</label><input name="admin_name" required placeholder="Ján Novák"></div>
+      <div class="field wide"><label>Admin e-mail</label><input name="email" type="email" required placeholder="admin@firma.sk"></div>
+      <div class="field"><label>Dočasné heslo</label><input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="min. 8 znakov"></div>
+      <div class="field"><label>Stav licencie</label><select name="license_status"><option>Aktívna</option><option>Pozastavená</option></select></div>
+     </div>
+     <div class="customer-add-actions"><span>Heslo musí mať aspoň 8 znakov.</span><button class="admin-primary">Vytvoriť zákazníka</button></div>
+    </form>
+   </div>
+  </details>
  </div>
- <div class="customer-control-grid">
-  <div class="customer-create-card">
-   <span class="admin-kicker">NEW CUSTOMER</span><h4>Vytvoriť zákazníka</h4><p>Systém založí organizáciu a prvého administrátora. Dáta zákazníkov ostávajú oddelené.</p>
-   <form method="post" action="/platform/customer">
-    <input type="hidden" name="_csrf" value="{{csrf_token}}">
-    <div class="formgrid">
-     <div class="field"><label>Kód firmy</label><input name="code" maxlength="30" required placeholder="ABC"></div>
-     <div class="field"><label>Názov firmy</label><input name="name" required placeholder="ABC s.r.o."></div>
-     <div class="field"><label>Licenčný plán</label><select name="plan"><option>BASIC</option><option selected>BUSINESS</option><option>ENTERPRISE</option></select></div>
-     <div class="field"><label>Platnosť licencie do</label><input type="date" name="license_until"></div>
-     <div class="field"><label>Admin meno</label><input name="admin_name" required placeholder="Ján Novák"></div>
-     <div class="field"><label>Admin e-mail</label><input name="email" type="email" required placeholder="admin@firma.sk"></div>
-     <div class="field"><label>Dočasné heslo</label><input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="min. 8 znakov"></div>
-     <div class="field"><label>Stav licencie</label><select name="license_status"><option>Aktívna</option><option>Pozastavená</option></select></div>
-    </div>
-    <div class="modal-actions"><button class="admin-primary">＋ Vytvoriť firemné prostredie</button></div>
-   </form>
-  </div>
-  <div class="customer-list-card">
-   <span class="admin-kicker">CUSTOMER INSTANCES</span><h4>Existujúce organizácie</h4>
-   {% for o in organizations %}
-   <div class="customer-instance {{'internal' if o.code=='GAMO'}}">
-    <div class="customer-instance-head"><div class="adm-avatar">{{o.code[:2]|upper}}</div><div><b>{{o.name}}</b><small>{{o.code}} · {{o.users_count}} používateľov · {{o.buildings_count}} budov</small></div><span class="online-pill">● {{o.license_status}}</span></div>
-    {% if o.code=='GAMO' %}
-     <div class="customer-internal-note"><b>Interné prostredie GAMO</b><small>Túto organizáciu nie je možné pozastaviť cez zákaznícke licencie.</small></div>
-    {% else %}
-     <form method="post" action="/platform/customer/{{o.id}}/update" class="customer-license-form">
+ <div class="customer-summary-strip">
+  <div><small>CELKOM</small><b>{{customer_stats.total}}</b><span>zákazníkov</span></div>
+  <div><small>AKTÍVNI</small><b>{{customer_stats.active}}</b><span>platných licencií</span></div>
+  <div><small>ÚČTY</small><b>{{customer_stats.users}}</b><span>používateľov</span></div>
+  <div><small>OBJEKTY</small><b>{{customer_stats.buildings}}</b><span>budov</span></div>
+ </div>
+ {% if organizations %}
+ <div class="customer-table">
+  <div class="customer-table-head"><span>FIRMA</span><span>ADMINISTRÁTOR</span><span>PLÁN</span><span>VYUŽITIE</span><span>LICENCIA</span><span>STAV</span><span></span></div>
+  {% for o in organizations %}
+  {% set expired = o.license_until and (o.license_until|string) < today.isoformat() %}
+  <div class="customer-row">
+   <div class="customer-company"><div class="customer-logo">{{o.code[:2]|upper}}</div><div><b>{{o.name}}</b><small>{{o.code}}</small></div></div>
+   <div class="customer-admin"><b>{{o.admin_name or '—'}}</b><small>{{o.admin_email or 'Bez administrátora'}}</small></div>
+   <div><span class="plan-pill plan-{{o.plan|lower}}">{{o.plan}}</span></div>
+   <div class="customer-usage"><b>{{o.users_count}}</b><small>účty</small><i></i><b>{{o.buildings_count}}</b><small>budovy</small></div>
+   <div class="customer-license"><b>{{o.license_until or 'Bez expirácie'}}</b><small>{% if expired %}Licencia vypršala{% elif o.license_until %}platnosť licencie{% else %}bez časového limitu{% endif %}</small></div>
+   <div><span class="customer-status {{'bad' if expired or o.license_status!='Aktívna' or o.status!='Aktívny' else 'ok'}}">● {% if expired %}Expirovaná{% elif o.status!='Aktívny' %}Neaktívna firma{% else %}{{o.license_status}}{% endif %}</span></div>
+   <div class="customer-actions">
+    <details class="customer-manage">
+     <summary>Spravovať</summary>
+     <form method="post" action="/platform/customer/{{o.id}}/update">
       <input type="hidden" name="_csrf" value="{{csrf_token}}">
       <div class="field"><label>Plán</label><select name="plan"><option {{'selected' if o.plan=='BASIC'}}>BASIC</option><option {{'selected' if o.plan=='BUSINESS'}}>BUSINESS</option><option {{'selected' if o.plan=='ENTERPRISE'}}>ENTERPRISE</option></select></div>
       <div class="field"><label>Licencia</label><select name="license_status"><option {{'selected' if o.license_status=='Aktívna'}}>Aktívna</option><option {{'selected' if o.license_status=='Pozastavená'}}>Pozastavená</option></select></div>
       <div class="field"><label>Platnosť do</label><input type="date" name="license_until" value="{{o.license_until or ''}}"></div>
       <div class="field"><label>Organizácia</label><select name="status"><option {{'selected' if o.status=='Aktívny'}}>Aktívny</option><option {{'selected' if o.status=='Neaktívny'}}>Neaktívny</option></select></div>
-      <button class="adm-manage">Uložiť →</button>
+      <button class="admin-primary">Uložiť zmeny</button>
      </form>
-    {% endif %}
+    </details>
    </div>
-   {% endfor %}
   </div>
+  {% endfor %}
  </div>
+ {% else %}
+ <div class="customer-empty"><span>◈</span><div><b>Zatiaľ nie sú vytvorení žiadni zákazníci</b><small>Klikni na „Nový zákazník“ a vytvor prvé firemné prostredie.</small></div></div>
+ {% endif %}
+ <div class="customer-internal-bar"><span class="dot green"></span><div><b>Interné prostredie GAMO a.s.</b><small>Oddelené od zákazníckych organizácií · {{users|length}} interných účtov · {{buildings|length}} interných budov</small></div><label>INTERNAL</label></div>
 </section>
 {% endif %}
 <div class="admin-v2-layout"><section class="admin-v2-panel" id="usersAdmin"><div class="adm-head"><div><span class="admin-kicker">IDENTITY & ACCESS</span><h3>Používatelia a oprávnenia</h3><p>Účty, role a stav prístupu do GAMO a.s.</p></div>{% if can('users_manage') %}<button class="admin-primary" onclick="modal('user')">＋ Pridať používateľa</button>{% endif %}</div><div class="adm-table-head"><span>POUŽÍVATEĽ</span><span>ROLA</span><span>STAV</span><span>AKCIA</span></div>{% for u in users %}<div class="adm-user-row"><div class="adm-person"><div class="adm-avatar">{{u.name[:2]|upper}}</div><div><b>{{u.name}}</b><small>{{u.email}}</small></div></div><span class="role-pill">{{u.role}}</span><span class="online-pill">● {{u.status}}</span><button class="adm-manage" onclick='manageUser({{ {"id":u.id,"name":u.name,"email":u.email,"role":u.role,"status":u.status,"last_login":u.last_login}|tojson }})'>Spravovať →</button></div>{% endfor %}</section>
