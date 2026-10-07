@@ -707,11 +707,11 @@ assert r.status_code in (302, 303)
 # ----- Explicit customer consent (login requires MFA) -----
 client.get("/logout")
 login_with_mfa("smoke@example.test", "SmokeSecure2026!", smoke_mfa_secret)
+customer_notifications = client.get("/api/notifications").get_json()
+assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in customer_notifications)
 customer_ticket_after_gamo = client.get(f"/ticket/{ticket['id']}")
 assert customer_ticket_after_gamo.status_code == 200
 assert b"GAMO support vid" in customer_ticket_after_gamo.data
-customer_notifications = client.get("/api/notifications").get_json()
-assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in customer_notifications)
 r = client.post(
     "/privacy/support-access",
     data={
