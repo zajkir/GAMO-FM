@@ -35,7 +35,6 @@ r = client.get("/api/assets/options")
 assert r.status_code == 200 and isinstance(r.get_json(), list)
 
 # Invalid building input must not leave a partially-created record behind.
-before_buildings = app.one("select count(*) n from buildings where organization_id=?", (app.org_id(),))["n"] if False else None
 with client.session_transaction() as sess:
     gamo_org_id = sess["organization_id"]
 before_buildings = app.one("select count(*) n from buildings where organization_id=?", (gamo_org_id,))["n"]
