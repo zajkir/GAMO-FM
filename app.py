@@ -201,13 +201,13 @@ def upload_building_document(i):
 
 @app.get('/document/<int:i>/download')
 def download_document(i):
- d=one('select * from documents where id=?',(i,))
+ d=one('select d.* from documents d join buildings b on b.id=d.building_id where d.id=? and b.organization_id=?',(i,org_id()))
  if not d: abort(404)
  return send_file(io.BytesIO(d['data']),mimetype=d['mime'] or 'application/octet-stream',as_attachment=True,download_name=d['name'])
 
 @app.post('/document/<int:i>/delete')
 def delete_document(i):
- d=one('select building_id,name from documents where id=?',(i,))
+ d=one('select d.building_id,d.name from documents d join buildings b on b.id=d.building_id where d.id=? and b.organization_id=?',(i,org_id()))
  if not d: abort(404)
  x('delete from documents where id=?',(i,)); audit('DOCUMENT_DELETE',d['name']); flash('Dokument bol odstránený.','success')
  return redirect(f"/building/{d['building_id']}#documents")
@@ -243,19 +243,29 @@ def add(what):
     floor_count=max(0,min(50,int(f.get('floors_count') or 0)))
     for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
-  elif what=='floor': x('insert into floors(building_id,code,name) values(?,?,?)',(f['building_id'],f['code'].strip(),f['name'].strip())); flash('Podlažie bolo pridané.','success')
-  elif what=='room': x('insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)',(f['floor_id'],f['code'].strip(),f['name'].strip(),f.get('area') or 0,f.get('tenant','').strip(),f.get('zone','').strip())); flash('Miestnosť bola pridaná.','success')
+  elif what=='floor':
+   if not owns_building(f.get('building_id')): abort(404)
+   x('insert into floors(building_id,code,name) values(?,?,?)',(f['building_id'],f['code'].strip(),f['name'].strip())); flash('Podlažie bolo pridané.','success')
+  elif what=='room':
+   floor=one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.organization_id=?',(f.get('floor_id'),org_id()))
+   if not floor: abort(404)
+   x('insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)',(f['floor_id'],f['code'].strip(),f['name'].strip(),f.get('area') or 0,f.get('tenant','').strip(),f.get('zone','').strip())); flash('Miestnosť bola pridaná.','success')
   elif what=='asset':
-   aid=f.get('asset_id','').strip().upper()
-   if one('select id from assets where upper(asset_id)=?',(aid,)): flash(f'Asset ID {aid} už existuje.','error')
+   aid=f.get('asset_id','').strip().upper(); building_id=f.get('building_id')
+   if not owns_building(building_id): abort(404)
+   floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id')
+   if floor_id and not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError()
+   if room_id and not one('select r.id from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where r.id=? and b.id=? and b.organization_id=?',(room_id,building_id,org_id())): raise ValueError()
+   if parent_id and not owns_asset(parent_id): raise ValueError()
+   if one('select a.id from assets a join buildings b on b.id=a.building_id where upper(a.asset_id)=? and b.organization_id=?',(aid,org_id())): flash(f'Asset ID {aid} už existuje.','error')
    else: x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',tuple((aid if k=='asset_id' else f.get(k)) or None for k in ['asset_id','name','building_id','floor_id','room_id','profession','grp','type','manufacturer','model','serial','system_id','parent_id','status','criticality','service_months','revision_months','purchase_price','ip','protocol','notes'])); flash('Asset bol vytvorený.','success')
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
-   if f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind: raise ValueError()
+   if f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(f.get('asset_id')): raise ValueError()
    x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','kind','priority','status','due','supplier','technician','cost','description'])); audit('WORKORDER_CREATE',f.get('title','')); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident':
    allowed_severity={'Nízka','Stredná','Vysoká','Kritická','Havária'}; allowed_status={'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'}
-   if f.get('severity') not in allowed_severity or f.get('status') not in allowed_status: raise ValueError()
+   if f.get('severity') not in allowed_severity or f.get('status') not in allowed_status or not owns_asset(f.get('asset_id')): raise ValueError()
    x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',tuple(f.get(k,'') for k in ['asset_id','title','severity','status','reported','impact','cause','cost'])); audit('INCIDENT_CREATE',f.get('title','')); flash('Incident bol zaevidovaný.','success')
   elif what=='user':
    pwd=f.get('password') or 'GamoFM2026!'
@@ -269,7 +279,7 @@ def add(what):
 @app.post('/user/<int:i>/update')
 def update_user(i):
  f=request.form
- u=one('select * from users where id=?',(i,))
+ u=one('select * from users where id=? and organization_id=?',(i,org_id()))
  if not u:
   abort(404)
  name=(f.get('name') or '').strip(); email=(f.get('email') or '').strip().lower()
@@ -280,7 +290,7 @@ def update_user(i):
  if i==session.get('user_id') and status!='Aktívny':
   flash('Aktuálne prihlásený účet nie je možné deaktivovať.','error'); return redirect('/admin#usersAdmin')
  try:
-  duplicate=one('select id from users where lower(email)=? and id<>?',(email,i))
+  duplicate=one('select id from users where lower(email)=? and id<>? and organization_id=?',(email,i,org_id()))
   if duplicate: raise IntegrityError()
   if pwd:
    x('update users set name=?,email=?,role=?,status=?,password_hash=? where id=?',(name,email,role,status,generate_password_hash(pwd),i))
