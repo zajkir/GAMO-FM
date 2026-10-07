@@ -735,29 +735,31 @@ def backup_my_organization():
 @app.get('/platform/customer/<int:i>/backup')
 def platform_customer_backup(i):
  if not is_gamo_admin(): abort(403)
- customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ customer=one_system('select * from organizations where id=? and code<>?',(i,'GAMO'))
  if not customer: abort(404)
  if not support_access_active(customer):
   flash('Zákazník nemá aktívny súhlas na prístup GAMO k dátam. Backup nie je dostupný.','error')
   return redirect(f'/platform/customer/{i}')
  customer_access(i,'GAMO_BACKUP_EXPORT','GAMO administrátor stiahol zákaznícky export počas aktívneho support prístupu.')
- return build_organization_backup(i)
+ return build_organization_backup(i,privileged=True)
 
-def build_organization_backup(oid):
- org=one('select * from organizations where id=?',(oid,))
+def build_organization_backup(oid,privileged=False):
+ read_one=one_system if privileged else one
+ read_all=q_system if privileged else q
+ org=read_one('select * from organizations where id=?',(oid,))
  if not org: abort(404)
  data={}
- data['buildings']=[dict(r) for r in q('select * from buildings where organization_id=? order by id',(oid,))]
- data['floors']=[dict(r) for r in q('select f.* from floors f join buildings b on b.id=f.building_id where b.organization_id=? order by f.id',(oid,))]
- data['rooms']=[dict(r) for r in q('select r.* from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where b.organization_id=? order by r.id',(oid,))]
- data['assets']=[dict(r) for r in q('select a.* from assets a where a.organization_id=? order by a.id',(oid,))]
- data['workorders']=[dict(r) for r in q('select w.* from workorders w join assets a on a.id=w.asset_id where a.organization_id=? order by w.id',(oid,))]
- data['incidents']=[dict(r) for r in q('select x.* from incidents x join assets a on a.id=x.asset_id where a.organization_id=? order by x.id',(oid,))]
- data['users']=[dict(r) for r in q('select id,name,email,role,status,last_login,organization_id from users where organization_id=? order by id',(oid,))]
- data['settings']=[dict(r) for r in q('select k,v from organization_settings where organization_id=? order by k',(oid,))]
- data['asset_events']=[dict(r) for r in q('select * from asset_events where organization_id=? order by id',(oid,))]
- data['access_log']=[dict(r) for r in q('select * from customer_access_log where target_organization_id=? order by id',(oid,))]
- docs=q('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
+ data['buildings']=[dict(r) for r in read_all('select * from buildings where organization_id=? order by id',(oid,))]
+ data['floors']=[dict(r) for r in read_all('select f.* from floors f join buildings b on b.id=f.building_id where b.organization_id=? order by f.id',(oid,))]
+ data['rooms']=[dict(r) for r in read_all('select r.* from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id where b.organization_id=? order by r.id',(oid,))]
+ data['assets']=[dict(r) for r in read_all('select a.* from assets a where a.organization_id=? order by a.id',(oid,))]
+ data['workorders']=[dict(r) for r in read_all('select w.* from workorders w join assets a on a.id=w.asset_id where a.organization_id=? order by w.id',(oid,))]
+ data['incidents']=[dict(r) for r in read_all('select x.* from incidents x join assets a on a.id=x.asset_id where a.organization_id=? order by x.id',(oid,))]
+ data['users']=[dict(r) for r in read_all('select id,name,email,role,status,last_login,organization_id from users where organization_id=? order by id',(oid,))]
+ data['settings']=[dict(r) for r in read_all('select k,v from organization_settings where organization_id=? order by k',(oid,))]
+ data['asset_events']=[dict(r) for r in read_all('select * from asset_events where organization_id=? order by id',(oid,))]
+ data['access_log']=[dict(r) for r in read_all('select * from customer_access_log where target_organization_id=? order by id',(oid,))]
+ docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
  manifest={
   'format':'GAMO_ORGANIZATION_BACKUP_V2','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
   'organization':{k:org[k] for k in ['id','code','name','status','plan','license_status','license_until','branding_name','brand_color','brand_tagline','privacy_contact','data_region','retention_days','created'] if k in org.keys()},
@@ -785,18 +787,19 @@ def build_organization_backup(oid):
 @app.get('/platform/customer/<int:i>')
 def platform_customer_detail(i):
  if not is_gamo_admin(): abort(403)
- customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ customer=one_system('select * from organizations where id=? and code<>?',(i,'GAMO'))
  if not customer: abort(404)
  support_active=support_access_active(customer)
+ customer_access(i,'GAMO_METADATA_VIEW','GAMO otvorilo licenčné a agregované metadáta zákazníka.')
  customer_stats={
-  'users':one('select count(*) n from users where organization_id=?',(i,))['n'],
-  'active_users':one("select count(*) n from users where organization_id=? and status='Aktívny'",(i,))['n'],
-  'buildings':one('select count(*) n from buildings where organization_id=?',(i,))['n'],
-  'assets':one('select count(*) n from assets where organization_id=?',(i,))['n'],
-  'open_incidents':one("select count(*) n from incidents x join assets a on a.id=x.asset_id where a.organization_id=? and x.status!='Ukončená'",(i,))['n'],
-  'open_orders':one("select count(*) n from workorders w join assets a on a.id=w.asset_id where a.organization_id=? and w.status!='Ukončené'",(i,))['n'],
-  'maintenance_cost':one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id where a.organization_id=?',(i,))['n'],
-  'incident_cost':one('select coalesce(sum(x.cost),0) n from incidents x join assets a on a.id=x.asset_id where a.organization_id=?',(i,))['n']
+  'users':one_system('select count(*) n from users where organization_id=?',(i,))['n'],
+  'active_users':one_system("select count(*) n from users where organization_id=? and status='Aktívny'",(i,))['n'],
+  'buildings':one_system('select count(*) n from buildings where organization_id=?',(i,))['n'],
+  'assets':one_system('select count(*) n from assets where organization_id=?',(i,))['n'],
+  'open_incidents':one_system("select count(*) n from incidents x join assets a on a.id=x.asset_id where a.organization_id=? and x.status!='Ukončená'",(i,))['n'],
+  'open_orders':one_system("select count(*) n from workorders w join assets a on a.id=w.asset_id where a.organization_id=? and w.status!='Ukončené'",(i,))['n'],
+  'maintenance_cost':one_system('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id where a.organization_id=?',(i,))['n'],
+  'incident_cost':one_system('select coalesce(sum(x.cost),0) n from incidents x join assets a on a.id=x.asset_id where a.organization_id=?',(i,))['n']
  }
  customer_stats['total_cost']=customer_stats['maintenance_cost']+customer_stats['incident_cost']
  license_days=None
@@ -806,23 +809,23 @@ def platform_customer_detail(i):
  customer_users=[]; customer_buildings=[]; recent_incidents=[]; recent_orders=[]; customer_audit=[]
  if support_active:
   customer_access(i,'GAMO_SUPPORT_DATA_VIEW','Customer 360 sensitive data viewed during active support access.')
-  customer_users=q('select id,name,email,role,status,last_login from users where organization_id=? order by case when role=\'Administrator\' then 0 else 1 end,name',(i,))
-  customer_buildings=q("""select b.*,
+  customer_users=q_system('select id,name,email,role,status,last_login from users where organization_id=? order by case when role=\'Administrator\' then 0 else 1 end,name',(i,))
+  customer_buildings=q_system("""select b.*,
    (select count(*) from floors f where f.building_id=b.id) floors_count,
    (select count(*) from assets a where a.building_id=b.id) assets_count,
    (select count(*) from incidents x join assets a on a.id=x.asset_id where a.building_id=b.id and x.status!='Ukončená') incidents_count
    from buildings b where b.organization_id=? order by b.name""",(i,))
-  recent_incidents=q("""select x.*,a.asset_id,a.name asset,b.name building from incidents x
+  recent_incidents=q_system("""select x.*,a.asset_id,a.name asset,b.name building from incidents x
    join assets a on a.id=x.asset_id join buildings b on b.id=a.building_id
    where a.organization_id=? order by x.id desc limit 6""",(i,))
-  recent_orders=q("""select w.*,a.asset_id,a.name asset,b.name building from workorders w
+  recent_orders=q_system("""select w.*,a.asset_id,a.name asset,b.name building from workorders w
    join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
    where a.organization_id=? order by w.id desc limit 6""",(i,))
-  customer_audit=q('select * from audit_log where organization_id=? order by id desc limit 10',(i,))
- last_backup=one("select created from audit_log where organization_id=? and action='BACKUP_EXPORT' order by id desc limit 1",(i,))
- last_login=one("select max(last_login) last_login from users where organization_id=?",(i,))
- access_rows=q('select * from customer_access_log where target_organization_id=? order by id desc limit 20',(i,))
- limits=plan_limits(i)
+  customer_audit=q_system('select * from audit_log where organization_id=? order by id desc limit 10',(i,))
+ last_backup=one_system("select created from audit_log where organization_id=? and action='BACKUP_EXPORT' order by id desc limit 1",(i,))
+ last_login=one_system("select max(last_login) last_login from users where organization_id=?",(i,))
+ access_rows=q_system('select * from customer_access_log where target_organization_id=? order by id desc limit 20',(i,))
+ limits=PLAN_LIMITS.get((customer['plan'] or 'BASIC'),PLAN_LIMITS['BASIC'])
  return render_template('index.html',page='customer',customer=customer,customer_stats=customer_stats,
   customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
   recent_orders=recent_orders,license_days=license_days,customer_limits=limits,customer_audit=customer_audit,
@@ -832,7 +835,7 @@ def platform_customer_detail(i):
 @app.post('/platform/customer/<int:i>/reset-admin-password')
 def platform_customer_reset_admin_password(i):
  if not is_gamo_admin(): abort(403)
- customer=one('select * from organizations where id=? and code<>?',(i,'GAMO'))
+ customer=one_system('select * from organizations where id=? and code<>?',(i,'GAMO'))
  if not customer: abort(404)
  if not support_access_active(customer):
   flash('Reset hesla vyžaduje aktívny support prístup udelený zákazníkom.','error')
@@ -840,10 +843,10 @@ def platform_customer_reset_admin_password(i):
  password=request.form.get('password') or ''
  if len(password)<8:
   flash('Dočasné heslo musí mať aspoň 8 znakov.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
- admin_user=one("select id,name,email from users where organization_id=? and role='Administrator' order by id limit 1",(i,))
+ admin_user=one_system("select id,name,email from users where organization_id=? and role='Administrator' order by id limit 1",(i,))
  if not admin_user:
   flash('Zákazník nemá administrátorský účet.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
- x('update users set password_hash=?,status=? where id=?',(generate_password_hash(password),'Aktívny',admin_user['id']))
+ x_system('update users set password_hash=?,status=? where id=?',(generate_password_hash(password),'Aktívny',admin_user['id']))
  customer_access(i,'GAMO_ADMIN_PASSWORD_RESET',f"Reset hesla administrátora {admin_user['email']}.")
  audit('CUSTOMER_ADMIN_PASSWORD_RESET',f"{customer['code']} · {admin_user['email']}")
  flash('Dočasné heslo zákazníckeho administrátora bolo zmenené.','success')
