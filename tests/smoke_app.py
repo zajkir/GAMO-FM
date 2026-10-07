@@ -255,9 +255,15 @@ assert r.status_code in (302, 303)
 active_notifications = client.get("/api/notifications").get_json()
 assert not any(x.get("title") == "QA resolved incident" for x in active_notifications)
 assert not any(x.get("title") == "QA cancelled overdue" for x in active_notifications)
+# Legacy NULL room area must not break the Digital Twin aggregation.
+null_room_id = app.x(
+    "insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",
+    (floor["id"], "NULL-AREA", "Legacy room without area", None, "GAMO", "LEGACY"),
+)
 building_page = client.get(f"/building/{building['id']}")
 assert building_page.status_code == 200
 assert b"GAMO DIGITAL TWIN" in building_page.data
+assert b'NULL-AREA' in building_page.data
 assert b'data-floor-incidents="1"' in building_page.data
 dashboard_page = client.get("/")
 assert dashboard_page.status_code == 200
@@ -381,6 +387,37 @@ r = viewer_client.post("/settings/save", data={"_csrf": "viewer-csrf", "section"
 assert r.status_code == 403
 assert app.one_system("select v from organization_settings where organization_id=? and k=?", (gamo_org_id, "forbidden")) is None
 
+# Viewer must not be able to bypass hidden UI controls with forged POST requests.
+for path, payload in [
+    ("/add/asset", {"_csrf": "viewer-csrf"}),
+    (f"/edit/building/{building['id']}", {"_csrf": "viewer-csrf", "code": "HACK", "name": "Hacked"}),
+    (f"/status/asset/{asset['id']}", {"_csrf": "viewer-csrf", "status": "Porucha"}),
+    (f"/delete/workorder/{workorder['id']}", {"_csrf": "viewer-csrf"}),
+    (f"/delete/incident/{incident['id']}", {"_csrf": "viewer-csrf"}),
+    (f"/user/{gamo_admin['id']}/update", {
+        "_csrf": "viewer-csrf", "name": "Hacked Admin", "email": "hacked@example.test",
+        "role": "Viewer", "status": "Aktívny"
+    }),
+]:
+    denied = viewer_client.post(path, data=payload, follow_redirects=False)
+    assert denied.status_code == 403, (path, denied.status_code)
+
+denied_upload = viewer_client.post(
+    f"/building/{building['id']}/document",
+    data={"_csrf": "viewer-csrf", "category": "Technická", "document": (io.BytesIO(b"blocked"), "blocked.txt")},
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert denied_upload.status_code == 403
+denied_delete_doc = viewer_client.post(
+    f"/document/{document['id']}/delete", data={"_csrf": "viewer-csrf"}, follow_redirects=False
+)
+assert denied_delete_doc.status_code == 403
+assert app.one_system("select name from buildings where id=?", (building["id"],))["name"] == "Smoke Building Edited"
+assert app.one_system("select status from assets where id=?", (asset["id"],))["status"] == "Servis"
+assert app.one_system("select id from documents where id=?", (document["id"],))
+assert app.one_system("select name from users where id=?", (gamo_admin["id"],))["name"] == "GAMO Administrator"
+
 r = client.get("/reports/export.xlsx")
 assert r.status_code == 200
 book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
@@ -389,6 +426,9 @@ for sheet in ("Súhrn", "Assety", "Údržba", "Incidenty", "Po termíne"):
 assert book["Súhrn"]["A1"].value.startswith("GAMO FACILITY REPORT")
 assert "QA-000001" in [cell.value for row in book["Assety"].iter_rows() for cell in row]
 assert len(book["Súhrn"]._charts) >= 1
+assert book["Súhrn"]["E5"].value == 1
+overdue_values = [cell.value for row in book["Po termíne"].iter_rows() for cell in row]
+assert "QA cancelled overdue" not in overdue_values
 
 # ----- Create a real customer tenant (secure by default) -----
 r = client.post(
