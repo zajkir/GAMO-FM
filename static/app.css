@@ -94,3 +94,5 @@ html{scroll-behavior:smooth}body{font-feature-settings:"cv02","cv03","cv04","cv1
 .detail-btn-icon{display:grid;place-items:center;width:22px;height:22px;border-radius:7px;background:#dfeeff;color:#1761c5;font-size:13px;line-height:1}
 .detail-chip{display:inline-flex!important;align-items:center;gap:6px;padding:7px 10px!important;border-radius:9px;background:#edf5ff;color:#2462ad!important;font-size:9px!important;font-weight:800}
 .detail-chip span{font-size:11px}
+
+.detail-btn.compact{min-width:auto;padding:7px 10px;border-radius:9px;font-size:10px}.detail-btn.compact .detail-btn-icon{width:19px;height:19px;border-radius:6px;font-size:11px}
