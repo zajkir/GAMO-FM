@@ -1468,6 +1468,89 @@ def update_user(i):
   flash('Tento e-mail už používa iný účet.','error')
  return redirect('/admin#usersAdmin')
 
+@app.post('/edit/<what>/<int:i>')
+def edit_record(what,i):
+ f=request.form
+ try:
+  if what=='building':
+   if not owns_building(i): abort(404)
+   code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
+   if not code or not name: raise ValueError()
+   if one('select id from buildings where organization_id=? and upper(code)=? and id<>?',(org_id(),code,i)): raise IntegrityError()
+   x('update buildings set code=?,name=?,address=?,manager=? where id=? and organization_id=?',(code,name,(f.get('address') or '').strip(),(f.get('manager') or '').strip(),i,org_id()))
+   audit('BUILDING_UPDATE',f'{code} · {name}'); flash('Budova bola upravená.','success')
+   return redirect(f'/building/{i}')
+  if what=='floor':
+   if not owns_floor(i): abort(404)
+   row=one('select building_id from floors where id=?',(i,)); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
+   if not code or not name or not row: raise ValueError()
+   if one('select id from floors where building_id=? and upper(code)=? and id<>?',(row['building_id'],code,i)): raise IntegrityError()
+   x('update floors set code=?,name=? where id=?',(code,name,i)); audit('FLOOR_UPDATE',f'{code} · {name}'); flash('Podlažie bolo upravené.','success')
+   return redirect(request.referrer or '/buildings')
+  if what=='room':
+   if not owns_room(i): abort(404)
+   row=one('select r.floor_id,f.building_id from rooms r join floors f on f.id=r.floor_id where r.id=?',(i,))
+   code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
+   if not code or not name or not row: raise ValueError()
+   if one('select id from rooms where floor_id=? and upper(code)=? and id<>?',(row['floor_id'],code,i)): raise IntegrityError()
+   area=max(0,float(f.get('area') or 0))
+   x('update rooms set code=?,name=?,area=?,tenant=?,zone=? where id=?',(code,name,area,(f.get('tenant') or '').strip(),(f.get('zone') or '').strip(),i))
+   audit('ROOM_UPDATE',f'{code} · {name}'); flash('Miestnosť bola upravená.','success')
+   return redirect(request.referrer or '/buildings')
+  if what=='asset':
+   if not owns_asset(i): abort(404)
+   aid=(f.get('asset_id') or '').strip().upper(); name=(f.get('name') or '').strip()
+   building_id=f.get('building_id'); floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id') or None
+   profession=(f.get('profession') or '').strip(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
+   status=f.get('status'); criticality=f.get('criticality')
+   if not all([aid,name,building_id,floor_id,room_id,profession,grp,asset_type]): raise ValueError()
+   if status not in {'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'} or criticality not in {'A','B','C'}: raise ValueError()
+   if not owns_building(building_id): abort(404)
+   if not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError()
+   if not one('select r.id from rooms r join floors fl on fl.id=r.floor_id join buildings b on b.id=fl.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id())): raise ValueError()
+   if parent_id and (not owns_asset(parent_id) or not asset_parent_allowed(i,parent_id)): raise ValueError()
+   if one('select id from assets where organization_id=? and upper(asset_id)=? and id<>?',(org_id(),aid,i)): raise IntegrityError()
+   service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+   old=one('select asset_id,status from assets where id=?',(i,))
+   x('''update assets set asset_id=?,name=?,building_id=?,floor_id=?,room_id=?,profession=?,grp=?,type=?,manufacturer=?,model=?,serial=?,system_id=?,parent_id=?,status=?,criticality=?,service_months=?,revision_months=?,purchase_price=?,ip=?,protocol=?,notes=? where id=? and organization_id=?''',
+    (aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip(),(f.get('model') or '').strip(),(f.get('serial') or '').strip(),(f.get('system_id') or '').strip(),parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip(),(f.get('protocol') or '').strip(),(f.get('notes') or '').strip(),i,org_id()))
+   detail=f"{old['asset_id']} → {aid} · {old['status']} → {status}" if old else f'{aid} · {status}'
+   asset_event(i,'ASSET_UPDATE','Asset upravený',detail); audit('ASSET_UPDATE',detail); flash('Asset bol upravený.','success')
+   return redirect(f'/asset/{i}')
+  if what=='workorder':
+   if not owns_workorder(i): abort(404)
+   allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
+   asset_id=f.get('asset_id'); title=(f.get('title') or '').strip()
+   if not title or not owns_asset(asset_id) or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind: raise ValueError()
+   due=(f.get('due') or '').strip()
+   if due: datetime.strptime(due[:10],'%Y-%m-%d')
+   cost=max(0,float(f.get('cost') or 0))
+   old=one('select status from workorders where id=?',(i,))
+   x('update workorders set asset_id=?,title=?,kind=?,priority=?,status=?,due=?,supplier=?,technician=?,cost=?,description=? where id=?',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip(),i))
+   asset_event(asset_id,'WORKORDER_UPDATE','Pracovný príkaz upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
+   audit('WORKORDER_UPDATE',f'{i} · {title}'); flash('Pracovný príkaz bol upravený.','success')
+   return redirect(request.referrer or '/maintenance')
+  if what=='incident':
+   if not owns_incident(i): abort(404)
+   allowed_severity={'Nízka','Stredná','Vysoká','Kritická','Havária'}; allowed_status={'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'}
+   asset_id=f.get('asset_id'); title=(f.get('title') or '').strip()
+   if not title or not owns_asset(asset_id) or f.get('severity') not in allowed_severity or f.get('status') not in allowed_status: raise ValueError()
+   reported=(f.get('reported') or '').strip()
+   if reported: datetime.strptime(reported[:10],'%Y-%m-%d')
+   cost=max(0,float(f.get('cost') or 0)); old=one('select status from incidents where id=?',(i,))
+   x('update incidents set asset_id=?,title=?,severity=?,status=?,reported=?,impact=?,cause=?,cost=? where id=?',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),cost,i))
+   asset_event(asset_id,'INCIDENT_UPDATE','Incident upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
+   audit('INCIDENT_UPDATE',f'{i} · {title}'); flash('Incident bol upravený.','success')
+   return redirect(request.referrer or '/incidents')
+  abort(404)
+ except IntegrityError:
+  flash('Záznam s rovnakým kódom alebo identifikátorom už existuje.','error')
+ except (ValueError,TypeError):
+  flash('Záznam sa nepodarilo upraviť. Skontroluj povinné polia a zadané hodnoty.','error')
+ except Exception:
+  flash('Pri úprave nastala chyba. Pôvodné dáta zostali zachované.','error')
+ return redirect(request.referrer or '/')
+
 @app.post('/delete/<what>/<int:i>')
 def delete(what,i):
  ownership={
