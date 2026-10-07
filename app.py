@@ -9,6 +9,7 @@ except ImportError:
 from functools import wraps
 import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import HTTPException
 from datetime import date,timedelta,datetime
 from db_migrations import run_migrations
 from openpyxl import Workbook
@@ -1543,6 +1544,8 @@ def edit_record(what,i):
    audit('INCIDENT_UPDATE',f'{i} · {title}'); flash('Incident bol upravený.','success')
    return redirect(request.referrer or '/incidents')
   abort(404)
+ except HTTPException:
+  raise
  except IntegrityError:
   flash('Záznam s rovnakým kódom alebo identifikátorom už existuje.','error')
  except (ValueError,TypeError):
