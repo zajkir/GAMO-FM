@@ -129,6 +129,16 @@ assert customer and customer["plan"] == "BASIC"
 client.get("/logout")
 r = client.post("/login", data={"email": "smoke@example.test", "password": "SmokePass2026!"})
 assert r.status_code in (302, 303), r.status_code
+assert r.headers["Location"].endswith("/account/password")
+r = client.get("/account/password")
+assert r.status_code == 200
+r = client.post("/account/password", data={
+    "_csrf": csrf(),
+    "current_password": "SmokePass2026!",
+    "new_password": "SmokeSecure2026!",
+    "confirm_password": "SmokeSecure2026!",
+}, follow_redirects=False)
+assert r.status_code in (302, 303), r.status_code
 r = client.get("/assets")
 assert r.status_code == 200
 assert b"HVAC-000001" not in r.data
@@ -202,7 +212,7 @@ assert r.status_code in (302, 303)
 
 # Customer explicitly grants temporary support access.
 client.get("/logout")
-r = client.post("/login", data={"email": "smoke@example.test", "password": "SmokePass2026!"})
+r = client.post("/login", data={"email": "smoke@example.test", "password": "SmokeSecure2026!"})
 assert r.status_code in (302, 303)
 r = client.post(
     "/privacy/support-access",
