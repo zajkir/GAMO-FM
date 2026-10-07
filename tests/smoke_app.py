@@ -183,6 +183,9 @@ assert private_building
 r = client.get("/privacy")
 assert r.status_code == 200
 assert b"Private Customer Building" not in r.data
+r = client.get("/privacy/access-log.json")
+assert r.status_code == 200 and r.mimetype == "application/json"
+assert r.get_json()["organization"]["code"] == "SMOKE"
 
 # PostgreSQL RLS must still isolate data even if a future query forgets WHERE organization_id.
 if app.USING_POSTGRES:
