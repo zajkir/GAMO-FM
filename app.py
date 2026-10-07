@@ -98,6 +98,37 @@ def ticket_record(ticket_id):
  if not t: return None
  return t if ticket_staff() or t['created_by']==session.get('user_id') else None
 
+def ticket_unread_count():
+ uid=session.get('user_id'); oid=org_id()
+ if not uid or not oid: return 0
+ if platform_ticket_mode():
+  return int(one_system("""select count(*) n from tickets t join organizations o on o.id=t.organization_id
+   where o.code<>'GAMO' and exists(
+    select 1 from ticket_messages m left join users su on su.id=m.sender_user_id
+    where m.ticket_id=t.id and m.id>coalesce(t.platform_last_read_message_id,0)
+      and (m.sender_user_id is null or su.organization_id=t.organization_id))""")['n'])
+ if ticket_staff():
+  return int(one("""select count(*) n from tickets t
+   where t.organization_id=? and exists(
+    select 1 from ticket_messages m where m.ticket_id=t.id and m.id>coalesce(t.staff_last_read_message_id,0)
+      and (m.sender_user_id is null or m.sender_user_id<>?))""",(oid,uid))['n'])
+ return int(one("""select count(*) n from tickets t where t.organization_id=? and t.created_by=? and exists(
+   select 1 from ticket_messages m where m.ticket_id=t.id and m.id>coalesce(t.customer_last_read_message_id,0)
+     and (m.sender_user_id is null or m.sender_user_id<>t.created_by))""",(oid,uid))['n'])
+
+def ticket_inbox_version():
+ updated_expr="coalesce(max(t.updated)::text,'')" if USING_POSTGRES else "coalesce(max(t.updated),'')"
+ if platform_ticket_mode():
+  r=one_system(f"""select {updated_expr} updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
+   from tickets t join organizations o on o.id=t.organization_id where o.code<>'GAMO'""")
+ elif ticket_staff():
+  r=one(f"""select {updated_expr} updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
+   from tickets t where t.organization_id=?""",(org_id(),))
+ else:
+  r=one(f"""select {updated_expr} updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
+   from tickets t where t.organization_id=? and t.created_by=?""",(org_id(),session.get('user_id')))
+ return f"{r['updated']}|{r['messages']}" if r else '0|0'
+
 def asset_parent_allowed(asset_id,parent_id):
  if not parent_id: return True
  try: current=int(parent_id); target=int(asset_id)
@@ -556,7 +587,10 @@ def ctx():
  brand_name=(org['branding_name'] or org['name']) if org else 'GAMO a.s.'
  brand_color=(org['brand_color'] or '#E31B23') if org else '#E31B23'
  brand_tagline=(org['brand_tagline'] or 'FACILITY MANAGEMENT') if org else 'FACILITY MANAGEMENT'
- return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),can=can)
+ unread_tickets=0
+ try: unread_tickets=ticket_unread_count()
+ except Exception: unread_tickets=0
+ return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
@@ -610,7 +644,8 @@ def dashboard():
   'critical':one("select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=? and a.criticality='A'",(oid,))['n'],
   'orders':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status not in ('Ukončené','Zrušené')",(oid,))['n'],
   'high_incidents':one("select count(*) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and i.status not in ('Ukončená','Vyriešená') and i.severity in ('Vysoká','Kritická','Havária')",(oid,))['n'],
-  'overdue':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status not in ('Ukončené','Zrušené') and w.due is not null and w.due!='' and date(w.due)<date('now')",(oid,))['n']
+  'overdue':one("select count(*) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and w.status not in ('Ukončené','Zrušené') and w.due is not null and w.due!='' and date(w.due)<date('now')",(oid,))['n'],
+  'tickets':one("select count(*) n from tickets where organization_id=? and status not in ('Vyriešený','Uzavretý')",(oid,))['n']
  }
  report={
   'maintenance_cost':one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
@@ -645,23 +680,33 @@ def tickets():
 
  oid=org_id(); staff=ticket_staff()
  base="""select t.*,cu.name creator_name,au.name assigned_name,b.code building_code,a.asset_id asset_code,
-  (select count(*) from ticket_messages m where m.ticket_id=t.id) message_count
+  (select count(*) from ticket_messages m where m.ticket_id=t.id) message_count,
+  (select count(*) from ticket_messages m where m.ticket_id=t.id and m.id>coalesce(t.staff_last_read_message_id,0)
+    and (m.sender_user_id is null or m.sender_user_id<>?)) staff_unread,
+  (select count(*) from ticket_messages m where m.ticket_id=t.id and m.id>coalesce(t.customer_last_read_message_id,0)
+    and (m.sender_user_id is null or m.sender_user_id<>t.created_by)) customer_unread
   from tickets t
   left join users cu on cu.id=t.created_by
   left join users au on au.id=t.assigned_to
   left join buildings b on b.id=t.building_id
   left join assets a on a.id=t.asset_id
   where t.organization_id=?"""
- params=[oid]
+ params=[uid,oid]
  if not staff:
   base+=" and t.created_by=?"; params.append(uid)
  base+=" order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"
- rows=q(base,tuple(params))
- stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':0}
+ rows=[dict(r) for r in q(base,tuple(params))]
+ for r in rows:
+  r['user_unread']=int((r['staff_unread'] if staff else r['customer_unread']) or 0)
+ stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if r['user_unread']>0)}
  buildings=q('select id,code,name from buildings where organization_id=? order by name',(oid,))
  assets=q('select id,asset_id,name,building_id from assets where organization_id=? order by asset_id',(oid,))
  staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by case role when 'Facility Manager' then 0 when 'Administrator' then 1 else 2 end,name",(oid,))
  return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users,ticket_platform_inbox=False)
+
+@app.get('/api/tickets/inbox-state')
+def api_ticket_inbox_state():
+ return jsonify({'version':ticket_inbox_version(),'unread':ticket_unread_count()})
 
 @app.post('/tickets/create')
 def ticket_create():
