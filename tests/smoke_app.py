@@ -267,6 +267,7 @@ assert b'NULL-AREA' in building_page.data
 assert b'data-floor-incidents="1"' in building_page.data
 dashboard_page = client.get("/")
 assert dashboard_page.status_code == 200
+assert b"dashboard-commandbar" in dashboard_page.data
 
 # ----- Facility editing regression coverage -----
 r = client.post(
@@ -309,6 +310,11 @@ assert r.status_code in (302, 303)
 asset = app.one("select * from assets where id=?", (asset["id"],))
 assert asset["name"] == "Smoke Asset Edited" and asset["status"] == "Servis" and asset["criticality"] == "A"
 assert float(asset["purchase_price"]) == 1500.25
+building_after_asset_edit = client.get(f"/building/{building['id']}#twin")
+assert building_after_asset_edit.status_code == 200
+assert b'data-floor-critical="1"' in building_after_asset_edit.data
+assert b'data-floor-faults=' in building_after_asset_edit.data
+assert b"dt2FocusButton" in building_after_asset_edit.data and b"dt2TechButton" in building_after_asset_edit.data
 
 cycle_edit = dict(asset_edit)
 cycle_edit.update({"_csrf": csrf(), "name": "SHOULD NOT SAVE", "parent_id": str(asset["id"])})
@@ -572,6 +578,12 @@ assert client.post(
 force_user_session(manager)
 manager_list = client.get("/tickets")
 assert manager_list.status_code == 200 and b"Nefunguje klimatiz" in manager_list.data
+assert b"ticket-row unread" in manager_list.data
+assert b"1 nov" in manager_list.data
+manager_state = client.get("/api/tickets/inbox-state")
+assert manager_state.status_code == 200
+assert manager_state.get_json()["unread"] >= 1
+assert "|" in manager_state.get_json()["version"]
 
 # Regression: the second participant must see the first participant's message
 # through the live API without sending anything or refreshing the whole page.
@@ -580,6 +592,10 @@ assert live_initial.status_code == 200
 live_initial_json = live_initial.get_json()
 assert any(m["body"].startswith("Prosím správcu") for m in live_initial_json["messages"])
 first_message_id = live_initial_json["last_id"]
+manager_after_read = client.get("/tickets")
+assert manager_after_read.status_code == 200
+assert b"ticket-row unread" not in manager_after_read.data
+assert client.get("/api/tickets/inbox-state").get_json()["unread"] == 0
 
 # Live/AJAX reply returns JSON instead of forcing a page reload.
 r = client.post(
@@ -605,6 +621,10 @@ assert r.status_code in (302, 303)
 force_user_session(requester)
 notifications = client.get("/api/notifications").get_json()
 assert any(x.get("url") == f"/ticket/{ticket['id']}" for x in notifications)
+requester_list_unread = client.get("/tickets")
+assert requester_list_unread.status_code == 200
+assert b"ticket-row unread" in requester_list_unread.data
+assert client.get("/api/tickets/inbox-state").get_json()["unread"] >= 1
 
 # Requester receives the manager reply immediately from the live endpoint.
 live_reply = client.get(f"/api/ticket/{ticket['id']}/messages?after={first_message_id}")
