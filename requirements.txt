@@ -4,3 +4,5 @@ pywebview>=5.4,<7
 gunicorn>=23.0,<24
 psycopg[binary]>=3.2,<4
 openpyxl>=3.1,<4
+pyotp>=2.9,<3
+qrcode[pil]>=8,<9
