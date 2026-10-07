@@ -149,6 +149,14 @@ assert r.status_code == 200 and r.get_json() == []
 r = client.get("/api/search?q=QA-000001")
 assert r.status_code == 200 and r.get_json() == []
 
+# Tenant settings are private as well: GAMO's setting cannot bleed into this customer.
+r = client.get("/api/setting?section=smoke-test")
+assert r.status_code == 200 and r.get_json()["value"] == ""
+r = client.get(f"/api/floors/{building['id']}")
+assert r.status_code == 404
+r = client.get(f"/api/rooms/{floor['id']}")
+assert r.status_code == 404
+
 # Cross-tenant object IDs must stay inaccessible.
 r = client.get(f"/building/{building['id']}")
 assert r.status_code == 404
@@ -156,6 +164,9 @@ r = client.get(f"/asset/{asset['id']}")
 assert r.status_code == 404
 r = client.post(f"/status/asset/{asset['id']}", data={"_csrf": csrf(), "status": "Porucha"})
 assert r.status_code == 404
+r = client.post(f"/delete/asset/{asset['id']}", data={"_csrf": csrf()})
+assert r.status_code == 404
+assert app.one_system("select id from assets where id=?", (asset["id"],))
 
 # Create a private customer object used to verify consent-gated GAMO support access.
 r = client.post("/add/building", data={
