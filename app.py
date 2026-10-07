@@ -117,12 +117,16 @@ def ticket_unread_count():
      and (m.sender_user_id is null or m.sender_user_id<>t.created_by))""",(oid,uid))['n'])
 
 def ticket_inbox_version():
+ updated_expr="coalesce(max(t.updated)::text,'')" if USING_POSTGRES else "coalesce(max(t.updated),'')"
  if platform_ticket_mode():
-  r=one_system("""select coalesce(max(t.updated),'') updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
+  r=one_system(f"""select {updated_expr} updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
    from tickets t join organizations o on o.id=t.organization_id where o.code<>'GAMO'""")
- else:
-  r=one("""select coalesce(max(updated),'') updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
+ elif ticket_staff():
+  r=one(f"""select {updated_expr} updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
    from tickets t where t.organization_id=?""",(org_id(),))
+ else:
+  r=one(f"""select {updated_expr} updated,coalesce(sum((select count(*) from ticket_messages m where m.ticket_id=t.id)),0) messages
+   from tickets t where t.organization_id=? and t.created_by=?""",(org_id(),session.get('user_id')))
  return f"{r['updated']}|{r['messages']}" if r else '0|0'
 
 def asset_parent_allowed(asset_id,parent_id):
@@ -691,7 +695,7 @@ def tickets():
  if not staff:
   base+=" and t.created_by=?"; params.append(uid)
  base+=" order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"
- rows=q(base,tuple(params))
+ rows=[dict(r) for r in q(base,tuple(params))]
  for r in rows:
   r['user_unread']=int((r['staff_unread'] if staff else r['customer_unread']) or 0)
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if r['user_unread']>0)}
