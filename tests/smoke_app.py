@@ -136,6 +136,52 @@ assert b"HVAC-000001" not in r.data
 r = client.get("/api/buildings/options")
 assert r.status_code == 200 and r.get_json() == []
 
+r = client.get("/api/search?q=QA-000001")
+assert r.status_code == 200 and r.get_json() == []
+
+# Cross-tenant object IDs must stay inaccessible.
+r = client.get(f"/building/{building['id']}")
+assert r.status_code == 404
+r = client.get(f"/asset/{asset['id']}")
+assert r.status_code == 404
+r = client.post(f"/status/asset/{asset['id']}", data={"_csrf": csrf(), "status": "Porucha"})
+assert r.status_code == 404
+
+# Create a private customer object used to verify consent-gated GAMO support access.
+r = client.post("/add/building", data={
+    "_csrf": csrf(), "code": "PRIVATE", "name": "Private Customer Building",
+    "address": "Customer only", "manager": "Smoke Admin", "floors_count": "1"
+})
+assert r.status_code in (302, 303)
+private_building = app.one_system(
+    "select * from buildings where organization_id=? and code=?",
+    (customer["id"], "PRIVATE"),
+)
+assert private_building
+
+r = client.get("/privacy")
+assert r.status_code == 200
+assert b"Private Customer Building" not in r.data
+
+# PostgreSQL RLS must still isolate data even if a future query forgets WHERE organization_id.
+if app.USING_POSTGRES:
+    from flask import session as flask_session
+    with app.app.test_request_context("/"):
+        flask_session["organization_id"] = customer["id"]
+        flask_session["organization_code"] = "SMOKE"
+        flask_session["user_role"] = "Administrator"
+        assert app.one("select count(*) n from buildings")["n"] == 1
+        assert app.one("select * from buildings where id=?", (building["id"],)) is None
+        blocked = False
+        try:
+            app.x(
+                "insert into buildings(code,name,organization_id) values(?,?,?)",
+                ("ESCAPE", "Cross tenant attempt", gamo_org_id),
+            )
+        except Exception:
+            blocked = True
+        assert blocked, "PostgreSQL RLS allowed a cross-tenant INSERT"
+
 r = client.get("/reports/export.xlsx")
 assert r.status_code == 200
 empty_book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
@@ -143,5 +189,43 @@ assert "Súhrn" in empty_book.sheetnames
 
 r = client.post("/settings/save", data={"section": "missing-csrf", "value": "x"})
 assert r.status_code == 400
+
+# GAMO may see aggregate customer metadata, but not customer content without consent.
+client.get("/logout")
+r = client.post("/login", data={"email": "admin@gamo.sk", "password": "TestGamo2026!"})
+assert r.status_code in (302, 303)
+r = client.get(f"/platform/customer/{customer['id']}")
+assert r.status_code == 200
+assert b"Private Customer Building" not in r.data
+r = client.get(f"/platform/customer/{customer['id']}/backup", follow_redirects=False)
+assert r.status_code in (302, 303)
+
+# Customer explicitly grants temporary support access.
+client.get("/logout")
+r = client.post("/login", data={"email": "smoke@example.test", "password": "SmokePass2026!"})
+assert r.status_code in (302, 303)
+r = client.post(
+    "/privacy/support-access",
+    data={"_csrf": csrf(), "action": "grant", "hours": "1", "reason": "Automated privacy test"},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+support_org = app.one_system("select * from organizations where id=?", (customer["id"],))
+assert bool(support_org["support_access_enabled"])
+
+# GAMO can now access only through the audited support window.
+client.get("/logout")
+r = client.post("/login", data={"email": "admin@gamo.sk", "password": "TestGamo2026!"})
+assert r.status_code in (302, 303)
+r = client.get(f"/platform/customer/{customer['id']}")
+assert r.status_code == 200
+assert b"Private Customer Building" in r.data
+r = client.get(f"/platform/customer/{customer['id']}/backup")
+assert r.status_code == 200 and r.mimetype == "application/zip"
+access = app.one_system(
+    "select action from customer_access_log where target_organization_id=? and action='GAMO_BACKUP_EXPORT' order by id desc limit 1",
+    (customer["id"],),
+)
+assert access
 
 print("GAMO smoke test OK")
