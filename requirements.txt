@@ -3,3 +3,4 @@ waitress>=3.0,<4
 pywebview>=5.4,<7
 gunicorn>=23.0,<24
 psycopg[binary]>=3.2,<4
+openpyxl>=3.1,<4
