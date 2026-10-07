@@ -814,8 +814,8 @@ after_demo_assets = app.one_system(
 )["n"]
 assert before_demo_assets == after_demo_assets
 assert app.one_system(
-    "select count(*) n from assets where asset_id like 'HVAC-900%' and organization_id<>?",
-    (customer["id"],),
+    "select count(*) n from assets where asset_id like ? and organization_id<>?",
+    ("HVAC-900%", customer["id"]),
 )["n"] == 0
 
 # Production restart regression: RLS may already be active with an empty users table.
