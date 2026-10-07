@@ -16,6 +16,16 @@ DB=os.path.join(DATA_DIR,'gamo.db')
 LOGIN_WINDOW=300
 LOGIN_MAX_ATTEMPTS=6
 _login_attempts={}
+ROLE_PERMISSIONS={
+ 'Administrator':{'view','facility_write','asset_write','maintenance_write','incident_write','documents_write','users_manage','settings_manage','audit_view'},
+ 'Facility Manager':{'view','facility_write','asset_write','maintenance_write','incident_write','documents_write'},
+ 'Technik':{'view','maintenance_write','incident_write'},
+ 'Servisný technik':{'view','maintenance_write','incident_write'},
+ 'Viewer':{'view'}
+}
+def can(permission):
+ return permission in ROLE_PERMISSIONS.get(session.get('user_role','Viewer'),{'view'})
+
 def audit(action,detail=''):
  try:
   x("insert into audit_log(user_id,user_name,action,detail,ip) values(?,?,?,?,?)",(session.get('user_id'),session.get('user_name','Systém'),action,detail,request.headers.get('X-Forwarded-For',request.remote_addr or '')))
@@ -56,16 +66,19 @@ with con() as c:
 def require_login():
  if request.endpoint in ('login','static') or request.path.startswith('/static/'): return
  if not session.get('user_id'): return redirect(url_for('login',next=request.path))
- # Server-side RBAC: only administrators may access administration/user/configuration endpoints.
+ # Server-side RBAC. UI hiding is only convenience; every write is enforced here.
  role=session.get('user_role','Viewer')
- admin_endpoints={'admin','update_user','delete_user','save_setting'}
- if request.endpoint in admin_endpoints or request.path.startswith('/admin') or request.path.startswith('/settings/'):
-  if role!='Administrator':
-   flash('Na túto časť nemáš administrátorské oprávnenie.','error')
-   return redirect('/')
- if request.endpoint=='add' and request.view_args and request.view_args.get('what')=='user' and role!='Administrator':
-  flash('Používateľov môže spravovať iba administrátor.','error')
-  return redirect('/')
+ if request.path.startswith('/admin') or request.path.startswith('/settings/') or request.endpoint in {'admin','update_user'}:
+  if not can('users_manage') and not can('settings_manage'):
+   flash('Na túto časť nemáš administrátorské oprávnenie.','error'); return redirect('/')
+ if request.method in {'POST','PUT','PATCH','DELETE'}:
+  what=(request.view_args or {}).get('what')
+  needed={'user':'users_manage','building':'facility_write','floor':'facility_write','room':'facility_write','asset':'asset_write','workorder':'maintenance_write','incident':'incident_write'}.get(what)
+  if request.endpoint in {'upload_building_document','delete_document'}: needed='documents_write'
+  if request.endpoint=='save_setting': needed='settings_manage'
+  if request.endpoint=='update_user': needed='users_manage'
+  if needed and not can(needed):
+   flash('Tvoja rola nemá oprávnenie vykonať túto zmenu.','error'); return redirect(request.referrer or '/')
 
 @app.route('/login',methods=['GET','POST'])
 def login():
@@ -90,7 +103,7 @@ def logout():
  session.clear(); return redirect('/login')
 
 @app.context_processor
-def ctx(): return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role','')})
+def ctx(): return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'name':session.get('user_name',''),'role':session.get('user_role','')},can=can)
 @app.route('/')
 def dashboard():
  s={'assets':one('select count(*) n from assets')['n'],'buildings':one('select count(*) n from buildings')['n'],'rooms':one('select count(*) n from rooms')['n'],'open':one("select count(*) n from incidents where status!='Ukončená'")['n'],'critical':one("select count(*) n from assets where criticality='A'")['n'],'orders':one("select count(*) n from workorders where status!='Ukončené'")['n'],'high_incidents':one("select count(*) n from incidents where status!='Ukončená' and severity in ('Vysoká','Kritická','Havária')")['n'],'overdue':one("select count(*) n from workorders where status!='Ukončené' and due is not null and due!='' and date(due)<date('now')")['n']}
@@ -237,7 +250,7 @@ def api_health():
   'api':'online',
   'database_ms':db_ms,
   'response_ms':round((time.time()-started)*1000,1),
-  'version':'9.0.0.4',
+  'version':'9.0.0.5',
   'counts':counts,
   'checked_at':datetime.now().isoformat(timespec='seconds')
  }), (200 if ok else 503)
