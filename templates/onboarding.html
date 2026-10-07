@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Nastavenie · {{org.branding_name or org.name}}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="onboarding-page" style="--brand:{{org.brand_color or '#E31B23'}}">
+  <div class="onboarding-shell">
+    <section class="onboarding-side">
+      <div class="onboarding-logo">{{org.code[:1]|upper}}</div>
+      <span class="onboarding-kicker">GAMO FACILITY PLATFORM</span>
+      <h1>Vitaj, {{org.branding_name or org.name}}.</h1>
+      <p>Prvé firemné prostredie nastavíme za pár minút. Dáta budú patriť iba tvojej organizácii.</p>
+      <div class="onboarding-steps">
+        <div class="done"><i>✓</i><span><b>Organizácia</b><small>{{org.name}} · {{org.plan}}</small></span></div>
+        <div class="active"><i>2</i><span><b>Prvá budova</b><small>Objekt a základná štruktúra podlaží</small></span></div>
+        <div><i>3</i><span><b>Miestnosti</b><small>Priestory, plochy a prevádzkové zóny</small></span></div>
+        <div><i>4</i><span><b>Assety</b><small>Technológie, údržba a incidenty</small></span></div>
+      </div>
+      <div class="onboarding-license">
+        <small>LICENČNÝ PLÁN</small>
+        <b>{{org.plan}}</b>
+        <span>{{limits.buildings if limits.buildings is not none else '∞'}} budov · {{limits.users if limits.users is not none else '∞'}} používateľov · {{limits.assets if limits.assets is not none else '∞'}} assetov</span>
+      </div>
+    </section>
+
+    <section class="onboarding-card">
+      <div class="onboarding-card-head">
+        <div><span class="admin-kicker">STEP 2 / 4</span><h2>Vytvor prvú budovu</h2><p>Základ, na ktorý sa naviažu podlažia, miestnosti, technológie a servis.</p></div>
+        <span class="onboarding-secure">● SECURE TENANT</span>
+      </div>
+      {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flashwrap onboarding-flash">{% for cat,msg in messages %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}</div>{% endif %}{% endwith %}
+      <form method="post" class="onboarding-form">
+        <input type="hidden" name="_csrf" value="{{csrf_token}}">
+        <div class="field"><label>Kód budovy</label><input name="code" required maxlength="20" placeholder="A"><small>Napr. A, HQ, BB01</small></div>
+        <div class="field wide"><label>Názov budovy</label><input name="name" required placeholder="Administratívne centrum"><small>Názov, ktorý sa bude zobrazovať v portfóliu</small></div>
+        <div class="field wide"><label>Adresa</label><input name="address" placeholder="Ulica, mesto"><small>Voliteľné, dá sa doplniť neskôr</small></div>
+        <div class="field"><label>Správca objektu</label><input name="manager" value="{{session.user_name or ''}}" placeholder="Facility Manager"></div>
+        <div class="field"><label>Počet podlaží</label><input name="floors_count" type="number" min="1" max="50" value="3" required><small>Automaticky vytvoríme 1.NP, 2.NP…</small></div>
+        <div class="onboarding-preview">
+          <span>▦</span>
+          <div><b>Čo sa vytvorí?</b><small>Budova + základné podlažia. Miestnosti a assety doplníš následne priamo v aplikácii.</small></div>
+        </div>
+        <button class="onboarding-submit" type="submit"><span>Vytvoriť prostredie</span><b>→</b></button>
+      </form>
+      <form method="post" action="/onboarding/skip" class="onboarding-skip">
+        <input type="hidden" name="_csrf" value="{{csrf_token}}">
+        <button type="submit">Preskočiť onboarding a prejsť do aplikácie</button>
+      </form>
+      <div class="onboarding-foot">Powered by <b>GAMO Facility Platform</b> · oddelené zákaznícke prostredie</div>
+    </section>
+  </div>
+</body>
+</html>
