@@ -1,13 +1,47 @@
 <!doctype html>
 <html lang="sk">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MFA · GAMO a.s.</title><link rel="stylesheet" href="/static/app.css"></head>
-<body class="security-auth-page">
- <main class="security-auth-card">
-  <div class="security-auth-brand"><span>G</span><div><b>GAMO a.s.</b><small>SECURE SIGN-IN</small></div></div>
-  <div class="security-auth-icon">⌾</div>
-  <span class="admin-kicker">SECOND FACTOR</span><h1>Overenie prihlásenia</h1><p>Ahoj {{user_name}}. Zadaj 6-miestny kód z autentifikátora alebo jeden recovery kód.</p>
-  {% if error %}<div class="mfa-error">{{error}}</div>{% endif %}
-  <form method="post" class="mfa-login-form"><input type="hidden" name="_csrf" value="{{csrf_token}}"><label>Overovací kód</label><input name="code" autocomplete="one-time-code" inputmode="numeric" autofocus required placeholder="123456 alebo recovery kód"><button type="submit">Overiť a pokračovať →</button></form>
-  <a class="security-auth-back" href="/login">← Späť na prihlásenie</a>
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Bezpečnostné overenie · GAMO a.s.</title>
+ <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="mfa-login-v4">
+ <main class="mfa-login-shell">
+  <section class="mfa-login-visual">
+   <div class="mfa-login-brand"><span>G</span><div><b>GAMO a.s.</b><small>SMART FACILITY PLATFORM</small></div></div>
+   <div class="mfa-shield"><i>✓</i><span></span><span></span></div>
+   <span class="mfa-kicker">SECURE ACCESS · SECOND FACTOR</span>
+   <h1>Chránime prístup<br>k tvojim <em>firemným dátam.</em></h1>
+   <p>Druhý faktor potvrdzuje, že sa prihlasuješ naozaj ty — aj keby niekto poznal tvoje heslo.</p>
+   <div class="mfa-trust-grid">
+    <div><i>01</i><b>Jednorazový kód</b><small>Kód sa mení každých približne 30 sekúnd.</small></div>
+    <div><i>02</i><b>Tenant bezpečnosť</b><small>Prístup ostáva viazaný na tvoju organizáciu.</small></div>
+    <div><i>03</i><b>Recovery ochrana</b><small>Ak nemáš telefón, použi jednorazový recovery kód.</small></div>
+   </div>
+  </section>
+  <section class="mfa-login-panel">
+   <div class="mfa-login-card">
+    <div class="mfa-login-card-top"><span class="mfa-mini-shield">⌾</span><div><small>GAMO SECURITY</small><b>Overenie prihlásenia</b></div><span class="mfa-secure-chip"><i></i> SECURE</span></div>
+    <div class="mfa-user-pill"><span>{{(user_name or 'U')[:2]|upper}}</span><div><small>PRIHLASUJE SA</small><b>{{user_name}}</b></div></div>
+    <h2>Zadaj overovací kód</h2>
+    <p>Otvor svoju autentifikačnú aplikáciu a prepíš aktuálny 6-miestny kód. Môžeš použiť aj recovery kód.</p>
+    {% if error %}<div class="mfa-error-v4"><span>!</span><div><b>Overenie neprešlo</b><small>{{error}}</small></div></div>{% endif %}
+    <form method="post" class="mfa-code-form" id="mfaCodeForm">
+     <input type="hidden" name="_csrf" value="{{csrf_token}}">
+     <label for="mfaCode">Overovací alebo recovery kód</label>
+     <div class="mfa-code-input-wrap"><span>•••</span><input id="mfaCode" name="code" autocomplete="one-time-code" inputmode="numeric" autofocus required maxlength="24" placeholder="123 456"><i>⌾</i></div>
+     <small class="mfa-code-help">Kód neposielaj nikomu. GAMO support si ho nikdy nebude pýtať.</small>
+     <button class="mfa-verify-btn" type="submit"><span>Overiť a pokračovať</span><b>→</b></button>
+    </form>
+    <div class="mfa-card-foot"><a href="/login">← Späť na prihlásenie</a><span>Chránené MFA · šifrovaná relácia</span></div>
+   </div>
+  </section>
  </main>
-</body></html>
+ <script>
+ const input=document.getElementById('mfaCode');
+ input?.addEventListener('input',()=>{if(/^\d[\d\s]*$/.test(input.value)){const raw=input.value.replace(/\D/g,'').slice(0,6);input.value=raw.length>3?raw.slice(0,3)+' '+raw.slice(3):raw;}});
+ document.getElementById('mfaCodeForm')?.addEventListener('submit',()=>{input.value=input.value.replace(/\s/g,'')});
+ </script>
+</body>
+</html>
