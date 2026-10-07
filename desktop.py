@@ -111,6 +111,44 @@ def _show_startup_error(message):
     root.destroy()
 
 
+
+class DesktopApi:
+    """Native window controls exposed only inside the installed pywebview client."""
+
+    def __init__(self):
+        self.window = None
+
+    def bind_window(self, window):
+        self.window = window
+
+    def toggle_fullscreen(self):
+        try:
+            if self.window:
+                self.window.toggle_fullscreen()
+                return True
+        except Exception as exc:
+            print(f'Fullscreen toggle failed: {exc}')
+        return False
+
+    def maximize(self):
+        try:
+            if self.window:
+                self.window.maximize()
+                return True
+        except Exception as exc:
+            print(f'Maximize failed: {exc}')
+        return False
+
+    def restore(self):
+        try:
+            if self.window:
+                self.window.restore()
+                return True
+        except Exception as exc:
+            print(f'Restore failed: {exc}')
+        return False
+
+
 def _show_desktop_window(window):
     """Open the native client maximized while keeping normal Windows controls."""
     try:
@@ -151,6 +189,7 @@ def main():
             raise RuntimeError('GAMO a.s. lokálny server sa nepodarilo spustiť.')
         target_url = f'http://{HOST}:{PORT}'
 
+    api = DesktopApi()
     window = webview.create_window(
         f'GAMO a.s. {current_version()} — Facility Platform',
         target_url,
@@ -160,7 +199,9 @@ def main():
         resizable=True,
         confirm_close=True,
         text_select=True,
+        js_api=api,
     )
+    api.bind_window(window)
     webview.start(_show_desktop_window, window, debug=False)
 
 

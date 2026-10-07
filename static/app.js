@@ -267,6 +267,20 @@ function initTicketInboxWatch(){
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_INBOX_TIMER));
 }
 function filterRows(){let v=document.querySelector('#search').value.toLowerCase();document.querySelectorAll('#assettable tr').forEach((r,i)=>{if(i)r.style.display=r.innerText.toLowerCase().includes(v)?'':'none'})}
+async function toggleDesktopFullscreen(){
+ try{
+  if(window.pywebview&&window.pywebview.api&&window.pywebview.api.toggle_fullscreen){
+   const ok=await window.pywebview.api.toggle_fullscreen();
+   if(ok!==false)return;
+  }
+  if(!document.fullscreenElement&&document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();
+  else if(document.fullscreenElement&&document.exitFullscreen)await document.exitFullscreen();
+ }catch(e){console.warn('Fullscreen toggle failed',e)}
+}
+document.addEventListener('keydown',e=>{
+ if(e.key==='F11'){e.preventDefault();toggleDesktopFullscreen()}
+});
+
 function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
 const NOTIFICATION_READ_KEY='gamo_read_notifications_v1';
 function notificationReadSet(){try{return new Set(JSON.parse(localStorage.getItem(NOTIFICATION_READ_KEY)||'[]'))}catch(e){return new Set()}}

@@ -685,3 +685,31 @@ button:disabled{cursor:not-allowed;opacity:.58}
  .config-modal-hero b{font-size:20px}
  .admin-v2-nav button{font-size:11px}
 }
+
+
+/* Desktop readability 9.0.0.10 */
+.fullscreen-btn{font-size:18px!important;line-height:1;color:#294766}
+.fullscreen-btn:hover{background:#edf4ff;color:#1f63dc}
+body small{font-size:10px;line-height:1.42}
+.admin-kicker,.eyebrow{font-size:10px;letter-spacing:.11em}
+.adm-table-head,.ticket-kpis small,.customer-ops-strip small,.report-kpis small,.privacy-kpis small{font-size:9.5px}
+.adm-metric small{font-size:9.5px}.adm-metric em{font-size:10.5px}
+.admin-version small{font-size:9px}.admin-version span{font-size:10px}
+.ticket-hero p,.ticket-kpis span,.ticket-row small,.ticket-message-meta,.ticket-context-card small{font-size:10.5px;line-height:1.45}
+.customer-ops-strip b{font-size:11px}.customer-ops-strip small{line-height:1.35}
+.dt2-inspector{font-size:11px}
+.dt2-selected-grid small{font-size:9px!important;line-height:1.35}
+.dt2-selected-grid b{font-size:12px}
+.dt2-floor-list button b{font-size:11px!important}
+.dt2-floor-list button small{font-size:9px!important;line-height:1.35}
+.dt2-floor-list button em,.dt2-floor-list button>i{font-size:8px!important}
+.dt2-legend{font-size:9px}
+.dt2-head p,.dt2-inspector p{font-size:10.5px;line-height:1.45}
+.telemetry-label,.telemetry-meta,.twin-meta small{font-size:10px}
+@media(min-width:1200px){
+ body{font-size:14px}
+ aside nav a{font-size:12px}
+ .field label{font-size:12px}
+ table{font-size:12px}
+ th{font-size:10px}
+}
