@@ -40,6 +40,8 @@ jobs:
         run: python -m py_compile app.py db_migrations.py desktop.py updater.py launcher.py
       - name: Check JavaScript syntax
         run: node --check static/app.js
+      - name: Check launcher Canvas options
+        run: python tests/launcher_ui_static.py
       - name: Run SQLite smoke tests
         run: python tests/smoke_app.py
       - name: Create non-superuser PostgreSQL app role
