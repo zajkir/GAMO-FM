@@ -14,7 +14,7 @@ from updater import (
     check_for_update,
     current_version,
     download_update,
-    launch_installer,
+    launch_installer_after_process_exit,
 )
 
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -395,8 +395,8 @@ class Launcher(tk.Tk):
             )
             backup_user_data("pre_update")
             self.after(0, lambda: self.set_status("Aktualizácia je pripravená", "Spúšťam bezpečný installer.", "online"))
-            launch_installer(installer)
-            self.after(700, self.destroy)
+            launch_installer_after_process_exit(installer, os.getpid())
+            self.after(0, self.destroy)
         except Exception as exc:
             self.after(0, lambda: self._update_failed(str(exc)))
 
