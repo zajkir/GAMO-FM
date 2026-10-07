@@ -265,12 +265,151 @@ def _migration_8(db, using_postgres):
 
 
 def _migration_9(db, using_postgres):
-    """Strengthen tenant referential integrity and prevent cross-organization relationships."""
+    """Repair safe legacy orphans, then enforce tenant referential integrity."""
     if not using_postgres:
         return
 
-    # Refuse to apply hard constraints over inconsistent legacy data. This makes
-    # a bad historical row visible instead of silently breaking tenant privacy.
+    platform = "current_setting('gamo.platform_admin', true) = '1'"
+
+    # Preserve a forensic copy of every automatically repaired legacy record.
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS data_repair_log(
+            id BIGSERIAL PRIMARY KEY,
+            source_table TEXT NOT NULL,
+            source_id BIGINT,
+            issue TEXT NOT NULL,
+            snapshot JSONB,
+            repaired_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    db.execute("ALTER TABLE data_repair_log ENABLE ROW LEVEL SECURITY")
+    db.execute("ALTER TABLE data_repair_log FORCE ROW LEVEL SECURITY")
+    db.execute("DROP POLICY IF EXISTS gamo_platform_data_repair_log ON data_repair_log")
+    db.execute(
+        f"""CREATE POLICY gamo_platform_data_repair_log ON data_repair_log
+            USING ({platform}) WITH CHECK ({platform})"""
+    )
+
+    gamo = db.execute("select id from organizations where code='GAMO'").fetchone()
+    if not gamo:
+        raise RuntimeError("Tenant integrity migration requires the internal GAMO organization")
+    gamo_org = gamo["id"] if isinstance(gamo, dict) else gamo[0]
+
+    def scalar(row, key="id"):
+        if row is None:
+            return None
+        return row[key] if isinstance(row, dict) else row[0]
+
+    def ensure_legacy_asset():
+        row = db.execute(
+            "select id from assets where organization_id=%s and asset_id='LEGACY-UNASSIGNED'",
+            (gamo_org,),
+        ).fetchone()
+        if row:
+            return scalar(row)
+
+        building = db.execute(
+            "select id from buildings where organization_id=%s and code='__LEGACY__'",
+            (gamo_org,),
+        ).fetchone()
+        building_id = scalar(building)
+        if not building_id:
+            building_id = scalar(
+                db.execute(
+                    """insert into buildings(code,name,address,manager,customer,status,organization_id)
+                       values('__LEGACY__','Legacy / nepriradené záznamy','','GAMO System',
+                              'GAMO a.s.','Aktívna',%s) returning id""",
+                    (gamo_org,),
+                ).fetchone()
+            )
+
+        floor = db.execute(
+            "select id from floors where building_id=%s and code='LEGACY'",
+            (building_id,),
+        ).fetchone()
+        floor_id = scalar(floor)
+        if not floor_id:
+            floor_id = scalar(
+                db.execute(
+                    "insert into floors(building_id,code,name) values(%s,'LEGACY','Nepriradené') returning id",
+                    (building_id,),
+                ).fetchone()
+            )
+
+        room = db.execute(
+            "select id from rooms where floor_id=%s and code='LEGACY'",
+            (floor_id,),
+        ).fetchone()
+        room_id = scalar(room)
+        if not room_id:
+            room_id = scalar(
+                db.execute(
+                    """insert into rooms(floor_id,code,name,area,tenant,zone)
+                       values(%s,'LEGACY','Nepriradené servisné záznamy',0,'GAMO','LEGACY')
+                       returning id""",
+                    (floor_id,),
+                ).fetchone()
+            )
+
+        return scalar(
+            db.execute(
+                """insert into assets(
+                       asset_id,name,building_id,floor_id,room_id,profession,grp,type,
+                       status,criticality,notes,organization_id
+                   ) values(
+                       'LEGACY-UNASSIGNED','Legacy / nepriradený asset',%s,%s,%s,
+                       'LEGACY','Migrácia','Nepriradené','Mimo prevádzky','C',
+                       'Automaticky vytvorené počas bezpečnej migrácie starých orphan záznamov.',%s
+                   ) returning id""",
+                (building_id, floor_id, room_id, gamo_org),
+            ).fetchone()
+        )
+
+    # Legacy versions allowed a workorder/incident to be stored with an asset ID
+    # that did not exist. We keep the original row and snapshot, but quarantine
+    # it under an internal GAMO placeholder so it cannot leak to a customer.
+    orphan_workorders = db.execute(
+        """select w.id from workorders w
+           left join assets a on a.id=w.asset_id
+           where w.asset_id is null or a.id is null"""
+    ).fetchall()
+    orphan_incidents = db.execute(
+        """select i.id from incidents i
+           left join assets a on a.id=i.asset_id
+           where i.asset_id is null or a.id is null"""
+    ).fetchall()
+
+    if orphan_workorders or orphan_incidents:
+        legacy_asset = ensure_legacy_asset()
+
+        db.execute(
+            """insert into data_repair_log(source_table,source_id,issue,snapshot)
+               select 'workorders',w.id,'missing_asset',to_jsonb(w)
+               from workorders w left join assets a on a.id=w.asset_id
+               where w.asset_id is null or a.id is null"""
+        )
+        db.execute(
+            """update workorders w set asset_id=%s
+               where w.asset_id is null
+                  or not exists(select 1 from assets a where a.id=w.asset_id)""",
+            (legacy_asset,),
+        )
+
+        db.execute(
+            """insert into data_repair_log(source_table,source_id,issue,snapshot)
+               select 'incidents',i.id,'missing_asset',to_jsonb(i)
+               from incidents i left join assets a on a.id=i.asset_id
+               where i.asset_id is null or a.id is null"""
+        )
+        db.execute(
+            """update incidents i set asset_id=%s
+               where i.asset_id is null
+                  or not exists(select 1 from assets a where a.id=i.asset_id)""",
+            (legacy_asset,),
+        )
+
+    # Remaining ownership problems are ambiguous and therefore must never be
+    # guessed automatically. Abort before adding constraints if one exists.
     checks = (
         ("buildings", "select count(*) n from buildings where organization_id is null"),
         ("users", "select count(*) n from users where organization_id is null"),
@@ -287,15 +426,14 @@ def _migration_9(db, using_postgres):
         row = db.execute(sql).fetchone()
         count = row["n"] if isinstance(row, dict) else row[0]
         if count:
-            raise RuntimeError(f"Tenant integrity migration blocked: {label} contains {count} inconsistent rows")
+            raise RuntimeError(
+                f"Tenant integrity migration blocked: {label} contains {count} ambiguous rows"
+            )
 
-    # Required organization ownership after legacy rows were backfilled.
     db.execute("ALTER TABLE assets ALTER COLUMN organization_id SET NOT NULL")
     db.execute("ALTER TABLE buildings ALTER COLUMN organization_id SET NOT NULL")
     db.execute("ALTER TABLE users ALTER COLUMN organization_id SET NOT NULL")
 
-    # Composite keys let PostgreSQL verify that an asset can only reference
-    # facility records belonging to the same organization.
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_buildings_id_org ON buildings(id,organization_id)")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_id_org ON assets(id,organization_id)")
 
@@ -317,9 +455,6 @@ def _migration_9(db, using_postgres):
              END IF;
            END $$"""
     )
-
-    # These child tables inherit tenant ownership from their parent asset.
-    # Explicit foreign keys stop orphan operational records.
     db.execute(
         """DO $$ BEGIN
              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_workorders_asset') THEN
@@ -336,8 +471,6 @@ def _migration_9(db, using_postgres):
              END IF;
            END $$"""
     )
-
-    # Parent assets must never point into another tenant.
     db.execute(
         """DO $$ BEGIN
              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_assets_parent_org') THEN
@@ -347,6 +480,7 @@ def _migration_9(db, using_postgres):
              END IF;
            END $$"""
     )
+
 
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
