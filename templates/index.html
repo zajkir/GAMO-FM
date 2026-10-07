@@ -143,7 +143,7 @@
  <section class="customer-detail-card" id="customerUsers">
   <div class="customer-detail-card-head"><div><span class="admin-kicker">IDENTITY & ACCESS</span><h3>Používatelia zákazníka</h3><p>Účty existujú iba v organizácii {{customer.name}}.</p></div><b class="detail-count">{{customer_users|length}}</b></div>
   <div class="customer-detail-list customer-users-list">{% for u in customer_users %}<div><span class="adm-avatar">{{u.name[:2]|upper}}</span><p><b>{{u.name}}</b><small>{{u.email}}</small></p><label class="role-pill">{{u.role}}</label><span class="customer-status {{'ok' if u.status=='Aktívny' else 'bad'}}">● {{u.status}}</span><time>{{u.last_login or 'bez prihlásenia'}}</time></div>{% else %}<div class="customer-empty-row">Žiadne používateľské účty.</div>{% endfor %}</div>
-  <details class="admin-reset-box"><summary>Obnoviť heslo hlavného administrátora</summary><form method="post" action="/platform/customer/{{customer.id}}/reset-admin-password"><input type="hidden" name="_csrf" value="{{csrf_token}}"><div class="field"><label>Nové dočasné heslo</label><input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="min. 8 znakov"></div><button class="admin-primary">Nastaviť nové heslo</button></form></details>
+  <details class="admin-reset-box"><summary>Obnoviť heslo hlavného administrátora</summary><form method="post" action="/platform/customer/{{customer.id}}/reset-admin-password"><input type="hidden" name="_csrf" value="{{csrf_token}}"><div class="field"><label>Nové dočasné heslo</label><input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="min. 10 znakov"></div><button class="admin-primary">Nastaviť nové heslo</button></form></details>
  </section>
  <section class="customer-detail-card">
   <div class="customer-detail-card-head"><div><span class="admin-kicker">FACILITY PORTFOLIO</span><h3>Budovy zákazníka</h3><p>Objekty a technické dáta patriace iba tejto organizácii.</p></div><b class="detail-count">{{customer_buildings|length}}</b></div>
@@ -201,10 +201,10 @@
       <div class="field"><label>Platnosť licencie do</label><input type="date" name="license_until"></div>
       <div class="field"><label>Admin meno</label><input name="admin_name" required placeholder="Ján Novák"></div>
       <div class="field wide"><label>Admin e-mail</label><input name="email" type="email" required placeholder="admin@firma.sk"></div>
-      <div class="field"><label>Dočasné heslo</label><input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="min. 8 znakov"></div>
+      <div class="field"><label>Dočasné heslo</label><input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="min. 10 znakov"></div>
       <div class="field"><label>Stav licencie</label><select name="license_status"><option>Aktívna</option><option>Pozastavená</option></select></div>
      </div>
-     <div class="customer-add-actions"><span>Heslo musí mať aspoň 8 znakov.</span><button class="admin-primary">Vytvoriť zákazníka</button></div>
+     <div class="customer-add-actions"><span>Heslo musí mať aspoň 10 znakov.</span><button class="admin-primary">Vytvoriť zákazníka</button></div>
     </form>
    </div>
   </details>
