@@ -1919,9 +1919,17 @@ def api_notifications():
   ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
    where t.organization_id=? and t.created_by<>? and exists(
     select 1 from ticket_messages m
-    left join users su on su.id=m.sender_user_id
     where m.ticket_id=t.id and m.id>coalesce(t.staff_last_read_message_id,0)
-    and (m.sender_user_id=t.created_by or (su.organization_id is not null and su.organization_id<>t.organization_id)))
+    and (
+      m.sender_user_id=t.created_by
+      or (
+        m.sender_user_id is not null
+        and not exists(
+          select 1 from users local_sender
+          where local_sender.id=m.sender_user_id and local_sender.organization_id=t.organization_id
+        )
+      )
+    ))
    order by t.updated desc limit 5""",(oid,uid))
  else:
   ticket_rows=q("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated from tickets t
