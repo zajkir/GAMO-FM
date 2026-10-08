@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.19"
+#define MyAppVersion "9.0.0.20"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -37,6 +37,8 @@ VersionInfoVersion={#MyAppVersion}
 ; shortcuts never fail with "The system cannot find the path specified."
 Type: files; Name: "{app}\{#MyAppExeName}"
 Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\version.json"
+Type: files; Name: "{app}\update_config.json"
 Type: files; Name: "{autodesktop}\GAMO a.s..lnk"
 Type: files; Name: "{autoprograms}\GAMO a.s..lnk"
 
@@ -58,11 +60,9 @@ Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launche
 [Code]
 function ShouldLaunchAfterInstall(): Boolean;
 begin
-  { Always relaunch the newly installed launcher. This is intentional even for
-    silent upgrades: it provides a second recovery path if an older update
-    helper exits before it can relaunch GAMO. The launcher single-instance guard
-    safely ignores a duplicate relaunch attempt. }
-  Result := True;
+  { The detached updater owns relaunch during /NOLAUNCH=1 upgrades. Avoid
+    starting a second launcher before SHA-256 post-install verification. }
+  Result := Pos('/NOLAUNCH=1', Uppercase(GetCmdTail)) = 0;
 end;
 
 procedure ForceCloseDesktop();

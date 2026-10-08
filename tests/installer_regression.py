@@ -23,6 +23,9 @@ assert 'Source: "..\\dist_launcher\\GAMO_Launcher.exe"; DestDir: "{app}"; DestNa
 assert 'Type: files; Name: "{autodesktop}\\GAMO a.s..lnk"' in iss
 assert 'Type: files; Name: "{autoprograms}\\GAMO a.s..lnk"' in iss
 assert 'Type: filesandordirs; Name: "{app}\\_internal"' in iss
+assert 'Type: files; Name: "{app}\\version.json"' in iss
+assert 'Type: files; Name: "{app}\\update_config.json"' in iss
+assert "Pos('/NOLAUNCH=1', Uppercase(GetCmdTail)) = 0" in iss
 assert f'#define MyAppVersion "{version}"' in iss
 
 print("Installer fallback regression checks OK")

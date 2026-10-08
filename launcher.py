@@ -23,6 +23,7 @@ from updater import (
     launch_installer_after_process_exit,
     run_launcher_self_update_helper,
     cleanup_stale_update_files,
+    cleanup_legacy_install_metadata,
     consume_update_result,
 )
 
@@ -733,6 +734,7 @@ class Launcher(tk.Tk):
                 os.getpid(),
                 relaunch_path=relaunch,
                 version=version,
+                expected_launcher_sha256=launcher_sha,
             )
             write_log(f"Installer fallback handoff · target=v{version} · installer={installer}")
             self._post(450, self._close)
@@ -897,6 +899,7 @@ def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--gamo-update-helper":
         raise SystemExit(run_launcher_self_update_helper(sys.argv[2]))
 
+    cleanup_legacy_install_metadata()
     cleanup_stale_update_files()
     enable_high_dpi()
     mutex = single_instance_guard()

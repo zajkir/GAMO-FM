@@ -16,7 +16,10 @@ APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False)
 
 
 def _load_json(name, default):
-    for base in (APP_DIR, BASE_DIR):
+    # The current one-file executable bundles version/update metadata in BASE_DIR.
+    # Legacy installers may have left stale JSON files next to the EXE, so the
+    # bundled copy must always win for immutable release metadata.
+    for base in (BASE_DIR, APP_DIR):
         p = base / name
         if p.exists():
             try:
@@ -54,7 +57,16 @@ def check_for_update():
     if not url.startswith(('https://', 'http://')):
         return None
     timeout = max(1, int(cfg.get('check_timeout_seconds', 4)))
-    req = urllib.request.Request(url, headers={'User-Agent': f'GAMO-FM/{current_version()}'})
+    sep = '&' if '?' in url else '?'
+    manifest_url = f"{url}{sep}_={int(time.time())}"
+    req = urllib.request.Request(
+        manifest_url,
+        headers={
+            'User-Agent': f'GAMO-FM/{current_version()}',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as response:
         manifest = json.loads(response.read().decode('utf-8'))
     remote = str(manifest.get('version', '0.0.0'))
@@ -220,6 +232,32 @@ def consume_update_result():
         pass
     return data
 
+
+
+def cleanup_legacy_install_metadata():
+    """Remove obsolete sidecar release metadata from old onedir installers.
+
+    version.json/update_config.json are bundled inside the one-file launcher.
+    Keeping an old copy beside the EXE can otherwise make a newly-updated
+    launcher report an old version forever.
+    """
+    if not getattr(sys, 'frozen', False):
+        return []
+    removed = []
+    try:
+        if APP_DIR.resolve() == BASE_DIR.resolve():
+            return removed
+    except OSError:
+        pass
+    for name in ('version.json', 'update_config.json'):
+        path = APP_DIR / name
+        try:
+            if path.exists():
+                path.unlink()
+                removed.append(path)
+        except OSError:
+            pass
+    return removed
 
 
 def cleanup_stale_update_files():
@@ -406,7 +444,7 @@ def launch_installer(path):
     return subprocess.Popen([str(path), *flags], close_fds=True)
 
 
-def launch_installer_after_process_exit(path, process_id=None, relaunch_path=None, version=''):
+def launch_installer_after_process_exit(path, process_id=None, relaunch_path=None, version='', expected_launcher_sha256=''):
     """Install a verified update after the current launcher exits, then relaunch.
 
     A detached PowerShell helper owns the handoff because Windows cannot replace
@@ -426,6 +464,8 @@ def launch_installer_after_process_exit(path, process_id=None, relaunch_path=Non
     state_dir = update_state_dir()
     result_file = str(update_result_path())
     log_file = str(state_dir / 'update_helper.log')
+    install_dir = str(APP_DIR.resolve())
+    expected_launcher_sha256 = str(expected_launcher_sha256 or '').strip().lower()
     helper = state_dir / f'update_helper_{datetime.now().strftime("%Y%m%d_%H%M%S")}.ps1'
 
     script = r'''param(
@@ -434,7 +474,9 @@ def launch_installer_after_process_exit(path, process_id=None, relaunch_path=Non
   [string]$Relaunch,
   [string]$ResultFile,
   [string]$LogFile,
-  [string]$TargetVersion
+  [string]$TargetVersion,
+  [string]$ExpectedLauncherSha,
+  [string]$InstallDir
 )
 $ErrorActionPreference = 'Stop'
 
@@ -467,23 +509,36 @@ try {
     throw "Verified installer file is missing: $Installer"
   }
 
-  Write-UpdateLog "Starting installer: $Installer"
-  $setup = Start-Process -FilePath $Installer -ArgumentList @(
+  Write-UpdateLog "Starting elevated installer: $Installer"
+  $dirArg = '/DIR="' + $InstallDir + '"'
+  $setup = Start-Process -FilePath $Installer -Verb RunAs -ArgumentList @(
     '/VERYSILENT',
     '/SUPPRESSMSGBOXES',
     '/CLOSEAPPLICATIONS',
     '/NORESTART',
-    '/NOLAUNCH=1'
+    '/NOLAUNCH=1',
+    $dirArg
   ) -Wait -PassThru
 
   $code = [int]$setup.ExitCode
   Write-UpdateLog "Installer exited with code $code."
-
-  if ($code -eq 0) {
-    Save-Result 'success' "Aktualizácia $TargetVersion bola úspešne nainštalovaná." $code
-  } else {
-    Save-Result 'failed' "Inštalátor skončil s kódom $code." $code
+  if ($code -ne 0) {
+    throw "Inštalátor skončil s kódom $code."
   }
+
+  if (-not (Test-Path -LiteralPath $Relaunch)) {
+    throw "Po aktualizácii sa nenašiel launcher: $Relaunch"
+  }
+
+  if ($ExpectedLauncherSha) {
+    $installedSha = (Get-FileHash -LiteralPath $Relaunch -Algorithm SHA256).Hash.ToLower()
+    Write-UpdateLog "Installed launcher SHA256: $installedSha"
+    if ($installedSha -ne $ExpectedLauncherSha.ToLower()) {
+      throw "Nainštalovaný launcher neprešiel SHA-256 kontrolou."
+    }
+  }
+
+  Save-Result 'success' "Aktualizácia $TargetVersion bola úspešne nainštalovaná a overená." $code
 } catch {
   $message = $_.Exception.Message
   Write-UpdateLog "Update helper failed: $message"
@@ -525,6 +580,8 @@ try {
             result_file,
             log_file,
             str(version or ''),
+            expected_launcher_sha256,
+            install_dir,
         ],
         close_fds=True,
         creationflags=creationflags,

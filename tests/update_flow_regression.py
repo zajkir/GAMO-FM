@@ -25,6 +25,45 @@ assert "launch_launcher_self_update" in launcher_source
 assert "Launcher sa bezpečne vymení, overí a automaticky znovu spustí." in launcher_source
 assert "Installer fallback handoff" in launcher_source
 assert "consume_update_result" in launcher_source
+assert "cleanup_legacy_install_metadata" in launcher_source
+assert "for base in (BASE_DIR, APP_DIR)" in source
+assert "Cache-Control" in source and "no-cache" in source
+assert "ExpectedLauncherSha" in source
+assert "-Verb RunAs" in source
+assert "Get-FileHash" in source
+assert "/DIR=" in source
+
+# Regression: an obsolete sidecar version.json left beside the installed EXE
+# must never override the version bundled into the newly-updated one-file EXE.
+with tempfile.TemporaryDirectory() as tmp:
+    install = Path(tmp) / "install"
+    bundle = Path(tmp) / "bundle"
+    install.mkdir()
+    bundle.mkdir()
+    (install / "version.json").write_text(json.dumps({"version": "9.0.0.1"}), encoding="utf-8")
+    (install / "update_config.json").write_text(json.dumps({"enabled": False}), encoding="utf-8")
+    (bundle / "version.json").write_text(json.dumps({"version": version}), encoding="utf-8")
+    (bundle / "update_config.json").write_text(json.dumps({"enabled": True, "manifest_url": "https://example.invalid/update.json"}), encoding="utf-8")
+
+    old_app_dir, old_base_dir = updater.APP_DIR, updater.BASE_DIR
+    old_frozen = getattr(updater.sys, "frozen", None)
+    updater.APP_DIR, updater.BASE_DIR = install, bundle
+    updater.sys.frozen = True
+    try:
+        assert updater.current_version() == version
+        assert updater._load_json("update_config.json", {})["enabled"] is True
+        removed = updater.cleanup_legacy_install_metadata()
+        assert install / "version.json" in removed
+        assert install / "update_config.json" in removed
+        assert not (install / "version.json").exists()
+        assert not (install / "update_config.json").exists()
+        assert updater.current_version() == version
+    finally:
+        updater.APP_DIR, updater.BASE_DIR = old_app_dir, old_base_dir
+        if old_frozen is None:
+            delattr(updater.sys, "frozen")
+        else:
+            updater.sys.frozen = old_frozen
 
 # Result persistence survives process handoff and is consumed only once.
 with tempfile.TemporaryDirectory() as tmp:
