@@ -1999,6 +1999,8 @@ def update_user(i):
    x('update users set name=?,email=?,role=?,status=?,password_hash=?,must_change_password=? where id=?',(name,email,role,status,generate_password_hash(pwd),True if USING_POSTGRES else 1,i))
   else:
    x('update users set name=?,email=?,role=?,status=? where id=?',(name,email,role,status,i))
+  if pwd or status!='Aktívny':
+   revoke_user_devices(i)
   if i==session.get('user_id'):
    session['user_name']=name; session['user_role']=role
   audit('USER_UPDATE',f'{name} · {role} · {status}')
