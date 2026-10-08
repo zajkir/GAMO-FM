@@ -107,9 +107,9 @@ def platform_ticket_mode():
  return is_gamo_admin()
 
 def next_ticket_no():
- rows=q("select ticket_no from tickets where organization_id=? and ticket_no like ?",(org_id(),'TKT-%'))
- nums=[int(str(r['ticket_no'])[4:]) for r in rows if str(r['ticket_no'] or '')[4:].isdigit()]
- return f"TKT-{(max(nums) if nums else 0)+1:06d}"
+ row=one("""select coalesce(max(cast(substr(ticket_no,5) as integer)),0)+1 n
+  from tickets where organization_id=? and ticket_no like 'TKT-%'""",(org_id(),))
+ return f"TKT-{int(row['n'] or 1):06d}"
 
 def ticket_record(ticket_id):
  if platform_ticket_mode():
@@ -1791,17 +1791,20 @@ def platform_customer_detail(i):
  if not customer: abort(404)
  support_active=support_access_active(customer)
  customer_access(i,'GAMO_METADATA_VIEW','GAMO otvorilo licenčné a agregované metadáta zákazníka.')
- customer_stats={
-  'users':one_system('select count(*) n from users where organization_id=?',(i,))['n'],
-  'active_users':one_system("select count(*) n from users where organization_id=? and status='Aktívny'",(i,))['n'],
-  'buildings':one_system('select count(*) n from buildings where organization_id=?',(i,))['n'],
-  'assets':one_system('select count(*) n from assets where organization_id=?',(i,))['n'],
-  'open_incidents':one_system("select count(*) n from incidents x join assets a on a.id=x.asset_id where a.organization_id=? and x.status not in ('Ukončená','Vyriešená')",(i,))['n'],
-  'open_orders':one_system("select count(*) n from workorders w join assets a on a.id=w.asset_id where a.organization_id=? and w.status not in ('Ukončené','Zrušené')",(i,))['n'],
-  'maintenance_cost':one_system('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id where a.organization_id=?',(i,))['n'],
-  'incident_cost':one_system('select coalesce(sum(x.cost),0) n from incidents x join assets a on a.id=x.asset_id where a.organization_id=?',(i,))['n']
- }
- customer_stats['total_cost']=customer_stats['maintenance_cost']+customer_stats['incident_cost']
+ meta=one_system("""select
+  (select count(*) from users where organization_id=?) users,
+  (select count(*) from users where organization_id=? and status='Aktívny') active_users,
+  (select count(*) from buildings where organization_id=?) buildings,
+  (select count(*) from assets where organization_id=?) assets,
+  (select count(*) from incidents x join assets a on a.id=x.asset_id where a.organization_id=? and x.status not in ('Ukončená','Vyriešená')) open_incidents,
+  (select count(*) from workorders w join assets a on a.id=w.asset_id where a.organization_id=? and w.status not in ('Ukončené','Zrušené')) open_orders,
+  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.organization_id=?) maintenance_cost,
+  (select coalesce(sum(x.cost),0) from incidents x join assets a on a.id=x.asset_id where a.organization_id=?) incident_cost,
+  (select max(last_login) from users where organization_id=?) last_login,
+  (select max(created) from audit_log where organization_id=? and action='BACKUP_EXPORT') last_backup
+ """,(i,i,i,i,i,i,i,i,i,i))
+ customer_stats={k:meta[k] for k in ('users','active_users','buildings','assets','open_incidents','open_orders','maintenance_cost','incident_cost')}
+ customer_stats['total_cost']=(customer_stats['maintenance_cost'] or 0)+(customer_stats['incident_cost'] or 0)
  license_days=None
  if customer['license_until']:
   try: license_days=(datetime.strptime(str(customer['license_until'])[:10],'%Y-%m-%d').date()-date.today()).days
@@ -1822,15 +1825,13 @@ def platform_customer_detail(i):
    join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
    where a.organization_id=? order by w.id desc limit 6""",(i,))
   customer_audit=q_system('select * from audit_log where organization_id=? order by id desc limit 10',(i,))
- last_backup=one_system("select created from audit_log where organization_id=? and action='BACKUP_EXPORT' order by id desc limit 1",(i,))
- last_login=one_system("select max(last_login) last_login from users where organization_id=?",(i,))
  access_rows=q_system('select * from customer_access_log where target_organization_id=? order by id desc limit 20',(i,))
  customer_security=security_snapshot(i,True)
  limits=PLAN_LIMITS.get((customer['plan'] or 'BASIC'),PLAN_LIMITS['BASIC'])
  return render_template('index.html',page='customer',customer=customer,customer_stats=customer_stats,
   customer_users=customer_users,customer_buildings=customer_buildings,recent_incidents=recent_incidents,
   recent_orders=recent_orders,license_days=license_days,customer_limits=limits,customer_audit=customer_audit,
-  customer_last_backup=(last_backup['created'] if last_backup else None),customer_last_login=(last_login['last_login'] if last_login else None),
+  customer_last_backup=meta['last_backup'],customer_last_login=meta['last_login'],
   support_access=support_active,customer_access_rows=access_rows,customer_security=customer_security,rls_enabled=USING_POSTGRES)
 
 @app.post('/platform/customer/<int:i>/reset-admin-password')
