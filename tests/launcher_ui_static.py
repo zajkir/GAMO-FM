@@ -48,14 +48,16 @@ assert 'private_mode=False' in source
 assert 'storage_path=str(storage)' in source
 assert 'user_agent=f"GAMO-Desktop/{current_version()} Windows"' in source
 assert 'webview.settings["ALLOW_DOWNLOADS"] = True' in source
-assert 'webbrowser.open(url, new=1)' in source
+assert 'webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False' in source
+assert 'webbrowser.open' not in source
+assert 'import webbrowser' not in source
 assert 'def launch_cloud_client_process(url):' in source
 assert 'subprocess.Popen(command, **kwargs)' in source
 assert 'CLOUD_CLIENT_ARG = "--gamo-cloud-client"' in source
 assert 'if len(sys.argv) >= 3 and sys.argv[1] == CLOUD_CLIENT_ARG:' in source
 assert 'launch_cloud_client_process(target)' in source
 assert 'GAMO_FM.exe' not in source
-print("Launcher dedicated-process WebView2 isolation checks OK")
+print("Launcher native-only WebView2 isolation checks OK")
 
 assert 'executable={Path(sys.executable).resolve()}' in source
 assert 'app_dir={APP_DIR}' in source
