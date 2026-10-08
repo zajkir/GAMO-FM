@@ -489,7 +489,10 @@ function initNotificationWatch(){
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshNotifications(false)});
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_NOTIFICATION_TIMER));
 }
-document.addEventListener('DOMContentLoaded',()=>{initNotificationWatch();filterTicketAssets();initLiveTicket();initTicketInboxWatch();initDigitalTwinV2()});
+document.addEventListener('DOMContentLoaded',()=>{
+ if(/GAMO-Desktop\//i.test(navigator.userAgent))document.documentElement.classList.add('desktop-client');
+ initNotificationWatch();filterTicketAssets();initLiveTicket();initTicketInboxWatch();initDigitalTwinV2();
+});
 
 function twinWorld(){return document.querySelector('.dt2-world')}
 function twinApply(){
