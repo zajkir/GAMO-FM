@@ -2570,6 +2570,9 @@ def api_notifications():
    except Exception: due_soon=False
   state='Po termíne' if overdue else ('Blíži sa termín' if due_soon else r['status'])
   out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':state,'level':'red' if overdue else ('orange' if due_soon else 'blue'),'url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
+ for p in [r for r in maintenance_plan_rows() if r['state'] in {'overdue','soon'} and not r['active_workorder_id']][:4]:
+  label='Po termíne' if p['state']=='overdue' else 'Blíži sa termín'
+  out.append({'key':f"planner:{p['asset_db_id']}:{p['kind']}:{p['due']}",'title':f"{p['label']} · {p['asset_id']}",'subtitle':f"{p['building']} · termín {p['due']}",'status':label,'level':'red' if p['state']=='overdue' else 'orange','url':'/maintenance#planner','created_at':p['due'] or ''})
  uid=session.get('user_id')
  if platform_ticket_mode():
   ticket_rows=q_system("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated,o.name organization_name
