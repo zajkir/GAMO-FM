@@ -1136,7 +1136,7 @@ def reports():
  if not can('reports_view'): abort(403)
  oid=org_id()
  stats={
-  'assets':one('select count(*) n from assets a join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
+  'assets':one('select count(*) n from assets where organization_id=?',(oid,))['n'],
   'maintenance_cost':one('select coalesce(sum(w.cost),0) n from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
   'incident_cost':one('select coalesce(sum(i.cost),0) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=?',(oid,))['n'],
   'open_incidents':one("select count(*) n from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? and i.status not in ('Ukončená','Vyriešená')",(oid,))['n'],
@@ -1402,16 +1402,16 @@ def delete_document(i):
  return redirect(f"/building/{d['building_id']}#documents")
 
 @app.route('/assets')
-def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id where b.organization_id=? order by a.asset_id',(org_id(),)))
+def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id and r.organization_id=a.organization_id where a.organization_id=? and b.organization_id=? order by a.asset_id',(org_id(),org_id())))
 @app.route('/asset/<int:i>')
 def asset(i):
- a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=? and b.organization_id=?',(i,org_id()))
+ a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=? and a.organization_id=? and b.organization_id=?',(i,org_id(),org_id()))
  if not a: abort(404)
  children=q("""select a.*,r.code room,r.name room_name,r.area from assets a
   join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
   where a.parent_id=? and a.organization_id=? and b.organization_id=? order by a.asset_id""",(i,org_id(),org_id()))
  parent=one("""select a.id,a.asset_id,a.name,a.status from assets a join buildings b on b.id=a.building_id
-  where a.id=? and b.organization_id=?""",(a['parent_id'],org_id())) if a['parent_id'] else None
+  where a.id=? and a.organization_id=? and b.organization_id=?""",(a['parent_id'],org_id(),org_id())) if a['parent_id'] else None
  impact_rooms=len({x['room'] for x in children if x['room']}); impact_area=sum(float(x['area'] or 0) for x in children if x['room'])
  orders=q("""select w.* from workorders w join assets aa on aa.id=w.asset_id join buildings b on b.id=aa.building_id
   where w.asset_id=? and w.organization_id=? and aa.organization_id=? and b.organization_id=? order by w.id desc""",(i,org_id(),org_id(),org_id()))
@@ -1458,7 +1458,7 @@ def delete_asset_document(i):
 
 @app.route('/maintenance')
 def maintenance():
- orders=[dict(r) for r in q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where w.organization_id=? and b.organization_id=? order by w.id desc',(org_id(),org_id()))]
+ orders=[dict(r) for r in q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where w.organization_id=? and a.organization_id=? and b.organization_id=? order by w.id desc',(org_id(),org_id(),org_id()))]
  for row in orders:
   row['attachments']=[dict(x) for x in q('select id,name,mime,size,uploaded from workorder_attachments where workorder_id=? and organization_id=? order by id desc',(row['id'],org_id()))]
  today=date.today().isoformat()
@@ -1498,7 +1498,7 @@ def delete_workorder_attachment(i):
 
 @app.route('/incidents')
 def incidents():
- rows=[dict(r) for r in q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where i.organization_id=? and b.organization_id=? order by i.id desc',(org_id(),org_id()))]
+ rows=[dict(r) for r in q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where i.organization_id=? and a.organization_id=? and b.organization_id=? order by i.id desc',(org_id(),org_id(),org_id()))]
  for row in rows:
   row['attachments']=[dict(x) for x in q('select id,name,mime,size,uploaded from incident_attachments where incident_id=? and organization_id=? order by id desc',(row['id'],org_id()))]
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Ukončená','Vyriešená'}),'critical':sum(1 for r in rows if r['severity'] in {'Kritická','Havária'} and r['status'] not in {'Ukončená','Vyriešená'}),'resolved':sum(1 for r in rows if r['status'] in {'Ukončená','Vyriešená'}),'cost':sum(float(r['cost'] or 0) for r in rows)}
@@ -2456,7 +2456,7 @@ def api_asset_options():
  rows=q("""select a.id,a.asset_id,a.name,a.profession,b.code building,r.code room
   from assets a join buildings b on b.id=a.building_id
   left join rooms r on r.id=a.room_id
-  where b.organization_id=? order by a.asset_id""",(org_id(),))
+  where a.organization_id=? and b.organization_id=? order by a.asset_id""",(org_id(),org_id()))
  return jsonify([dict(r) for r in rows])
 
 @app.get('/api/assets/next-id')
@@ -2471,11 +2471,11 @@ def api_search():
  needle=term.lower(); like=f'%{needle}%'; out=[]; oid=org_id()
  for r in q("""select a.id,a.asset_id,a.name,a.profession,b.code building,r.code room
   from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
-  where b.organization_id=? and (
+  where a.organization_id=? and b.organization_id=? and (
    lower(coalesce(a.asset_id,'')) like ? or lower(coalesce(a.name,'')) like ?
    or lower(coalesce(a.manufacturer,'')) like ? or lower(coalesce(a.model,'')) like ?
    or lower(coalesce(a.serial,'')) like ? or lower(coalesce(a.system_id,'')) like ?
-  ) order by a.asset_id limit 8""",(oid,like,like,like,like,like,like)):
+  ) order by a.asset_id limit 8""",(oid,oid,like,like,like,like,like,like)):
   location=' / '.join(x for x in [r['building'],r['room']] if x)
   out.append({'kind':'Asset','title':f"{r['asset_id']} · {r['name']}",'subtitle':f"{r['profession'] or ''} · {location}".strip(' ·'),'url':f"/asset/{r['id']}"})
  for r in q("""select id,code,name,address from buildings
@@ -2484,20 +2484,20 @@ def api_search():
   out.append({'kind':'Budova','title':f"{r['code']} · {r['name']}",'subtitle':r['address'] or '','url':f"/building/{r['id']}"})
  for r in q("""select r.id,r.code,r.name,f.code floor_code,b.id building_id,b.code building_code,b.name building_name
   from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id
-  where b.organization_id=? and (lower(coalesce(r.code,'')) like ? or lower(coalesce(r.name,'')) like ? or lower(coalesce(r.tenant,'')) like ? or lower(coalesce(r.zone,'')) like ?)
-  order by b.name,f.id,r.code limit 6""",(oid,like,like,like,like)):
+  where r.organization_id=? and f.organization_id=? and b.organization_id=? and (lower(coalesce(r.code,'')) like ? or lower(coalesce(r.name,'')) like ? or lower(coalesce(r.tenant,'')) like ? or lower(coalesce(r.zone,'')) like ?)
+  order by b.name,f.id,r.code limit 6""",(oid,oid,oid,like,like,like,like)):
   out.append({'kind':'Miestnosť','title':f"{r['code']} · {r['name']}",'subtitle':f"{r['building_code']} · {r['building_name']} / {r['floor_code']}",'url':f"/building/{r['building_id']}#spaces"})
  if can('maintenance_write') or can('reports_view'):
   for r in q("""select w.id,w.title,w.status,w.priority,a.id asset_id,a.asset_id asset_code
    from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
-   where b.organization_id=? and (lower(coalesce(w.title,'')) like ? or lower(coalesce(w.technician,'')) like ? or lower(coalesce(w.supplier,'')) like ?)
-   order by w.id desc limit 5""",(oid,like,like,like)):
+   where w.organization_id=? and a.organization_id=? and b.organization_id=? and (lower(coalesce(w.title,'')) like ? or lower(coalesce(w.technician,'')) like ? or lower(coalesce(w.supplier,'')) like ?)
+   order by w.id desc limit 5""",(oid,oid,oid,like,like,like)):
    out.append({'kind':'Údržba','title':r['title'],'subtitle':f"{r['asset_code']} · {r['priority']} · {r['status']}",'url':f"/asset/{r['asset_id']}#service"})
  if can('incident_write') or can('reports_view'):
   for r in q("""select i.id,i.title,i.status,i.severity,a.id asset_id,a.asset_id asset_code
    from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
-   where b.organization_id=? and (lower(coalesce(i.title,'')) like ? or lower(coalesce(i.impact,'')) like ? or lower(coalesce(i.cause,'')) like ?)
-   order by i.id desc limit 5""",(oid,like,like,like)):
+   where i.organization_id=? and a.organization_id=? and b.organization_id=? and (lower(coalesce(i.title,'')) like ? or lower(coalesce(i.impact,'')) like ? or lower(coalesce(i.cause,'')) like ?)
+   order by i.id desc limit 5""",(oid,oid,oid,like,like,like)):
    out.append({'kind':'Incident','title':r['title'],'subtitle':f"{r['asset_code']} · {r['severity']} · {r['status']}",'url':f"/asset/{r['asset_id']}#faults"})
  if platform_ticket_mode():
   ticket_rows=q_system("""select t.id,t.ticket_no,t.subject,t.status,t.priority,o.name organization_name
