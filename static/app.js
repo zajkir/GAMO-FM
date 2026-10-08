@@ -42,7 +42,21 @@ user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'s
 function fieldDef(a){return Array.isArray(a)?{name:a[0],label:a[1],value:a[2],type:(a[0]=='password'?'password':'text')} : a}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 function safeInternalUrl(value){const v=String(value||'/');return v.startsWith('/')&&!v.startsWith('//')?v:'/'}
-async function fetchJson(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(url);return r.json()}
+async function fetchWithTimeout(url,options={},timeoutMs=8000){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{
+  const res=await fetch(url,{...options,signal:controller.signal});
+  return res;
+ }catch(err){
+  if(err?.name==='AbortError')throw new Error('Server neodpovedal včas.');
+  throw err;
+ }finally{clearTimeout(timer)}
+}
+async function fetchJson(url,timeoutMs=8000){
+ const r=await fetchWithTimeout(url,{cache:'no-store',headers:{'Accept':'application/json'}},timeoutMs);
+ if(!r.ok)throw new Error('HTTP '+r.status);
+ return r.json()
+}
 function setPicker(select,items,preferred,placeholder,labelFn,optional=false){
  select.disabled=false;
  const first=optional?'<option value="">'+escapeHtml(placeholder)+'</option>':'<option value="">'+escapeHtml(placeholder)+'</option>';
@@ -150,14 +164,6 @@ function closeM(){document.querySelector('#modal').classList.remove('show')}func
 }
 function closeConfirm(){document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null}
 function executeConfirm(){const f=window._gamoConfirmForm;if(!f)return;document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null;f.submit()}
-function filterOpsRows(filter,btn){
- document.querySelectorAll('.ops-filter-btn').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');
- document.querySelectorAll('[data-ops-row]').forEach(row=>{
-  const status=row.dataset.status||'',severity=row.dataset.severity||'',priority=row.dataset.priority||'',overdue=row.dataset.overdue==='1';
-  let show=filter==='all'||(filter==='active'&&!['Ukončené','Zrušené','Ukončená','Vyriešená'].includes(status))||(filter==='overdue'&&overdue)||(filter==='critical'&&(priority==='Kritická'||['Kritická','Havária'].includes(severity)))||(filter==='done'&&['Ukončené','Ukončená','Vyriešená'].includes(status));
-  row.style.display=show?'':'none';
- });
-}
 function openTicketModal(){const m=document.querySelector('#ticketCreateModal');if(m){m.classList.add('show');setTimeout(()=>m.querySelector('input[name="subject"]')?.focus(),50)}}
 function closeTicketModal(){document.querySelector('#ticketCreateModal')?.classList.remove('show')}
 function filterTicketAssets(){
@@ -203,27 +209,29 @@ function scrollTicketBottom(){
  const thread=document.querySelector('#ticketThread');if(thread){thread.scrollTop=thread.scrollHeight;document.querySelector('#ticketNewMessageHint')?.setAttribute('hidden','')}
 }
 async function refreshTicketMessages(forceScroll=false){
- const thread=document.querySelector('#ticketThread');if(!thread||document.hidden)return;
- if(thread.dataset.loading==='1')return;thread.dataset.loading='1';
+ const thread=document.querySelector('#ticketThread');if(!thread||document.hidden)return 0;
+ if(thread.dataset.loading==='1')return 0;thread.dataset.loading='1';
  const ticketId=thread.dataset.ticketId,last=Number(thread.dataset.lastMessageId||0);
  const indicator=document.querySelector('#ticketLiveIndicator');
  try{
   const nearBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<110;
-  const res=await fetch('/api/ticket/'+encodeURIComponent(ticketId)+'/messages?after='+last,{cache:'no-store',headers:{'Accept':'application/json'}});
+  const res=await fetchWithTimeout('/api/ticket/'+encodeURIComponent(ticketId)+'/messages?after='+last,{cache:'no-store',headers:{'Accept':'application/json'}},7000);
   if(!res.ok)throw new Error('HTTP '+res.status);
-  const data=await res.json();
-  (data.messages||[]).forEach(m=>thread.appendChild(ticketMessageElement(m)));
+  const data=await res.json(),incoming=data.messages||[];
+  incoming.forEach(m=>thread.appendChild(ticketMessageElement(m)));
   if(data.last_id!==undefined)thread.dataset.lastMessageId=String(data.last_id);
   const count=document.querySelector('#ticketMessageCount');if(count){const n=thread.querySelectorAll('.ticket-message').length;count.textContent=n+' '+(n===1?'správa':(n>1&&n<5?'správy':'správ'))}
   const status=document.querySelector('#ticketLiveStatus');if(status&&data.status)status.textContent='● '+data.status;
   const updated=document.querySelector('#ticketUpdated');if(updated&&data.updated)updated.textContent=data.updated;
-  if((data.messages||[]).length){
+  if(incoming.length){
    if(forceScroll||nearBottom)scrollTicketBottom();else document.querySelector('#ticketNewMessageHint')?.removeAttribute('hidden');
    refreshNotifications(false);
   }
   if(indicator){indicator.classList.remove('offline');indicator.innerHTML='<i></i> LIVE'}
+  return incoming.length;
  }catch(e){
   if(indicator){indicator.classList.add('offline');indicator.innerHTML='<i></i> PRIPÁJAM…'}
+  return -1;
  }finally{thread.dataset.loading='0'}
 }
 async function submitTicketReply(ev){
@@ -232,13 +240,21 @@ async function submitTicketReply(ev){
  if(button){button.disabled=true;button.classList.add('loading');button.innerHTML='Odosielam…'}
  if(error){error.hidden=true;error.textContent=''}
  try{
-  const res=await fetch(form.action,{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'GAMO-Live-Chat','Accept':'application/json'}});
+  const res=await fetchWithTimeout(form.action,{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'GAMO-Live-Chat','Accept':'application/json'}},12000);
   const data=await res.json().catch(()=>({}));
   if(!res.ok||!data.ok)throw new Error(data.error||'Správu sa nepodarilo odoslať.');
+  const thread=document.querySelector('#ticketThread');
+  if(thread&&data.message){
+   thread.appendChild(ticketMessageElement(data.message));
+   thread.dataset.lastMessageId=String(data.message.id||data.message_id||thread.dataset.lastMessageId||0);
+   const count=document.querySelector('#ticketMessageCount');if(count){const n=thread.querySelectorAll('.ticket-message').length;count.textContent=n+' '+(n===1?'správa':(n>1&&n<5?'správy':'správ'))}
+   const status=document.querySelector('#ticketLiveStatus');if(status&&data.status)status.textContent='● '+data.status;
+   scrollTicketBottom();
+  }
   textarea.value='';
   const attachment=form.querySelector('input[name="attachment"]');if(attachment)attachment.value='';
   const attachmentName=document.querySelector('#ticketAttachmentName');if(attachmentName)attachmentName.textContent='';
-  await refreshTicketMessages(true);textarea.focus();
+  textarea.focus();window.GAMO_TICKET_IDLE_POLLS=0;
  }catch(e){
   if(error){error.textContent=e.message||'Správu sa nepodarilo odoslať.';error.hidden=false}
  }finally{
@@ -246,20 +262,27 @@ async function submitTicketReply(ev){
  }
 }
 function initLiveTicket(){
- const thread=document.querySelector('#ticketThread');if(!thread)return;
- scrollTicketBottom();
+ const thread=document.querySelector('#ticketThread');if(!thread||thread.dataset.liveInitialized==='1')return;
+ thread.dataset.liveInitialized='1';scrollTicketBottom();
  const form=document.querySelector('#ticketReplyForm');if(form){
   form.addEventListener('submit',submitTicketReply);
   form.querySelector('textarea')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();form.requestSubmit()}});
  }
- let running=false;
- const schedule=(delay=2500)=>{clearTimeout(window.GAMO_TICKET_TIMER);window.GAMO_TICKET_TIMER=setTimeout(async()=>{
-  if(!document.hidden&&!running){running=true;try{await refreshTicketMessages(false)}finally{running=false}}
-  schedule(document.hidden?20000:2500)
- },delay)};
- refreshTicketMessages(false).finally(()=>schedule());
- document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTicketMessages(false);schedule(1800)}});
- window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_TIMER));
+ let running=false,idle=0;
+ const delay=()=>document.hidden?30000:(!navigator.onLine?30000:(idle<4?2200:idle<12?4500:8000));
+ const schedule=(custom=null)=>{clearTimeout(window.GAMO_TICKET_TIMER);window.GAMO_TICKET_TIMER=setTimeout(async()=>{
+  if(!document.hidden&&!running&&navigator.onLine){
+   running=true;
+   try{const count=await refreshTicketMessages(false);idle=count>0?0:(count===0?idle+1:Math.max(idle,8))}
+   finally{running=false}
+  }
+  schedule()
+ },custom??delay())};
+ refreshTicketMessages(false).then(count=>{idle=count>0?0:1;schedule()});
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden){idle=0;refreshTicketMessages(false);schedule(1200)}else schedule()});
+ window.addEventListener('online',()=>{idle=0;refreshTicketMessages(false);schedule(900)});
+ window.addEventListener('offline',()=>schedule(30000));
+ window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_TIMER),{once:true});
 }
 function setTicketNavCount(value){
  let badge=document.querySelector('#ticketNavCount');
@@ -271,7 +294,7 @@ function setTicketNavCount(value){
 async function refreshTicketInboxState(initial=false){
  const list=document.querySelector('#ticketInboxList');if(!list||document.hidden)return;
  try{
-  const res=await fetch('/api/tickets/inbox-state',{cache:'no-store',headers:{'Accept':'application/json'}});
+  const res=await fetchWithTimeout('/api/tickets/inbox-state',{cache:'no-store',headers:{'Accept':'application/json'}},6500);
   if(!res.ok)throw new Error('inbox');
   const data=await res.json();const previous=list.dataset.inboxVersion||'';
   setTicketNavCount(data.unread||0);
@@ -284,28 +307,17 @@ async function refreshTicketInboxState(initial=false){
  }catch(_){}
 }
 function initTicketInboxWatch(){
- const list=document.querySelector('#ticketInboxList');if(!list)return;
- let running=false;
+ const list=document.querySelector('#ticketInboxList');if(!list||list.dataset.watchInitialized==='1')return;
+ list.dataset.watchInitialized='1';let running=false;
  refreshTicketInboxState(true);
  const tick=()=>{clearTimeout(window.GAMO_TICKET_INBOX_TIMER);window.GAMO_TICKET_INBOX_TIMER=setTimeout(async()=>{
-  if(!running){running=true;try{await refreshTicketInboxState(false)}finally{running=false}}
+  if(!running&&navigator.onLine&&!document.hidden){running=true;try{await refreshTicketInboxState(false)}finally{running=false}}
   tick()
- },document.hidden?60000:15000)};
- tick();document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTicketInboxState(false)});
- window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_INBOX_TIMER));
-}
-let assetFilterTimer;
-function filterRows(){
- clearTimeout(assetFilterTimer);
- assetFilterTimer=setTimeout(()=>{
-  const input=document.querySelector('#search'),table=document.querySelector('#assettable');if(!input||!table)return;
-  const v=input.value.trim().toLowerCase();
-  table.querySelectorAll('tr').forEach((r,i)=>{
-   if(!i)return;
-   if(!r.dataset.searchText)r.dataset.searchText=(r.textContent||'').toLowerCase();
-   r.style.display=!v||r.dataset.searchText.includes(v)?'':'none';
-  });
- },90);
+ },document.hidden?60000:20000)};
+ tick();
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTicketInboxState(false)});
+ window.addEventListener('online',()=>refreshTicketInboxState(false));
+ window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_INBOX_TIMER),{once:true});
 }
 async function toggleDesktopFullscreen(){
  try{
@@ -344,9 +356,9 @@ function markNotificationsRead(items){
  const b=document.querySelector('#notificationBadge');if(b)b.hidden=true;
 }
 function refreshNotificationTimes(){document.querySelectorAll('[data-notification-time]').forEach(el=>el.textContent=notificationTime(el.dataset.notificationTime))}
-function refreshNotifications(render=false,markRead=false){return fetch('/api/notifications',{cache:'no-store'}).then(r=>r.json()).then(items=>{renderNotifications(items);if(markRead){markNotificationsRead(items);setTimeout(()=>renderNotifications(items),220)}return items}).catch(()=>{if(render){const l=document.querySelector('#notificationList');if(l)l.innerHTML='<div class="empty">Notifikácie sa nepodarilo načítať.</div>'}})}
+function refreshNotifications(render=false,markRead=false){return fetchWithTimeout('/api/notifications',{cache:'no-store',headers:{'Accept':'application/json'}},7000).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(items=>{renderNotifications(items);if(markRead){markNotificationsRead(items);setTimeout(()=>renderNotifications(items),220)}return items}).catch(()=>{if(render){const l=document.querySelector('#notificationList');if(l)l.innerHTML='<div class="empty">Notifikácie sa nepodarilo načítať.</div>'}return []})}
 function toggleNotifications(){let p=document.querySelector('#notifications');p.classList.toggle('showpanel');if(p.classList.contains('showpanel'))refreshNotifications(true,true)}
-let searchTimer;function globalSearch(v){clearTimeout(searchTimer);let box=document.querySelector('#globalSearchResults');if(!box)return;if(v.trim().length<2){box.innerHTML='<div class="empty">Začni písať aspoň 2 znaky.</div>';return}searchTimer=setTimeout(()=>fetch('/api/search?q='+encodeURIComponent(v),{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('search');return r.json()}).then(items=>{box.innerHTML=items.length?items.map(x=>`<a class="searchitem" href="${safeInternalUrl(x.url)}"><b>${escapeHtml(x.title)}</b><small>${escapeHtml(x.subtitle)}</small><span>${escapeHtml(x.kind)}</span></a>`).join(''):'<div class="empty">Nenašli sa žiadne výsledky.</div>'}).catch(()=>{box.innerHTML='<div class="empty">Vyhľadávanie sa nepodarilo načítať.</div>'}),180)}
+let searchTimer;function globalSearch(v){clearTimeout(searchTimer);let box=document.querySelector('#globalSearchResults');if(!box)return;if(v.trim().length<2){box.innerHTML='<div class="empty">Začni písať aspoň 2 znaky.</div>';return}searchTimer=setTimeout(()=>fetchWithTimeout('/api/search?q='+encodeURIComponent(v),{cache:'no-store',headers:{'Accept':'application/json'}},6500).then(r=>{if(!r.ok)throw new Error('search');return r.json()}).then(items=>{box.innerHTML=items.length?items.map(x=>`<a class="searchitem" href="${safeInternalUrl(x.url)}"><b>${escapeHtml(x.title)}</b><small>${escapeHtml(x.subtitle)}</small><span>${escapeHtml(x.kind)}</span></a>`).join(''):'<div class="empty">Nenašli sa žiadne výsledky.</div>'}).catch(()=>{box.innerHTML='<div class="empty">Vyhľadávanie sa nepodarilo načítať.</div>'}),180)}
 const configSchemas={
 'Organizačná štruktúra':{icon:'▦',group:'ŠTRUKTÚRA OBJEKTOV',fields:[['Predvolený názov organizácie',APP_BRAND,'text'],['Kód lokality',APP_ORG_CODE,'text'],['Číslovanie podlaží','NP / PP','select',['NP / PP','Číselné','Vlastné']],['Prevádzkové zóny','Zapnuté','select',['Zapnuté','Vypnuté']]]},
 'Technológie & číselníky':{icon:'◇',group:'ČÍSELNÍKY ASSETOV',fields:[['Predvolená profesia','HVAC','text'],['Stav nového assetu','Prevádzka','select',['Prevádzka','Servis','Mimo prevádzky']],['Kritickosť','B','select',['A','B','C']],['Výrobcovia','Spravované číselníkom','text']]},
@@ -410,7 +422,7 @@ async function checkSystemHealth(){
  const control=document.querySelector('#systemControlStatus');
  try{
   const started=performance.now();
-  const res=await fetch('/api/health',{cache:'no-store',headers:{'Accept':'application/json'}});
+  const res=await fetchWithTimeout('/api/health',{cache:'no-store',headers:{'Accept':'application/json'}},6500);
   const data=await res.json();
   const browserMs=Math.round(performance.now()-started);
   const online=res.ok&&data.status==='online'&&data.database==='online'&&data.api==='online';
