@@ -671,7 +671,7 @@ r = client.post(
         "building_id": str(private_building["id"]),
         "asset_id": "",
         "message": "Prosím správcu o kontrolu klimatizácie v kancelárii.",
-        "attachment": (io.BytesIO(b"customer ticket photo"), "problem-photo.jpg"),
+        "attachment": (io.BytesIO(b"\xff\xd8\xff\xe0GAMO customer ticket photo\xff\xd9"), "problem-photo.jpg"),
     },
     content_type="multipart/form-data",
     follow_redirects=False,
@@ -687,7 +687,7 @@ first_ticket_attachment = app.one_system(
     "select * from ticket_attachments where organization_id=? and ticket_id=? and name=?",
     (customer["id"], ticket["id"], "problem-photo.jpg"),
 )
-assert first_ticket_attachment and first_ticket_attachment["size"] == len(b"customer ticket photo")
+assert first_ticket_attachment and first_ticket_attachment["size"] == len(b"\xff\xd8\xff\xe0GAMO customer ticket photo\xff\xd9")
 assert client.get(f"/ticket/{ticket['id']}").status_code == 200
 assert client.post(
     f"/ticket/{ticket['id']}/manage",
