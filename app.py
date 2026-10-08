@@ -43,6 +43,21 @@ PLAN_LIMITS={
  'INTERNAL':{'users':None,'buildings':None,'assets':None}
 }
 
+UPLOAD_ALLOWED_EXTS={'.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.txt','.csv','.log','.zip'}
+UPLOAD_MAX_BYTES=8*1024*1024
+
+def read_safe_upload(file,max_bytes=UPLOAD_MAX_BYTES):
+ if not file or not getattr(file,'filename',None): return None
+ name=os.path.basename(file.filename).strip()[:180]
+ ext=os.path.splitext(name)[1].lower()
+ if not name or ext not in UPLOAD_ALLOWED_EXTS:
+  raise ValueError('Nepodporovaný typ súboru.')
+ data=file.read(max_bytes+1)
+ if len(data)>max_bytes:
+  raise ValueError(f'Súbor je väčší ako {max_bytes//(1024*1024)} MB.')
+ return {'name':name,'mime':(file.mimetype or 'application/octet-stream')[:120],'size':len(data),'data':data}
+
+
 def can(permission):
  return permission in ROLE_PERMISSIONS.get(session.get('user_role','Viewer'),{'view'})
 
@@ -701,8 +716,15 @@ def tickets():
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if r['user_unread']>0)}
  buildings=q('select id,code,name from buildings where organization_id=? order by name',(oid,))
  assets=q('select id,asset_id,name,building_id from assets where organization_id=? order by asset_id',(oid,))
+ prefill_asset_id=(request.args.get('asset_id') or '').strip()
+ prefill_building_id=(request.args.get('building_id') or '').strip()
+ if prefill_asset_id:
+  prefill_asset=one('select id,building_id from assets where id=? and organization_id=?',(prefill_asset_id,oid))
+  if prefill_asset: prefill_building_id=str(prefill_asset['building_id'])
+  else: prefill_asset_id=''
+ if prefill_building_id and not owns_building(prefill_building_id): prefill_building_id=''
  staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by case role when 'Facility Manager' then 0 when 'Administrator' then 1 else 2 end,name",(oid,))
- return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users,ticket_platform_inbox=False)
+ return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users,ticket_platform_inbox=False,ticket_prefill_asset=prefill_asset_id,ticket_prefill_building=prefill_building_id,ticket_auto_open=bool(prefill_asset_id or prefill_building_id))
 
 @app.get('/api/tickets/inbox-state')
 def api_ticket_inbox_state():
@@ -712,6 +734,9 @@ def api_ticket_inbox_state():
 def ticket_create():
  oid=org_id(); uid=session.get('user_id'); f=request.form
  subject=(f.get('subject') or '').strip()[:160]; body=(f.get('message') or '').strip()[:5000]
+ try: attachment=read_safe_upload(request.files.get('attachment'))
+ except ValueError as exc:
+  flash(str(exc),'error'); return redirect('/tickets')
  category=(f.get('category') or 'Požiadavka').strip(); priority=(f.get('priority') or 'Stredná').strip()
  building_id=f.get('building_id') or None; asset_id=f.get('asset_id') or None
  if not subject or len(body)<2:
@@ -736,6 +761,8 @@ def ticket_create():
   no=next_ticket_no()
   tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
  mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+ if attachment:
+  x('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
  x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
  audit('TICKET_CREATE',f'{no} · {subject}'); flash(f'Ticket {no} bol vytvorený.','success')
  return redirect(f'/ticket/{tid}')
@@ -765,6 +792,9 @@ def ticket_detail(i):
    ) then 1 else 0 end is_support
    from ticket_messages m left join users u on u.id=m.sender_user_id
    where m.ticket_id=? and m.organization_id=? order by m.id""",(oid,i,oid))
+ messages=[dict(m) for m in messages]
+ for m in messages:
+  m['attachments']=read_all('select id,name,mime,size,uploaded from ticket_attachments where message_id=? and ticket_id=? and organization_id=? order by id',(m['id'],i,oid))
  last_message_id=messages[-1]['id'] if messages else 0
  if platform_view:
   write('update tickets set platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,oid))
@@ -813,6 +843,7 @@ def api_ticket_messages(i):
  messages=[]
  for r in rows:
   external_support=bool(r['is_support'])
+  attachments=read_all('select id,name,mime,size,uploaded from ticket_attachments where message_id=? and ticket_id=? and organization_id=? order by id',(r['id'],i,oid))
   messages.append({
    'id':r['id'],
    'sender_name':r['sender_name'] or 'Systém',
@@ -820,7 +851,8 @@ def api_ticket_messages(i):
    'body':r['body'] or '',
    'created':str(r['created'] or ''),
    'mine':bool(r['sender_user_id']==session.get('user_id')),
-   'support':external_support
+   'support':external_support,
+   'attachments':[{'id':a['id'],'name':a['name'],'mime':a['mime'],'size':a['size'],'url':f"/ticket-attachment/{a['id']}/download"} for a in attachments]
   })
  return jsonify({
   'messages':messages,'last_id':last_id,
@@ -834,6 +866,10 @@ def ticket_message(i):
  t=ticket_record(i)
  if not t: abort(404)
  body=(request.form.get('message') or '').strip()[:5000]
+ try: attachment=read_safe_upload(request.files.get('attachment'))
+ except ValueError as exc:
+  if request.headers.get('X-Requested-With')=='GAMO-Live-Chat': return jsonify({'ok':False,'error':str(exc)}),400
+  flash(str(exc),'error'); return redirect(f'/ticket/{i}')
  if not body:
   if request.headers.get('X-Requested-With')=='GAMO-Live-Chat': return jsonify({'ok':False,'error':'Správa nemôže byť prázdna.'}),400
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
@@ -841,6 +877,8 @@ def ticket_message(i):
  oid=t['organization_id'] if platform_view else org_id()
  write=x_system if platform_view else x
  mid=write('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
+ if attachment:
+  write('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
  if platform_view:
   new_status='Otvorený' if t['status'] in {'Nový','Uzavretý'} else t['status']
   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
@@ -858,6 +896,17 @@ def ticket_message(i):
  if request.headers.get('X-Requested-With')=='GAMO-Live-Chat':
   return jsonify({'ok':True,'message_id':mid,'status':new_status})
  return redirect(f'/ticket/{i}#conversation')
+
+@app.get('/ticket-attachment/<int:i>/download')
+def download_ticket_attachment(i):
+ platform_view=platform_ticket_mode()
+ read_one=one_system if platform_view else one
+ a=read_one('select * from ticket_attachments where id=?',(i,)) if platform_view else read_one('select * from ticket_attachments where id=? and organization_id=?',(i,org_id()))
+ if not a: abort(404)
+ t=ticket_record(a['ticket_id'])
+ if not t or int(t['organization_id'])!=int(a['organization_id']): abort(404)
+ if platform_view: customer_access(a['organization_id'],'TICKET_ATTACHMENT_DOWNLOAD',a['name'])
+ return send_file(io.BytesIO(bytes(a['data'])),mimetype=a['mime'] or 'application/octet-stream',as_attachment=True,download_name=a['name'])
 
 @app.post('/ticket/<int:i>/manage')
 def ticket_manage(i):
@@ -1159,7 +1208,43 @@ def asset(i):
   where x.asset_id=? and b.organization_id=? order by x.id desc""",(i,org_id()))
  events=q('select * from asset_events where asset_id=? and organization_id=? order by id desc limit 100',(i,org_id()))
  active_incidents=sum(1 for row in incidents if row['status'] not in {'Ukončená','Vyriešená'})
- return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events,active_incidents=active_incidents)
+ asset_documents=q('select id,name,category,mime,size,uploaded from asset_documents where asset_id=? and organization_id=? order by id desc',(i,org_id()))
+ return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events,active_incidents=active_incidents,asset_documents=asset_documents)
+@app.post('/asset/<int:i>/document')
+def upload_asset_document(i):
+ if not can('documents_write'): abort(403)
+ a=one('select id,asset_id from assets where id=? and organization_id=?',(i,org_id()))
+ if not a: abort(404)
+ try:
+  upload=read_safe_upload(request.files.get('document'))
+  if not upload: raise ValueError('Vyber dokument na nahratie.')
+ except ValueError as exc:
+  flash(str(exc),'error'); return redirect(f'/asset/{i}#docs')
+ category=(request.form.get('category') or 'Technická').strip()[:80]
+ did=x('insert into asset_documents(organization_id,asset_id,name,category,mime,size,data) values(?,?,?,?,?,?,?)',
+  (org_id(),i,upload['name'],category,upload['mime'],upload['size'],upload['data']))
+ asset_event(i,'DOCUMENT_UPLOAD','Dokument assetu nahraný',f"{upload['name']} · {category}")
+ audit('ASSET_DOCUMENT_UPLOAD',f"{a['asset_id']} · {upload['name']}")
+ flash('Dokument assetu bol nahraný.','success')
+ return redirect(f'/asset/{i}#docs')
+
+@app.get('/asset-document/<int:i>/download')
+def download_asset_document(i):
+ d=one('select d.* from asset_documents d join assets a on a.id=d.asset_id where d.id=? and d.organization_id=? and a.organization_id=?',(i,org_id(),org_id()))
+ if not d: abort(404)
+ return send_file(io.BytesIO(bytes(d['data'])),mimetype=d['mime'] or 'application/octet-stream',as_attachment=True,download_name=d['name'])
+
+@app.post('/asset-document/<int:i>/delete')
+def delete_asset_document(i):
+ if not can('documents_write'): abort(403)
+ d=one('select d.id,d.asset_id,d.name,a.asset_id asset_code from asset_documents d join assets a on a.id=d.asset_id where d.id=? and d.organization_id=? and a.organization_id=?',(i,org_id(),org_id()))
+ if not d: abort(404)
+ x('delete from asset_documents where id=? and organization_id=?',(i,org_id()))
+ asset_event(d['asset_id'],'DOCUMENT_DELETE','Dokument assetu odstránený',d['name'])
+ audit('ASSET_DOCUMENT_DELETE',f"{d['asset_code']} · {d['name']}")
+ flash('Dokument assetu bol odstránený.','success')
+ return redirect(f"/asset/{d['asset_id']}#docs")
+
 @app.route('/maintenance')
 def maintenance():
  orders=q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
@@ -1279,6 +1364,8 @@ def create_organization_backup_archive(oid,privileged=False):
  data['tickets']=[dict(r) for r in read_all('select * from tickets where organization_id=? order by id',(oid,))]
  data['ticket_messages']=[dict(r) for r in read_all('select * from ticket_messages where organization_id=? order by id',(oid,))]
  docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
+ asset_docs=read_all('select id,asset_id,name,category,mime,size,uploaded,data from asset_documents where organization_id=? order by id',(oid,))
+ ticket_files=read_all('select id,ticket_id,message_id,sender_user_id,name,mime,size,uploaded,data from ticket_attachments where organization_id=? order by id',(oid,))
  files={}
  for name,rows in data.items():
   files[f'data/{name}.json']=json.dumps(rows,ensure_ascii=False,indent=2,default=str).encode('utf-8')
@@ -1290,12 +1377,28 @@ def create_organization_backup_archive(oid,privileged=False):
   item['archive_path']=path; doc_meta.append(item)
   files[path]=bytes(d['data']) if d['data'] is not None else b''
  files['data/documents.json']=json.dumps(doc_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+ asset_doc_meta=[]
+ for d in asset_docs:
+  item={k:d[k] for k in ['id','asset_id','name','category','mime','size','uploaded']}
+  safe=os.path.basename(d['name'] or f"asset_document_{d['id']}")
+  path=f"asset_documents/{d['id']}_{safe}"
+  item['archive_path']=path; asset_doc_meta.append(item)
+  files[path]=bytes(d['data']) if d['data'] is not None else b''
+ files['data/asset_documents.json']=json.dumps(asset_doc_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+ ticket_file_meta=[]
+ for d in ticket_files:
+  item={k:d[k] for k in ['id','ticket_id','message_id','sender_user_id','name','mime','size','uploaded']}
+  safe=os.path.basename(d['name'] or f"ticket_attachment_{d['id']}")
+  path=f"ticket_attachments/{d['id']}_{safe}"
+  item['archive_path']=path; ticket_file_meta.append(item)
+  files[path]=bytes(d['data']) if d['data'] is not None else b''
+ files['data/ticket_attachments.json']=json.dumps(ticket_file_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
  checksums={path:hashlib.sha256(blob).hexdigest() for path,blob in files.items()}
  manifest={
   'format':'GAMO_ORGANIZATION_BACKUP_V3','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
   'organization':{k:org[k] for k in ['id','code','name','status','plan','license_status','license_until','branding_name','brand_color','brand_tagline','privacy_contact','data_region','retention_days','mfa_required','created'] if k in org.keys()},
   'privacy':{'password_hashes_included':False,'mfa_secrets_included':False,'support_access_active':support_access_active(org)},
-  'counts':{name:len(rows) for name,rows in data.items()} | {'documents':len(doc_meta)},
+  'counts':{name:len(rows) for name,rows in data.items()} | {'documents':len(doc_meta),'asset_documents':len(asset_doc_meta),'ticket_attachments':len(ticket_file_meta)},
   'checksums_sha256':checksums,
   'note':'Password hashes, TOTP secrets and recovery codes are intentionally excluded.'
  }
@@ -1312,7 +1415,7 @@ def verify_organization_backup_bytes(blob):
    manifest=json.loads(z.read('manifest.json').decode('utf-8'))
    if manifest.get('format')!='GAMO_ORGANIZATION_BACKUP_V3': return False,'Neplatný formát backupu.'
    checks=manifest.get('checksums_sha256') or {}
-   required={'data/buildings.json','data/assets.json','data/users.json','data/documents.json'}
+   required={'data/buildings.json','data/assets.json','data/users.json','data/documents.json','data/asset_documents.json','data/ticket_attachments.json'}
    if not required.issubset(set(checks)): return False,'Backup nemá všetky povinné dátové súbory.'
    for path,expected in checks.items():
     if path not in z.namelist(): return False,f'Chýba {path}.'

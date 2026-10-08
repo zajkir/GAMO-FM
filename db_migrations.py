@@ -994,6 +994,113 @@ def _migration_13(db, using_postgres):
             db.execute(f"ALTER TABLE tickets ADD COLUMN {column} {definition}")
     db.execute("CREATE INDEX IF NOT EXISTS idx_tickets_platform_updated ON tickets(updated)")
 
+
+def _migration_14(db, using_postgres):
+    """Asset document center and tenant-safe ticket attachments."""
+    if using_postgres:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS asset_documents(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                asset_id BIGINT NOT NULL,
+                name TEXT NOT NULL,
+                category TEXT DEFAULT 'Technická',
+                mime TEXT,
+                size BIGINT DEFAULT 0,
+                uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                data BYTEA NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS ticket_attachments(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                ticket_id BIGINT NOT NULL,
+                message_id BIGINT NOT NULL,
+                sender_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                mime TEXT,
+                size BIGINT DEFAULT 0,
+                uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                data BYTEA NOT NULL
+            )"""
+        )
+    else:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS asset_documents(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                category TEXT DEFAULT 'Technická',
+                mime TEXT,
+                size INTEGER DEFAULT 0,
+                uploaded TEXT DEFAULT CURRENT_TIMESTAMP,
+                data BLOB NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS ticket_attachments(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                message_id INTEGER NOT NULL REFERENCES ticket_messages(id) ON DELETE CASCADE,
+                sender_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                mime TEXT,
+                size INTEGER DEFAULT 0,
+                uploaded TEXT DEFAULT CURRENT_TIMESTAMP,
+                data BLOB NOT NULL
+            )"""
+        )
+
+    db.execute("CREATE INDEX IF NOT EXISTS idx_asset_documents_asset ON asset_documents(organization_id,asset_id,uploaded)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_ticket_attachments_message ON ticket_attachments(organization_id,ticket_id,message_id)")
+
+    if using_postgres:
+        platform = "current_setting('gamo.platform_admin', true) = '1'"
+        tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_messages_id_org ON ticket_messages(id,organization_id)")
+
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_asset_documents_asset_org') THEN
+                   ALTER TABLE asset_documents ADD CONSTRAINT fk_asset_documents_asset_org
+                   FOREIGN KEY(asset_id,organization_id)
+                   REFERENCES assets(id,organization_id) ON DELETE CASCADE;
+                 END IF;
+               END $$"""
+        )
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ticket_attachments_ticket_org') THEN
+                   ALTER TABLE ticket_attachments ADD CONSTRAINT fk_ticket_attachments_ticket_org
+                   FOREIGN KEY(ticket_id,organization_id)
+                   REFERENCES tickets(id,organization_id) ON DELETE CASCADE;
+                 END IF;
+               END $$"""
+        )
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ticket_attachments_message_org') THEN
+                   ALTER TABLE ticket_attachments ADD CONSTRAINT fk_ticket_attachments_message_org
+                   FOREIGN KEY(message_id,organization_id)
+                   REFERENCES ticket_messages(id,organization_id) ON DELETE CASCADE;
+                 END IF;
+               END $$"""
+        )
+
+        for table in ("asset_documents","ticket_attachments"):
+            predicate = f"({platform} OR organization_id={tenant})"
+            db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+            db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+            db.execute(f"DROP POLICY IF EXISTS gamo_tenant_{table} ON {table}")
+            db.execute(
+                f"""CREATE POLICY gamo_tenant_{table} ON {table}
+                    USING ({predicate}) WITH CHECK ({predicate})"""
+            )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -1008,6 +1115,7 @@ MIGRATIONS = (
     (11, "tenant_ticketing_and_messages", _migration_11),
     (12, "seed_fdsfsdf_demo_data", _migration_12),
     (13, "platform_ticket_inbox", _migration_13),
+    (14, "asset_documents_and_ticket_attachments", _migration_14),
 )
 
 

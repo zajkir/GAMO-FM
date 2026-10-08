@@ -167,6 +167,11 @@ function filterTicketAssets(){
  if(a.selectedOptions[0]?.hidden)a.value='';
 }
 
+function updateTicketAttachmentLabel(input){
+ const label=document.querySelector('#ticketAttachmentName');
+ const file=input?.files?.[0];
+ if(label)label.textContent=file?file.name:'';
+}
 function ticketInitials(name){
  return String(name||'??').trim().split(/\s+/).map(x=>x[0]||'').join('').slice(0,2).toUpperCase()||'??';
 }
@@ -180,7 +185,19 @@ function ticketMessageElement(m){
  const time=document.createElement('time');time.textContent=m.created||'';
  meta.append(name,role,time);
  const p=document.createElement('p');p.textContent=m.body||'';
- body.append(meta,p);row.append(avatar,body);return row;
+ body.append(meta,p);
+ if(Array.isArray(m.attachments)&&m.attachments.length){
+  const files=document.createElement('div');files.className='ticket-attachments';
+  m.attachments.forEach(a=>{
+   const link=document.createElement('a');link.href=safeInternalUrl(a.url);link.setAttribute('download','');
+   const icon=document.createElement('span');icon.textContent='⇩';
+   const copy=document.createElement('div'),title=document.createElement('b'),metaFile=document.createElement('small');
+   title.textContent=a.name||'Príloha';metaFile.textContent=((Number(a.size||0)/1024).toFixed(1))+' KB';
+   copy.append(title,metaFile);link.append(icon,copy);files.appendChild(link);
+  });
+  body.appendChild(files);
+ }
+ row.append(avatar,body);return row;
 }
 function scrollTicketBottom(){
  const thread=document.querySelector('#ticketThread');if(thread){thread.scrollTop=thread.scrollHeight;document.querySelector('#ticketNewMessageHint')?.setAttribute('hidden','')}
@@ -218,7 +235,10 @@ async function submitTicketReply(ev){
   const res=await fetch(form.action,{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'GAMO-Live-Chat','Accept':'application/json'}});
   const data=await res.json().catch(()=>({}));
   if(!res.ok||!data.ok)throw new Error(data.error||'Správu sa nepodarilo odoslať.');
-  textarea.value='';await refreshTicketMessages(true);textarea.focus();
+  textarea.value='';
+  const attachment=form.querySelector('input[name="attachment"]');if(attachment)attachment.value='';
+  const attachmentName=document.querySelector('#ticketAttachmentName');if(attachmentName)attachmentName.textContent='';
+  await refreshTicketMessages(true);textarea.focus();
  }catch(e){
   if(error){error.textContent=e.message||'Správu sa nepodarilo odoslať.';error.hidden=false}
  }finally{
@@ -429,7 +449,7 @@ document.addEventListener('DOMContentLoaded',()=>{
  }
 });
 
-document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000);initLiveTicket();initTicketInboxWatch();initDigitalTwinV2()});
+document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000);filterTicketAssets();initLiveTicket();initTicketInboxWatch();initDigitalTwinV2()});
 
 function twinWorld(){return document.querySelector('.dt2-world')}
 function twinApply(){
@@ -473,6 +493,8 @@ function twinSelectFloor(el){
  if(!el)return;
  document.querySelectorAll('[data-dt2-floor]').forEach(x=>x.classList.toggle('selected',x===el));
  const id=String(el.dataset.floorId||'');
+ const root=document.querySelector('#digitalTwinV2');if(root)root.dataset.selectedFloor=id;
+ const open=document.querySelector('#dt2OpenFloorButton');if(open)open.disabled=!id;
  document.querySelectorAll('[data-dt2-list-floor]').forEach(x=>x.classList.toggle('selected',String(x.dataset.dt2ListFloor||'')===id));
  const values={dt2FloorCode:el.dataset.floorCode||'—',dt2FloorName:el.dataset.floorName||'—',dt2FloorRooms:el.dataset.floorRooms||'0',dt2FloorAssets:el.dataset.floorAssets||'0',dt2FloorArea:(el.dataset.floorArea||'0')+' m²',dt2FloorIncidents:el.dataset.floorIncidents||'0',dt2FloorFaults:el.dataset.floorFaults||'0',dt2FloorCritical:el.dataset.floorCritical||'0'};
  Object.entries(values).forEach(([id,value])=>{const n=document.getElementById(id);if(n)n.textContent=value});
@@ -480,6 +502,12 @@ function twinSelectFloor(el){
 }
 function twinSelectFloorById(id){
  const el=[...document.querySelectorAll('[data-dt2-floor]')].find(x=>String(x.dataset.floorId)===String(id));if(el)twinSelectFloor(el);
+}
+function twinOpenSelectedFloor(){
+ const root=document.querySelector('#digitalTwinV2'),id=root?.dataset.selectedFloor;if(!id)return;
+ const buttons=[...document.querySelectorAll('.building-tabs button')],spaces=buttons.find(b=>b.textContent.includes('Priestory'));
+ if(spaces)buildingTab('spaces',spaces);
+ setTimeout(()=>document.getElementById('floor-'+id)?.scrollIntoView({behavior:'smooth',block:'center'}),120);
 }
 function initDigitalTwinV2(){
  const stage=document.querySelector('#dt2Stage'),world=twinWorld();if(!stage||!world)return;

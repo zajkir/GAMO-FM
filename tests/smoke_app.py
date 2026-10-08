@@ -367,6 +367,28 @@ assert r.status_code in (302, 303)
 document = app.one("select * from documents where building_id=? and name=?", (building["id"], "gamo-private.txt"))
 assert document
 
+# Real document center on an asset.
+r = client.post(
+    f"/asset/{asset['id']}/document",
+    data={
+        "_csrf": csrf(),
+        "category": "Revízia",
+        "document": (io.BytesIO(b"GAMO private asset revision"), "asset-revision.pdf"),
+    },
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+asset_document = app.one(
+    "select * from asset_documents where organization_id=? and asset_id=? and name=?",
+    (gamo_org_id, asset["id"], "asset-revision.pdf"),
+)
+assert asset_document and asset_document["category"] == "Revízia"
+r = client.get(f"/asset-document/{asset_document['id']}/download")
+assert r.status_code == 200 and r.data == b"GAMO private asset revision"
+asset_page = client.get(f"/asset/{asset['id']}#docs")
+assert asset_page.status_code == 200 and b"asset-revision.pdf" in asset_page.data
+
 # Tenant-scoped settings and reporting.
 r = client.post(
     "/settings/save",
@@ -419,6 +441,18 @@ denied_delete_doc = viewer_client.post(
     f"/document/{document['id']}/delete", data={"_csrf": "viewer-csrf"}, follow_redirects=False
 )
 assert denied_delete_doc.status_code == 403
+denied_asset_doc = viewer_client.post(
+    f"/asset/{asset['id']}/document",
+    data={"_csrf": "viewer-csrf", "category": "Technická", "document": (io.BytesIO(b"blocked"), "blocked.pdf")},
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert denied_asset_doc.status_code == 403
+assert viewer_client.post(
+    f"/asset-document/{asset_document['id']}/delete",
+    data={"_csrf": "viewer-csrf"},
+    follow_redirects=False,
+).status_code == 403
 assert app.one_system("select name from buildings where id=?", (building["id"],))["name"] == "Smoke Building Edited"
 assert app.one_system("select status from assets where id=?", (asset["id"],))["status"] == "Servis"
 assert app.one_system("select id from documents where id=?", (document["id"],))
@@ -559,7 +593,9 @@ r = client.post(
         "building_id": str(private_building["id"]),
         "asset_id": "",
         "message": "Prosím správcu o kontrolu klimatizácie v kancelárii.",
+        "attachment": (io.BytesIO(b"customer ticket photo"), "problem-photo.jpg"),
     },
+    content_type="multipart/form-data",
     follow_redirects=False,
 )
 assert r.status_code in (302, 303)
@@ -569,6 +605,11 @@ ticket = app.one_system(
 )
 assert ticket and ticket["ticket_no"] == "TKT-000001"
 assert ticket["assigned_to"] == manager["id"]
+first_ticket_attachment = app.one_system(
+    "select * from ticket_attachments where organization_id=? and ticket_id=? and name=?",
+    (customer["id"], ticket["id"], "problem-photo.jpg"),
+)
+assert first_ticket_attachment and first_ticket_attachment["size"] == len(b"customer ticket photo")
 assert client.get(f"/ticket/{ticket['id']}").status_code == 200
 assert client.post(
     f"/ticket/{ticket['id']}/manage",
@@ -591,6 +632,8 @@ live_initial = client.get(f"/api/ticket/{ticket['id']}/messages?after=0")
 assert live_initial.status_code == 200
 live_initial_json = live_initial.get_json()
 assert any(m["body"].startswith("Prosím správcu") for m in live_initial_json["messages"])
+initial_with_file = next(m for m in live_initial_json["messages"] if m["body"].startswith("Prosím správcu"))
+assert any(a["name"] == "problem-photo.jpg" for a in initial_with_file["attachments"])
 first_message_id = live_initial_json["last_id"]
 manager_after_read = client.get("/tickets")
 assert manager_after_read.status_code == 200
@@ -600,12 +643,22 @@ assert client.get("/api/tickets/inbox-state").get_json()["unread"] == 0
 # Live/AJAX reply returns JSON instead of forcing a page reload.
 r = client.post(
     f"/ticket/{ticket['id']}/message",
-    data={"_csrf": csrf(), "message": "Požiadavku som prevzal, prídem ju skontrolovať."},
+    data={
+        "_csrf": csrf(),
+        "message": "Požiadavku som prevzal, prídem ju skontrolovať.",
+        "attachment": (io.BytesIO(b"service protocol"), "service-protocol.pdf"),
+    },
+    content_type="multipart/form-data",
     headers={"X-Requested-With": "GAMO-Live-Chat", "Accept": "application/json"},
     follow_redirects=False,
 )
 assert r.status_code == 200 and r.get_json()["ok"] is True
 manager_message_id = r.get_json()["message_id"]
+manager_attachment = app.one_system(
+    "select * from ticket_attachments where organization_id=? and message_id=? and name=?",
+    (customer["id"], manager_message_id, "service-protocol.pdf"),
+)
+assert manager_attachment
 r = client.post(
     f"/ticket/{ticket['id']}/manage",
     data={
@@ -632,6 +685,10 @@ assert live_reply.status_code == 200
 live_reply_json = live_reply.get_json()
 assert live_reply_json["last_id"] == manager_message_id
 assert any(m["body"].startswith("Požiadavku som prevzal") and not m["mine"] for m in live_reply_json["messages"])
+reply_with_file = next(m for m in live_reply_json["messages"] if m["body"].startswith("Požiadavku som prevzal"))
+assert any(a["name"] == "service-protocol.pdf" for a in reply_with_file["attachments"])
+downloaded = client.get(f"/ticket-attachment/{manager_attachment['id']}/download")
+assert downloaded.status_code == 200 and downloaded.data == b"service protocol"
 
 # No duplicate payload after the last known message.
 empty_live = client.get(f"/api/ticket/{ticket['id']}/messages?after={manager_message_id}")
@@ -654,6 +711,10 @@ assert client.get(f"/api/rooms/{floor['id']}").status_code == 404
 assert client.get(f"/building/{building['id']}").status_code == 404
 assert client.get(f"/asset/{asset['id']}").status_code == 404
 assert client.get(f"/document/{document['id']}/download").status_code == 404
+assert client.get(f"/asset-document/{asset_document['id']}/download").status_code == 404
+r = client.post(f"/asset-document/{asset_document['id']}/delete", data={"_csrf": csrf()}, follow_redirects=False)
+assert r.status_code == 404
+assert app.one_system("select id from asset_documents where id=?", (asset_document["id"],))
 
 r = client.post(f"/edit/building/{building['id']}", data={"_csrf": csrf(), "code": "FOREIGN", "name": "Other tenant", "address": "", "manager": ""})
 assert r.status_code == 404
@@ -749,8 +810,15 @@ with zipfile.ZipFile(io.BytesIO(backup_bytes), "r") as z:
     assert all("mfa_recovery_codes" not in u for u in users_export)
     assert "data/tickets.json" in z.namelist()
     assert "data/ticket_messages.json" in z.namelist()
+    assert "data/asset_documents.json" in z.namelist()
+    assert "data/ticket_attachments.json" in z.namelist()
     ticket_export = json.loads(z.read("data/tickets.json"))
     assert any(t["ticket_no"] == ticket["ticket_no"] for t in ticket_export)
+    attachment_export = json.loads(z.read("data/ticket_attachments.json"))
+    assert any(x["name"] == "problem-photo.jpg" for x in attachment_export)
+    assert any(x["name"] == "service-protocol.pdf" for x in attachment_export)
+    exported_paths = [x["archive_path"] for x in attachment_export]
+    assert all(path in z.namelist() for path in exported_paths)
 
 # Secondary customer account for GDPR export/anonymization.
 r = client.post(
@@ -819,6 +887,8 @@ platform_thread = client.get(f"/ticket/{ticket['id']}")
 assert platform_thread.status_code == 200
 assert "Prosím správcu".encode("utf-8") in platform_thread.data
 assert "Požiadavku som prevzal".encode("utf-8") in platform_thread.data
+platform_file = client.get(f"/ticket-attachment/{first_ticket_attachment['id']}/download")
+assert platform_file.status_code == 200 and platform_file.data == b"customer ticket photo"
 assert client.get(f"/building/{private_building['id']}").status_code == 404
 
 r = client.post(
