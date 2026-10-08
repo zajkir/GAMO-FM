@@ -746,11 +746,34 @@ body small{font-size:10px;line-height:1.42}
 .desktop-client body{scroll-behavior:auto}
 .desktop-client .modal{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .desktop-client .overlaypanel,.desktop-client .modalbox,.desktop-client .card,.desktop-client .metric{box-shadow:0 8px 26px rgba(15,23,42,.08)}
-.dt2-world{will-change:transform;transform-origin:center center;backface-visibility:hidden}
-.dt2-stage.dragging .dt2-world{filter:none!important}
+.dt2-world{will-change:auto;transform-origin:center center;backface-visibility:hidden}
+.dt2-stage.dragging .dt2-world{will-change:transform;filter:none!important}
 .dt2-stage.dragging .dt2-floor,.dt2-stage.dragging .dt2-floor-top{transition:none!important}
-.dt2-stage{contain:layout paint}
+.dt2-stage{contain:layout paint style}
 .ticket-thread{contain:layout paint}
 @media (prefers-reduced-motion:reduce){
  *,*:before,*:after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
 }
+
+
+/* Large dataset navigation */
+.server-search{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.server-search input{flex:1;min-width:260px}
+.server-search button,.server-search a{min-height:38px;display:inline-flex;align-items:center;padding:0 13px;border:1px solid #dce5ef;border-radius:9px;background:#fff;color:#315579;font-size:9px;font-weight:850}
+.server-search button{background:#17365d;border-color:#17365d;color:#fff}
+.server-search>span{margin-left:auto;color:#7a899b;font-size:9px;font-weight:800}
+.list-pager{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin:13px 0 20px;padding:10px 12px;border:1px solid #dfe6ef;border-radius:11px;background:#fff}
+.list-pager a{justify-self:start;display:inline-flex;align-items:center;min-height:34px;padding:0 11px;border:1px solid #d9e3ef;border-radius:8px;background:#f8fbff;color:#315f96;font-size:9px;font-weight:850}
+.list-pager a:last-child{justify-self:end}.list-pager b{color:#68788d;font-size:9px;font-weight:800}
+.server-filters{align-items:center}.server-filters .ops-filter-btn{display:inline-flex;align-items:center;text-decoration:none}
+.ops-search{display:flex;align-items:center;gap:0;margin-left:auto;min-width:min(360px,100%)}
+.ops-search input{height:36px;min-width:230px;border:1px solid #dce4ed;border-right:0;border-radius:9px 0 0 9px;padding:0 10px;font-size:9px}
+.ops-search button{height:36px;width:40px;border:1px solid #dce4ed;border-radius:0 9px 9px 0;background:#f5f8fc;color:#315f96;box-shadow:none}
+@media(max-width:760px){
+ .server-search>span{width:100%;margin-left:0}
+ .list-pager{grid-template-columns:1fr 1fr}.list-pager b{grid-row:2;grid-column:1/-1;text-align:center}.ops-search{width:100%;margin-left:0}.ops-search input{flex:1;min-width:0}
+}
+
+/* Rendering isolation for long operational pages */
+.tablecard{contain:layout paint}
+.ticket-list-card,.asset-document-center{contain:layout paint}
