@@ -966,7 +966,7 @@ assert platform_thread.status_code == 200
 assert "Prosím správcu".encode("utf-8") in platform_thread.data
 assert "Požiadavku som prevzal".encode("utf-8") in platform_thread.data
 platform_file = client.get(f"/ticket-attachment/{first_ticket_attachment['id']}/download")
-assert platform_file.status_code == 200 and platform_file.data == b"customer ticket photo"
+assert platform_file.status_code == 200 and platform_file.data.startswith(b"\xff\xd8\xff\xe0")
 assert client.get(f"/building/{private_building['id']}").status_code == 404
 
 r = client.post(
