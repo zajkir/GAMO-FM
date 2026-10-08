@@ -485,8 +485,8 @@ def security_headers(response):
   response.headers['Cache-Control']='public, max-age=31536000, immutable'
  elif request.path.startswith('/backup') or request.path.endswith('/backup') or request.path.startswith('/privacy'):
   response.headers['Cache-Control']='no-store, private'
- else:
-  response.headers.setdefault('Cache-Control','private, no-cache')
+ elif 'Cache-Control' not in response.headers:
+  response.headers['Cache-Control']='private, no-cache'
  return response
 
 @app.before_request
