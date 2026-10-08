@@ -805,7 +805,7 @@ def onboarding():
   else:
    bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,address,manager,org['name'],org_id()))
    for n in range(1,floors+1):
-    x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    x('insert into floors(building_id,code,name,organization_id) values(?,?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie',org_id()))
    x('update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
    audit('ONBOARDING_COMPLETE',f'{name} · {floors} podlaží')
    flash('Firemné prostredie je pripravené. Teraz môžeš doplniť miestnosti a assety.','success')
@@ -1120,9 +1120,9 @@ def reports():
  stats['total_cost']=stats['maintenance_cost']+stats['incident_cost']
  building_rows=q("""select b.id,b.code,b.name,
   (select count(*) from assets a where a.building_id=b.id) assets,
-  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id) maintenance_cost,
-  (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id) incident_cost,
-  (select count(*) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.status not in ('Ukončená','Vyriešená')) open_incidents
+  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id and w.organization_id=b.organization_id) maintenance_cost,
+  (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.organization_id=b.organization_id) incident_cost,
+  (select count(*) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.organization_id=b.organization_id and i.status not in ('Ukončená','Vyriešená')) open_incidents
   from buildings b where b.organization_id=? order by b.name""",(oid,))
  profession_rows=q("""select coalesce(a.profession,'Iné') profession,count(*) assets,
   coalesce(sum(a.purchase_price),0) asset_value
@@ -1335,41 +1335,45 @@ def reports_export_xlsx():
  return send_file(stream,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name=f'GAMO_report_{code}_{date.today().isoformat()}.xlsx')
 
 @app.route('/buildings')
-def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors where building_id=b.id) floors,(select count(*) from assets where building_id=b.id) assets from buildings b where b.organization_id=?',(org_id(),)))
+def buildings(): return render_template('index.html',page='buildings',buildings=q('select b.*,(select count(*) from floors f where f.building_id=b.id and f.organization_id=b.organization_id) floors,(select count(*) from assets a where a.building_id=b.id and a.organization_id=b.organization_id) assets from buildings b where b.organization_id=?',(org_id(),)))
 @app.route('/building/<int:i>')
 def building(i):
  b=one('select * from buildings where id=? and organization_id=?',(i,org_id()))
  if not b: abort(404)
- return render_template('index.html',page='building',b=b,floors=q('select * from floors where building_id=?',(i,)),rooms=q("""select r.id,r.floor_id,r.code,r.name,coalesce(r.area,0) area,r.tenant,r.zone,f.code floor,
-  (select count(*) from assets a where a.room_id=r.id) asset_count,
-  (select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.status not in ('Ukončená','Vyriešená')) incident_count
-  from rooms r join floors f on f.id=r.floor_id where f.building_id=? order by f.id,r.code""",(i,)),assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id where a.building_id=? order by a.asset_id',(i,)),documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? order by id desc',(i,)))
+ return render_template('index.html',page='building',b=b,
+  floors=q('select * from floors where building_id=? and organization_id=? order by id',(i,org_id())),
+  rooms=q("""select r.id,r.floor_id,r.code,r.name,coalesce(r.area,0) area,r.tenant,r.zone,f.code floor,
+   (select count(*) from assets a where a.room_id=r.id and a.organization_id=r.organization_id) asset_count,
+   (select count(*) from incidents x join assets a on a.id=x.asset_id where a.room_id=r.id and x.organization_id=r.organization_id and x.status not in ('Ukončená','Vyriešená')) incident_count
+   from rooms r join floors f on f.id=r.floor_id
+   where r.organization_id=? and f.organization_id=? and f.building_id=? order by f.id,r.code""",(org_id(),org_id(),i)),
+  assets=q('select a.*,r.code room from assets a left join rooms r on r.id=a.room_id and r.organization_id=a.organization_id where a.building_id=? and a.organization_id=? order by a.asset_id',(i,org_id())),
+  documents=q('select id,name,category,mime,size,uploaded from documents where building_id=? and organization_id=? order by id desc',(i,org_id())))
 @app.post('/building/<int:i>/document')
 def upload_building_document(i):
  if not can('documents_write'): abort(403)
  if not owns_building(i): abort(404)
- f=request.files.get('document'); category=(request.form.get('category') or 'Technická').strip()
- if not f or not f.filename:
+ category=(request.form.get('category') or 'Technická').strip()[:80]
+ try: upload=read_safe_upload(request.files.get('document'))
+ except ValueError as exc:
+  flash(str(exc),'error'); return redirect(f'/building/{i}#documents')
+ if not upload:
   flash('Vyber dokument na nahratie.','error'); return redirect(f'/building/{i}#documents')
- allowed={'.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.txt'}; ext=os.path.splitext(f.filename)[1].lower()
- if ext not in allowed:
-  flash('Nepodporovaný typ súboru.','error'); return redirect(f'/building/{i}#documents')
- data=f.read()
- x('insert into documents(building_id,name,category,mime,size,data,organization_id) values(?,?,?,?,?,?,?)',(i,os.path.basename(f.filename),category,f.mimetype or 'application/octet-stream',len(data),data,org_id()))
- audit('DOCUMENT_UPLOAD',f.filename); flash('Dokument bol nahratý.','success'); return redirect(f'/building/{i}#documents')
+ x('insert into documents(building_id,name,category,mime,size,data,organization_id) values(?,?,?,?,?,?,?)',(i,upload['name'],category,upload['mime'],upload['size'],upload['data'],org_id()))
+ audit('DOCUMENT_UPLOAD',upload['name']); flash('Dokument bol nahratý.','success'); return redirect(f'/building/{i}#documents')
 
 @app.get('/document/<int:i>/download')
 def download_document(i):
- d=one('select d.* from documents d join buildings b on b.id=d.building_id where d.id=? and b.organization_id=?',(i,org_id()))
+ d=one('select d.* from documents d join buildings b on b.id=d.building_id where d.id=? and d.organization_id=? and b.organization_id=?',(i,org_id(),org_id()))
  if not d: abort(404)
  return send_file(io.BytesIO(d['data']),mimetype=d['mime'] or 'application/octet-stream',as_attachment=True,download_name=d['name'])
 
 @app.post('/document/<int:i>/delete')
 def delete_document(i):
  if not can('documents_write'): abort(403)
- d=one('select d.building_id,d.name from documents d join buildings b on b.id=d.building_id where d.id=? and b.organization_id=?',(i,org_id()))
+ d=one('select d.building_id,d.name from documents d join buildings b on b.id=d.building_id where d.id=? and d.organization_id=? and b.organization_id=?',(i,org_id(),org_id()))
  if not d: abort(404)
- x('delete from documents where id=?',(i,)); audit('DOCUMENT_DELETE',d['name']); flash('Dokument bol odstránený.','success')
+ x('delete from documents where id=? and organization_id=?',(i,org_id())); audit('DOCUMENT_DELETE',d['name']); flash('Dokument bol odstránený.','success')
  return redirect(f"/building/{d['building_id']}#documents")
 
 @app.route('/assets')
@@ -1380,14 +1384,14 @@ def asset(i):
  if not a: abort(404)
  children=q("""select a.*,r.code room,r.name room_name,r.area from assets a
   join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
-  where a.parent_id=? and b.organization_id=? order by a.asset_id""",(i,org_id()))
+  where a.parent_id=? and a.organization_id=? and b.organization_id=? order by a.asset_id""",(i,org_id(),org_id()))
  parent=one("""select a.id,a.asset_id,a.name,a.status from assets a join buildings b on b.id=a.building_id
   where a.id=? and b.organization_id=?""",(a['parent_id'],org_id())) if a['parent_id'] else None
  impact_rooms=len({x['room'] for x in children if x['room']}); impact_area=sum(float(x['area'] or 0) for x in children if x['room'])
  orders=q("""select w.* from workorders w join assets aa on aa.id=w.asset_id join buildings b on b.id=aa.building_id
-  where w.asset_id=? and b.organization_id=? order by w.id desc""",(i,org_id()))
+  where w.asset_id=? and w.organization_id=? and aa.organization_id=? and b.organization_id=? order by w.id desc""",(i,org_id(),org_id(),org_id()))
  incidents=q("""select x.* from incidents x join assets aa on aa.id=x.asset_id join buildings b on b.id=aa.building_id
-  where x.asset_id=? and b.organization_id=? order by x.id desc""",(i,org_id()))
+  where x.asset_id=? and x.organization_id=? and aa.organization_id=? and b.organization_id=? order by x.id desc""",(i,org_id(),org_id(),org_id()))
  events=q('select * from asset_events where asset_id=? and organization_id=? order by id desc limit 100',(i,org_id()))
  active_incidents=sum(1 for row in incidents if row['status'] not in {'Ukončená','Vyriešená'})
  asset_documents=q('select id,name,category,mime,size,uploaded from asset_documents where asset_id=? and organization_id=? order by id desc',(i,org_id()))
@@ -2196,19 +2200,19 @@ def edit_record(what,i):
    return redirect(f'/building/{i}')
   if what=='floor':
    if not owns_floor(i): abort(404)
-   row=one('select building_id from floors where id=?',(i,)); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
+   row=one('select building_id from floors where id=? and organization_id=?',(i,org_id())); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
    if not code or not name or not row: raise ValueError()
-   if one('select id from floors where building_id=? and upper(code)=? and id<>?',(row['building_id'],code,i)): raise IntegrityError()
-   x('update floors set code=?,name=? where id=?',(code,name,i)); audit('FLOOR_UPDATE',f'{code} · {name}'); flash('Podlažie bolo upravené.','success')
+   if one('select id from floors where building_id=? and organization_id=? and upper(code)=? and id<>?',(row['building_id'],org_id(),code,i)): raise IntegrityError()
+   x('update floors set code=?,name=? where id=? and organization_id=?',(code,name,i,org_id())); audit('FLOOR_UPDATE',f'{code} · {name}'); flash('Podlažie bolo upravené.','success')
    return redirect(safe_referrer_url('/buildings'))
   if what=='room':
    if not owns_room(i): abort(404)
-   row=one('select r.floor_id,f.building_id from rooms r join floors f on f.id=r.floor_id where r.id=?',(i,))
+   row=one('select r.floor_id,f.building_id from rooms r join floors f on f.id=r.floor_id where r.id=? and r.organization_id=? and f.organization_id=?',(i,org_id(),org_id()))
    code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
    if not code or not name or not row: raise ValueError()
-   if one('select id from rooms where floor_id=? and upper(code)=? and id<>?',(row['floor_id'],code,i)): raise IntegrityError()
+   if one('select id from rooms where floor_id=? and organization_id=? and upper(code)=? and id<>?',(row['floor_id'],org_id(),code,i)): raise IntegrityError()
    area=max(0,float(f.get('area') or 0))
-   x('update rooms set code=?,name=?,area=?,tenant=?,zone=? where id=?',(code,name,area,(f.get('tenant') or '').strip(),(f.get('zone') or '').strip(),i))
+   x('update rooms set code=?,name=?,area=?,tenant=?,zone=? where id=? and organization_id=?',(code,name,area,(f.get('tenant') or '').strip(),(f.get('zone') or '').strip(),i,org_id()))
    audit('ROOM_UPDATE',f'{code} · {name}'); flash('Miestnosť bola upravená.','success')
    return redirect(safe_referrer_url('/buildings'))
   if what=='asset':
@@ -2243,8 +2247,8 @@ def edit_record(what,i):
    due=(f.get('due') or '').strip()
    if due: datetime.strptime(due[:10],'%Y-%m-%d')
    cost=max(0,float(f.get('cost') or 0))
-   old=one('select status from workorders where id=?',(i,))
-   x('update workorders set asset_id=?,title=?,kind=?,priority=?,status=?,due=?,supplier=?,technician=?,cost=?,description=? where id=?',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip(),i))
+   old=one('select status from workorders where id=? and organization_id=?',(i,org_id()))
+   x('update workorders set asset_id=?,title=?,kind=?,priority=?,status=?,due=?,supplier=?,technician=?,cost=?,description=? where id=? and organization_id=?',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip(),i,org_id()))
    asset_event(asset_id,'WORKORDER_UPDATE','Pracovný príkaz upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
    audit('WORKORDER_UPDATE',f'{i} · {title}'); flash('Pracovný príkaz bol upravený.','success')
    return redirect(safe_referrer_url('/maintenance'))
@@ -2255,7 +2259,7 @@ def edit_record(what,i):
    if not title or not owns_asset(asset_id) or f.get('severity') not in allowed_severity or f.get('status') not in allowed_status: raise ValueError()
    reported=(f.get('reported') or '').strip()
    if reported: datetime.strptime(reported[:10],'%Y-%m-%d')
-   cost=max(0,float(f.get('cost') or 0)); old=one('select status from incidents where id=?',(i,))
+   cost=max(0,float(f.get('cost') or 0)); old=one('select status from incidents where id=? and organization_id=?',(i,org_id()))
    x('update incidents set asset_id=?,title=?,severity=?,status=?,reported=?,impact=?,cause=?,solution=?,cost=? where id=? and organization_id=?',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),(f.get('solution') or '').strip(),cost,i,org_id()))
    asset_event(asset_id,'INCIDENT_UPDATE','Incident upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
    audit('INCIDENT_UPDATE',f'{i} · {title}'); flash('Incident bol upravený.','success')
@@ -2341,29 +2345,29 @@ def delete(what,i):
  if request.form.get('_confirm')!='yes':
   abort(400,description='Odstránenie vyžaduje potvrdenie v aplikácii.')
  if what=='building':
-  if one('select id from assets where building_id=? limit 1',(i,)):
+  if one('select id from assets where building_id=? and organization_id=? limit 1',(i,org_id())):
    flash('Budovu nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
-  x('delete from buildings where id=?',(i,)); audit('BUILDING_DELETE',str(i))
+  x('delete from buildings where id=? and organization_id=?',(i,org_id())); audit('BUILDING_DELETE',str(i))
  elif what=='floor':
-  if one('select id from assets where floor_id=? limit 1',(i,)):
+  if one('select id from assets where floor_id=? and organization_id=? limit 1',(i,org_id())):
    flash('Podlažie nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
-  x('delete from floors where id=?',(i,)); audit('FLOOR_DELETE',str(i))
+  x('delete from floors where id=? and organization_id=?',(i,org_id())); audit('FLOOR_DELETE',str(i))
  elif what=='room':
-  if one('select id from assets where room_id=? limit 1',(i,)):
+  if one('select id from assets where room_id=? and organization_id=? limit 1',(i,org_id())):
    flash('Miestnosť nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
-  x('delete from rooms where id=?',(i,)); audit('ROOM_DELETE',str(i))
+  x('delete from rooms where id=? and organization_id=?',(i,org_id())); audit('ROOM_DELETE',str(i))
  elif what=='asset':
-  if one('select id from assets where parent_id=? limit 1',(i,)) or one('select id from workorders where asset_id=? limit 1',(i,)) or one('select id from incidents where asset_id=? limit 1',(i,)):
+  if one('select id from assets where parent_id=? and organization_id=? limit 1',(i,org_id())) or one('select id from workorders where asset_id=? and organization_id=? limit 1',(i,org_id())) or one('select id from incidents where asset_id=? and organization_id=? limit 1',(i,org_id())):
    flash('Asset nie je možné odstrániť, kým má podriadené assety, servisnú históriu alebo incidenty.','error'); return redirect(safe_referrer_url('/assets'))
   x('delete from assets where id=?',(i,)); audit('ASSET_DELETE',str(i))
  elif what=='workorder':
-  row=one('select asset_id,title from workorders where id=?',(i,))
-  x('delete from workorders where id=?',(i,))
+  row=one('select asset_id,title from workorders where id=? and organization_id=?',(i,org_id()))
+  x('delete from workorders where id=? and organization_id=?',(i,org_id()))
   if row: asset_event(row['asset_id'],'WORKORDER_DELETE','Pracovný príkaz odstránený',row['title'] or '')
   audit('WORKORDER_DELETE',str(i))
  elif what=='incident':
-  row=one('select asset_id,title from incidents where id=?',(i,))
-  x('delete from incidents where id=?',(i,))
+  row=one('select asset_id,title from incidents where id=? and organization_id=?',(i,org_id()))
+  x('delete from incidents where id=? and organization_id=?',(i,org_id()))
   if row: asset_event(row['asset_id'],'INCIDENT_DELETE','Incident odstránený',row['title'] or '')
   audit('INCIDENT_DELETE',str(i))
  elif what=='user':
@@ -2390,12 +2394,12 @@ def status(what,i):
  new_status=request.form.get('status')
  if new_status not in statuses: abort(400)
  if what=='asset':
-  x('update assets set status=? where id=?',(new_status,i)); asset_event(i,'STATUS_CHANGE','Zmena stavu assetu',new_status)
+  x('update assets set status=? where id=? and organization_id=?',(new_status,i,org_id())); asset_event(i,'STATUS_CHANGE','Zmena stavu assetu',new_status)
  elif what=='workorder':
-  row=one('select asset_id,title from workorders where id=?',(i,)); x('update workorders set status=? where id=?',(new_status,i))
+  row=one('select asset_id,title from workorders where id=?',(i,)); x('update workorders set status=? where id=? and organization_id=?',(new_status,i,org_id()))
   if row: asset_event(row['asset_id'],'WORKORDER_STATUS','Zmena stavu pracovného príkazu',f"{row['title']} → {new_status}")
  else:
-  row=one('select asset_id,title from incidents where id=?',(i,)); x('update incidents set status=? where id=?',(new_status,i))
+  row=one('select asset_id,title from incidents where id=?',(i,)); x('update incidents set status=? where id=? and organization_id=?',(new_status,i,org_id()))
   if row: asset_event(row['asset_id'],'INCIDENT_STATUS','Zmena stavu incidentu',f"{row['title']} → {new_status}")
  audit('STATUS_CHANGE',f'{what}:{i} → {new_status}')
  return redirect(safe_referrer_url('/'))
@@ -2415,12 +2419,12 @@ def api_floor_options():
 @app.route('/api/floors/<int:b>')
 def api_floors(b):
  if not owns_building(b): abort(404)
- return jsonify([dict(r) for r in q('select * from floors where building_id=? order by id',(b,))])
+ return jsonify([dict(r) for r in q('select * from floors where building_id=? and organization_id=? order by id',(b,org_id()))])
 
 @app.route('/api/rooms/<int:f>')
 def api_rooms(f):
  if not owns_floor(f): abort(404)
- return jsonify([dict(r) for r in q('select * from rooms where floor_id=? order by id',(f,))])
+ return jsonify([dict(r) for r in q('select * from rooms where floor_id=? and organization_id=? order by id',(f,org_id()))])
 
 @app.get('/api/assets/options')
 def api_asset_options():
@@ -2509,12 +2513,12 @@ def api_notifications():
  out=[]; oid=org_id(); today_iso=date.today().isoformat()
  for r in q("""select i.id,i.title,i.status,i.reported,i.severity,a.id aid,a.asset_id from incidents i
   join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
-  where b.organization_id=? and i.status not in ('Ukončená','Vyriešená') order by i.id desc limit 6""",(oid,)):
+  where i.organization_id=? and a.organization_id=? and b.organization_id=? and i.status not in ('Ukončená','Vyriešená') order by i.id desc limit 6""",(oid,oid,oid,)):
   critical=r['severity'] in {'Vysoká','Kritická','Havária'}
   out.append({'key':f"incident:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · {r['severity']}",'status':r['status'],'level':'red' if critical else 'orange','url':f"/asset/{r['aid']}",'created_at':r['reported'] or ''})
  for r in q("""select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w
   join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
-  where b.organization_id=? and w.status not in ('Ukončené','Zrušené') order by w.id desc limit 8""",(oid,)):
+  where w.organization_id=? and a.organization_id=? and b.organization_id=? and w.status not in ('Ukončené','Zrušené') order by w.id desc limit 8""",(oid,oid,oid,)):
   overdue=bool(r['due'] and str(r['due'])[:10]<today_iso)
   out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':'Po termíne' if overdue else r['status'],'level':'red' if overdue else 'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
  uid=session.get('user_id')
