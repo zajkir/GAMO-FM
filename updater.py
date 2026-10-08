@@ -70,20 +70,27 @@ def download_update(manifest, progress=None):
     downloaded = 0
     if progress:
         progress(0)
-    with urllib.request.urlopen(req, timeout=30) as src, target.open('wb') as dst:
-        total = int(src.headers.get('Content-Length') or 0)
-        while True:
-            chunk = src.read(1024 * 1024)
-            if not chunk:
-                break
-            dst.write(chunk)
-            downloaded += len(chunk)
-            if progress and total:
-                progress(min(99, int(downloaded * 100 / total)))
-    actual = hashlib.sha256(target.read_bytes()).hexdigest().lower()
-    if actual != expected:
-        target.unlink(missing_ok=True)
-        raise ValueError('Kontrola aktualizácie zlyhala: SHA-256 nesedí.')
+    partial = target.with_suffix(target.suffix + '.part')
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as src, partial.open('wb') as dst:
+            total = int(src.headers.get('Content-Length') or 0)
+            while True:
+                chunk = src.read(512 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+                digest.update(chunk)
+                downloaded += len(chunk)
+                if progress and total:
+                    progress(min(99, int(downloaded * 100 / total)))
+        actual = digest.hexdigest().lower()
+        if actual != expected:
+            raise ValueError('Kontrola aktualizácie zlyhala: SHA-256 nesedí.')
+        partial.replace(target)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
     if progress:
         progress(100)
     return target
