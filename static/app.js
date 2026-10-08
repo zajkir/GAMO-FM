@@ -170,7 +170,7 @@ function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa 
  m.classList.add('show');
  try{
   const url=new URL(form.action,location.origin),match=url.pathname.match(/^\/delete\/([^/]+)\/(\d+)$/);
-  if(!match){renderDeleteImpact({blocked:true,warning:'Dopad odstránenia sa nepodarilo bezpečne určiť.'});return false}
+  if(!match){renderDeleteImpact({blocked:false,items:[{label:'Odstraňovaný záznam / súbor',count:1}],warning:detail||'Táto akcia sa zapíše do auditu.'});return false}
   fetch('/api/delete-impact/'+encodeURIComponent(match[1])+'/'+encodeURIComponent(match[2]),{cache:'no-store',headers:{'Accept':'application/json'}})
    .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
    .then(renderDeleteImpact)
