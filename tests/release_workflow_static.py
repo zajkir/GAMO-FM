@@ -7,6 +7,7 @@ version = json.loads((root / "version.json").read_text(encoding="utf-8"))["versi
 
 assert "branches:" in workflow and "- main" in workflow
 assert "Publish versioned GitHub Release" in workflow
+assert "shell: pwsh" in workflow
 assert "gh release create" in workflow
 assert "gh release upload" in workflow
 assert "Get-FileHash" in workflow and "SHA256" in workflow
