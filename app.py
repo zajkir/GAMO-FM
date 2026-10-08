@@ -6,6 +6,7 @@ try:
  from psycopg.rows import dict_row
 except ImportError:
  psycopg=None; dict_row=None
+DB_INTEGRITY_ERRORS=(IntegrityError,)+( ((psycopg.IntegrityError,) if psycopg else ()) )
 from functools import wraps
 import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -457,6 +458,14 @@ def _write(sql,a=(),system=False):
 
 def x(sql,a=()): return _write(sql,a,False)
 def x_system(sql,a=()): return _write(sql,a,True)
+
+def tx_insert_id(db,sql,a=()):
+ statement=_sql(sql)
+ if USING_POSTGRES and ' returning ' not in statement.lower(): statement+=' RETURNING id'
+ cur=db.execute(statement,a)
+ if USING_POSTGRES:
+  row=cur.fetchone(); return row['id'] if row else None
+ return cur.lastrowid
 
 def init_postgres():
  schema=[
@@ -920,16 +929,21 @@ def ticket_create():
  if not assigned:
   manager=one("select id from users where organization_id=? and status='Aktívny' and id<>? and role in ('Facility Manager','Administrator') order by case role when 'Facility Manager' then 0 else 1 end,id limit 1",(oid,uid))
   assigned=manager['id'] if manager else None
- no=next_ticket_no(); now=datetime.utcnow().isoformat(timespec='seconds')+'Z'
- try:
-  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- except IntegrityError:
+ tid=None; no=None; mid=None
+ for attempt in range(2):
   no=next_ticket_no()
-  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
- if attachment:
-  x('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
- x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
+  try:
+   with con() as db:
+    tid=tx_insert_id(db,'insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id))
+    mid=tx_insert_id(db,'insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+    if attachment:
+     tx_insert_id(db,'insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+    db.execute(_sql('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?'),(mid,tid,oid))
+    db.commit()
+   break
+  except DB_INTEGRITY_ERRORS:
+   if attempt: raise
+   continue
  audit('TICKET_CREATE',f'{no} · {subject}'); flash(f'Ticket {no} bol vytvorený.','success')
  return redirect(f'/ticket/{tid}')
 
@@ -1049,26 +1063,38 @@ def ticket_message(i):
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
  uid=session.get('user_id'); platform_view=platform_ticket_mode()
  oid=t['organization_id'] if platform_view else org_id()
- write=x_system if platform_view else x
- mid=write('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
- if attachment:
-  write('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+ attachment_id=None
+ with con(system=platform_view) as db:
+  mid=tx_insert_id(db,'insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
+  if attachment:
+   attachment_id=tx_insert_id(db,'insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+  if platform_view:
+   new_status='Otvorený' if t['status'] in {'Nový','Uzavretý'} else t['status']
+   db.execute(_sql('update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?'),(new_status,mid,i,oid))
+  else:
+   is_creator=t['created_by']==uid
+   if is_creator:
+    new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
+    db.execute(_sql('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?'),(new_status,mid,i,oid))
+   else:
+    new_status='Otvorený' if t['status']=='Nový' else t['status']
+    db.execute(_sql('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?'),(new_status,mid,i,oid))
+  db.commit()
  if platform_view:
-  new_status='Otvorený' if t['status'] in {'Nový','Uzavretý'} else t['status']
-  write('update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
   customer_access(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
   audit_for_org(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
  else:
-  is_creator=t['created_by']==uid
-  if is_creator:
-   new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
-   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
-  else:
-   new_status='Otvorený' if t['status']=='Nový' else t['status']
-   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
   audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
  if request.headers.get('X-Requested-With')=='GAMO-Live-Chat':
-  return jsonify({'ok':True,'message_id':mid,'status':new_status})
+  attachments=[]
+  if attachment and attachment_id:
+   attachments=[{'id':attachment_id,'name':attachment['name'],'mime':attachment['mime'],'size':attachment['size'],'url':f'/ticket-attachment/{attachment_id}/download'}]
+  return jsonify({'ok':True,'message_id':mid,'status':new_status,'message':{
+   'id':mid,'sender_name':session.get('user_name','Používateľ'),
+   'sender_role':'GAMO Support' if platform_view else session.get('user_role','Používateľ'),
+   'body':body,'created':datetime.utcnow().isoformat(timespec='seconds')+'Z','mine':True,
+   'support':bool(platform_view),'attachments':attachments
+  }})
  return redirect(f'/ticket/{i}#conversation')
 
 @app.get('/ticket-attachment/<int:i>/download')
@@ -2042,7 +2068,7 @@ def add(what):
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
  except HTTPException:
   raise
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Záznam sa nepodarilo uložiť pre konflikt v databáze. Skontroluj unikátne kódy a identifikátory.','error')
  except ValueError as exc:
   flash(str(exc) or 'Záznam sa nepodarilo uložiť. Skontroluj zadané hodnoty.','error')
@@ -2079,7 +2105,7 @@ def update_user(i):
    session['user_name']=name; session['user_role']=role
   audit('USER_UPDATE',f'{name} · {role} · {status}')
   flash('Používateľ bol úspešne upravený.','success')
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Tento e-mail už používa iný účet.','error')
  return redirect('/admin#usersAdmin')
 
@@ -2163,7 +2189,7 @@ def edit_record(what,i):
   abort(404)
  except HTTPException:
   raise
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Záznam s rovnakým kódom alebo identifikátorom už existuje.','error')
  except (ValueError,TypeError):
   flash('Záznam sa nepodarilo upraviť. Skontroluj povinné polia a zadané hodnoty.','error')
