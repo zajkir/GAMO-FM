@@ -581,7 +581,7 @@ def login():
  if session.get('user_id'): return redirect('/')
  error=None
  if request.method=='POST':
-  email=(request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''; remember=request.form.get('remember')=='1'
+  email=(request.form.get('login_identifier') or request.form.get('email') or '').strip().lower(); password=request.form.get('password') or ''; remember=request.form.get('remember')=='1'
   key=(request.headers.get('X-Forwarded-For',request.remote_addr or '')+'|'+email)
   now=time.time(); attempts=[t for t in _login_attempts.get(key,[]) if now-t<LOGIN_WINDOW]
   if len(attempts)>=LOGIN_MAX_ATTEMPTS:
