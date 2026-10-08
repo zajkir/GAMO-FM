@@ -1423,16 +1423,82 @@ def delete_asset_document(i):
 
 @app.route('/maintenance')
 def maintenance():
- orders=q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
+ orders=[dict(r) for r in q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where w.organization_id=? and b.organization_id=? order by w.id desc',(org_id(),org_id()))]
+ for row in orders:
+  row['attachments']=[dict(x) for x in q('select id,name,mime,size,uploaded from workorder_attachments where workorder_id=? and organization_id=? order by id desc',(row['id'],org_id()))]
  today=date.today().isoformat()
  stats={'total':len(orders),'active':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'}),'overdue':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'} and r['due'] and str(r['due'])[:10]<today),'critical':sum(1 for r in orders if r['priority']=='Kritická' and r['status'] not in {'Ukončené','Zrušené'}),'completed':sum(1 for r in orders if r['status']=='Ukončené')}
  return render_template('index.html',page='maintenance',orders=orders,maintenance_stats=stats,today_iso=today)
 
+@app.post('/workorder/<int:i>/attachment')
+def upload_workorder_attachment(i):
+ if not can('maintenance_write'): abort(403)
+ if not owns_workorder(i): abort(404)
+ try: upload=read_safe_upload(request.files.get('attachment'))
+ except ValueError as exc:
+  flash(str(exc),'error'); return redirect('/maintenance')
+ if not upload:
+  flash('Vyber prílohu na nahratie.','error'); return redirect('/maintenance')
+ x('insert into workorder_attachments(organization_id,workorder_id,uploader_user_id,name,mime,size,data) values(?,?,?,?,?,?,?)',
+  (org_id(),i,session.get('user_id'),upload['name'],upload['mime'],upload['size'],upload['data']))
+ row=one('select asset_id,title from workorders where id=? and organization_id=?',(i,org_id()))
+ if row: asset_event(row['asset_id'],'WORKORDER_DOCUMENT','Príloha pracovného príkazu',upload['name'])
+ audit('WORKORDER_ATTACHMENT_UPLOAD',f'{i} · {upload["name"]}')
+ flash('Príloha pracovného príkazu bola nahratá.','success'); return redirect('/maintenance')
+
+@app.get('/workorder-attachment/<int:i>/download')
+def download_workorder_attachment(i):
+ d=one('select * from workorder_attachments where id=? and organization_id=?',(i,org_id()))
+ if not d or not owns_workorder(d['workorder_id']): abort(404)
+ return send_file(io.BytesIO(d['data']),mimetype=d['mime'] or 'application/octet-stream',as_attachment=True,download_name=d['name'])
+
+@app.post('/workorder-attachment/<int:i>/delete')
+def delete_workorder_attachment(i):
+ if not can('maintenance_write'): abort(403)
+ d=one('select id,workorder_id,name from workorder_attachments where id=? and organization_id=?',(i,org_id()))
+ if not d or not owns_workorder(d['workorder_id']): abort(404)
+ x('delete from workorder_attachments where id=? and organization_id=?',(i,org_id()))
+ audit('WORKORDER_ATTACHMENT_DELETE',f'{d["workorder_id"]} · {d["name"]}')
+ flash('Príloha bola odstránená.','success'); return redirect('/maintenance')
+
 @app.route('/incidents')
 def incidents():
- rows=q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),))
+ rows=[dict(r) for r in q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where i.organization_id=? and b.organization_id=? order by i.id desc',(org_id(),org_id()))]
+ for row in rows:
+  row['attachments']=[dict(x) for x in q('select id,name,mime,size,uploaded from incident_attachments where incident_id=? and organization_id=? order by id desc',(row['id'],org_id()))]
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Ukončená','Vyriešená'}),'critical':sum(1 for r in rows if r['severity'] in {'Kritická','Havária'} and r['status'] not in {'Ukončená','Vyriešená'}),'resolved':sum(1 for r in rows if r['status'] in {'Ukončená','Vyriešená'}),'cost':sum(float(r['cost'] or 0) for r in rows)}
  return render_template('index.html',page='incidents',incidents=rows,incident_stats=stats)
+
+@app.post('/incident/<int:i>/attachment')
+def upload_incident_attachment(i):
+ if not can('incident_write'): abort(403)
+ if not owns_incident(i): abort(404)
+ try: upload=read_safe_upload(request.files.get('attachment'))
+ except ValueError as exc:
+  flash(str(exc),'error'); return redirect('/incidents')
+ if not upload:
+  flash('Vyber prílohu na nahratie.','error'); return redirect('/incidents')
+ x('insert into incident_attachments(organization_id,incident_id,uploader_user_id,name,mime,size,data) values(?,?,?,?,?,?,?)',
+  (org_id(),i,session.get('user_id'),upload['name'],upload['mime'],upload['size'],upload['data']))
+ row=one('select asset_id,title from incidents where id=? and organization_id=?',(i,org_id()))
+ if row: asset_event(row['asset_id'],'INCIDENT_DOCUMENT','Príloha incidentu',upload['name'])
+ audit('INCIDENT_ATTACHMENT_UPLOAD',f'{i} · {upload["name"]}')
+ flash('Príloha incidentu bola nahratá.','success'); return redirect('/incidents')
+
+@app.get('/incident-attachment/<int:i>/download')
+def download_incident_attachment(i):
+ d=one('select * from incident_attachments where id=? and organization_id=?',(i,org_id()))
+ if not d or not owns_incident(d['incident_id']): abort(404)
+ return send_file(io.BytesIO(d['data']),mimetype=d['mime'] or 'application/octet-stream',as_attachment=True,download_name=d['name'])
+
+@app.post('/incident-attachment/<int:i>/delete')
+def delete_incident_attachment(i):
+ if not can('incident_write'): abort(403)
+ d=one('select id,incident_id,name from incident_attachments where id=? and organization_id=?',(i,org_id()))
+ if not d or not owns_incident(d['incident_id']): abort(404)
+ x('delete from incident_attachments where id=? and organization_id=?',(i,org_id()))
+ audit('INCIDENT_ATTACHMENT_DELETE',f'{d["incident_id"]} · {d["name"]}')
+ flash('Príloha bola odstránená.','success'); return redirect('/incidents')
 @app.route('/admin')
 def admin():
  org=one('select * from organizations where id=?',(org_id(),))
