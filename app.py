@@ -11,6 +11,7 @@ import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import HTTPException
 from datetime import date,timedelta,datetime
+from urllib.parse import urlsplit
 from db_migrations import run_migrations
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -199,6 +200,19 @@ def customer_access(target_org_id,action,reason=''):
 def safe_next_url(value):
  value=(value or '/').strip()
  return value if value.startswith('/') and not value.startswith('//') else '/'
+
+def safe_referrer_url(default='/'):
+ ref=(request.referrer or '').strip()
+ if not ref: return default
+ try:
+  parsed=urlsplit(ref)
+  if parsed.netloc and parsed.netloc!=request.host: return default
+  path=parsed.path or '/'
+  if parsed.query: path+='?'+parsed.query
+  if parsed.fragment: path+='#'+parsed.fragment
+  return safe_next_url(path)
+ except Exception:
+  return default
 
 def auth_event(organization_id,user_id,event,success,detail=''):
  try:
@@ -537,6 +551,31 @@ def require_login():
   needed=endpoint_permissions.get(request.endpoint,needed)
   if needed and not can(needed): abort(403)
 
+def render_app_error(status,title,message):
+ return render_template('error.html',status=status,title=title,message=message,app_version=APP_VERSION),status
+
+@app.errorhandler(400)
+def error_400(exc):
+ return render_app_error(400,'Neplatná požiadavka','Požiadavku sa nepodarilo spracovať. Skontroluj údaje a skús to znova.')
+
+@app.errorhandler(403)
+def error_403(exc):
+ return render_app_error(403,'Prístup zamietnutý','Na túto časť nemáš oprávnenie alebo je operácia z bezpečnostných dôvodov blokovaná.')
+
+@app.errorhandler(404)
+def error_404(exc):
+ return render_app_error(404,'Záznam sa nenašiel','Požadovaná stránka alebo záznam neexistuje, prípadne nepatrí tvojej organizácii.')
+
+@app.errorhandler(413)
+def error_413(exc):
+ return render_app_error(413,'Súbor je príliš veľký','Maximálna veľkosť jedného uploadu je 16 MB.')
+
+@app.errorhandler(500)
+def error_500(exc):
+ try: app.logger.exception('Unhandled GAMO application error',exc_info=exc)
+ except Exception: pass
+ return render_app_error(500,'Nastala interná chyba','Dáta zostali zachované. Skús operáciu zopakovať; ak problém pretrváva, vytvor support ticket.')
+
 @app.route('/login',methods=['GET','POST'])
 def login():
  if session.get('user_id'): return redirect('/')
@@ -696,8 +735,42 @@ def account_mfa():
   secret=None; qr_data=None
  try: recovery_left=len(json.loads(u['mfa_recovery_codes'] or '[]'))
  except Exception: recovery_left=0
+ current_token=request.cookies.get(REMEMBER_COOKIE)
+ current_hash=_remember_hash(current_token) if current_token else ''
+ devices=q('select id,label,user_agent,ip_created,created,last_used,expires_at,token_hash from remembered_devices where user_id=? and organization_id=? and revoked_at is null order by last_used desc,id desc',(u['id'],actor_org_id()))
+ device_rows=[]
+ for d in devices:
+  item=dict(d); item['is_current']=bool(current_hash and item.get('token_hash')==current_hash); item.pop('token_hash',None); device_rows.append(item)
  return render_template('account_mfa.html',current_user=u,org=org,secret=secret,qr_data=qr_data,
-  recovery_left=recovery_left,new_recovery_codes=new_codes,csrf_token=session.get('csrf',''))
+  recovery_left=recovery_left,new_recovery_codes=new_codes,csrf_token=session.get('csrf',''),remembered_devices=device_rows)
+
+@app.post('/account/device/<int:i>/revoke')
+def revoke_account_device(i):
+ if support_mode(): abort(403)
+ d=one('select id,token_hash,label from remembered_devices where id=? and user_id=? and organization_id=? and revoked_at is null',(i,session.get('user_id'),actor_org_id()))
+ if not d: abort(404)
+ x('update remembered_devices set revoked_at=CURRENT_TIMESTAMP where id=? and user_id=? and organization_id=?',(i,session.get('user_id'),actor_org_id()))
+ audit('DEVICE_REVOKE',d['label'] or f'Device #{i}')
+ auth_event(actor_org_id(),session.get('user_id'),'REMEMBERED_DEVICE_REVOKED',True,d['label'] or f'Device #{i}')
+ response=make_response(redirect('/account/mfa#devices'))
+ raw=request.cookies.get(REMEMBER_COOKIE)
+ if raw and _remember_hash(raw)==d['token_hash']:
+  response.delete_cookie(REMEMBER_COOKIE,path='/',samesite='Strict')
+ flash('Zapamätané zariadenie bolo odvolané.','success')
+ return response
+
+@app.post('/account/devices/revoke-others')
+def revoke_other_account_devices():
+ if support_mode(): abort(403)
+ raw=request.cookies.get(REMEMBER_COOKIE); current_hash=_remember_hash(raw) if raw else ''
+ if current_hash:
+  x('update remembered_devices set revoked_at=CURRENT_TIMESTAMP where user_id=? and organization_id=? and revoked_at is null and token_hash<>?',(session.get('user_id'),actor_org_id(),current_hash))
+ else:
+  x('update remembered_devices set revoked_at=CURRENT_TIMESTAMP where user_id=? and organization_id=? and revoked_at is null',(session.get('user_id'),actor_org_id()))
+ audit('DEVICE_REVOKE_OTHERS','Odvolané ostatné zapamätané zariadenia.')
+ auth_event(actor_org_id(),session.get('user_id'),'REMEMBERED_DEVICES_REVOKED',True,'Ostatné zariadenia boli odvolané.')
+ flash('Ostatné zapamätané zariadenia boli odvolané.','success')
+ return redirect('/account/mfa#devices')
 
 @app.context_processor
 def ctx():
@@ -1975,7 +2048,7 @@ def add(what):
  except Exception:
   flash('Pri ukladaní nastala chyba. Dáta neboli poškodené.','error')
  target={'incident':'/incidents','workorder':'/maintenance','asset':'/assets','user':'/admin','building':'/buildings'}.get(what)
- return redirect(target or request.referrer or '/')
+ return redirect(target or safe_referrer_url('/'))
 @app.post('/user/<int:i>/update')
 def update_user(i):
  if not can('users_manage'): abort(403)
@@ -2030,7 +2103,7 @@ def edit_record(what,i):
    if not code or not name or not row: raise ValueError()
    if one('select id from floors where building_id=? and upper(code)=? and id<>?',(row['building_id'],code,i)): raise IntegrityError()
    x('update floors set code=?,name=? where id=?',(code,name,i)); audit('FLOOR_UPDATE',f'{code} · {name}'); flash('Podlažie bolo upravené.','success')
-   return redirect(request.referrer or '/buildings')
+   return redirect(safe_referrer_url('/buildings'))
   if what=='room':
    if not owns_room(i): abort(404)
    row=one('select r.floor_id,f.building_id from rooms r join floors f on f.id=r.floor_id where r.id=?',(i,))
@@ -2040,7 +2113,7 @@ def edit_record(what,i):
    area=max(0,float(f.get('area') or 0))
    x('update rooms set code=?,name=?,area=?,tenant=?,zone=? where id=?',(code,name,area,(f.get('tenant') or '').strip(),(f.get('zone') or '').strip(),i))
    audit('ROOM_UPDATE',f'{code} · {name}'); flash('Miestnosť bola upravená.','success')
-   return redirect(request.referrer or '/buildings')
+   return redirect(safe_referrer_url('/buildings'))
   if what=='asset':
    if not owns_asset(i): abort(404)
    aid=(f.get('asset_id') or '').strip().upper(); name=(f.get('name') or '').strip()
@@ -2073,7 +2146,7 @@ def edit_record(what,i):
    x('update workorders set asset_id=?,title=?,kind=?,priority=?,status=?,due=?,supplier=?,technician=?,cost=?,description=? where id=?',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip(),i))
    asset_event(asset_id,'WORKORDER_UPDATE','Pracovný príkaz upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
    audit('WORKORDER_UPDATE',f'{i} · {title}'); flash('Pracovný príkaz bol upravený.','success')
-   return redirect(request.referrer or '/maintenance')
+   return redirect(safe_referrer_url('/maintenance'))
   if what=='incident':
    if not owns_incident(i): abort(404)
    allowed_severity={'Nízka','Stredná','Vysoká','Kritická','Havária'}; allowed_status={'Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'}
@@ -2085,7 +2158,7 @@ def edit_record(what,i):
    x('update incidents set asset_id=?,title=?,severity=?,status=?,reported=?,impact=?,cause=?,cost=? where id=?',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),cost,i))
    asset_event(asset_id,'INCIDENT_UPDATE','Incident upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
    audit('INCIDENT_UPDATE',f'{i} · {title}'); flash('Incident bol upravený.','success')
-   return redirect(request.referrer or '/incidents')
+   return redirect(safe_referrer_url('/incidents'))
   abort(404)
  except HTTPException:
   raise
@@ -2095,7 +2168,7 @@ def edit_record(what,i):
   flash('Záznam sa nepodarilo upraviť. Skontroluj povinné polia a zadané hodnoty.','error')
  except Exception:
   flash('Pri úprave nastala chyba. Pôvodné dáta zostali zachované.','error')
- return redirect(request.referrer or '/')
+ return redirect(safe_referrer_url('/'))
 
 @app.post('/delete/<what>/<int:i>')
 def delete(what,i):
@@ -2109,19 +2182,19 @@ def delete(what,i):
  if not ownership[what](i): abort(404)
  if what=='building':
   if one('select id from assets where building_id=? limit 1',(i,)):
-   flash('Budovu nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(request.referrer or '/buildings')
+   flash('Budovu nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
   x('delete from buildings where id=?',(i,)); audit('BUILDING_DELETE',str(i))
  elif what=='floor':
   if one('select id from assets where floor_id=? limit 1',(i,)):
-   flash('Podlažie nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(request.referrer or '/buildings')
+   flash('Podlažie nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
   x('delete from floors where id=?',(i,)); audit('FLOOR_DELETE',str(i))
  elif what=='room':
   if one('select id from assets where room_id=? limit 1',(i,)):
-   flash('Miestnosť nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(request.referrer or '/buildings')
+   flash('Miestnosť nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
   x('delete from rooms where id=?',(i,)); audit('ROOM_DELETE',str(i))
  elif what=='asset':
   if one('select id from assets where parent_id=? limit 1',(i,)) or one('select id from workorders where asset_id=? limit 1',(i,)) or one('select id from incidents where asset_id=? limit 1',(i,)):
-   flash('Asset nie je možné odstrániť, kým má podriadené assety, servisnú históriu alebo incidenty.','error'); return redirect(request.referrer or '/assets')
+   flash('Asset nie je možné odstrániť, kým má podriadené assety, servisnú históriu alebo incidenty.','error'); return redirect(safe_referrer_url('/assets'))
   x('delete from assets where id=?',(i,)); audit('ASSET_DELETE',str(i))
  elif what=='workorder':
   row=one('select asset_id,title from workorders where id=?',(i,))
@@ -2141,7 +2214,7 @@ def delete(what,i):
    flash('Posledného aktívneho administrátora organizácie nie je možné odstrániť.','error'); return redirect('/admin#usersAdmin')
   x('delete from users where id=?',(i,)); audit('USER_DELETE',u['name'] if u else str(i))
  flash('Záznam bol bezpečne odstránený.','success')
- return redirect(request.referrer or '/')
+ return redirect(safe_referrer_url('/'))
 
 @app.post('/status/<what>/<int:i>')
 def status(what,i):
@@ -2165,7 +2238,7 @@ def status(what,i):
   row=one('select asset_id,title from incidents where id=?',(i,)); x('update incidents set status=? where id=?',(new_status,i))
   if row: asset_event(row['asset_id'],'INCIDENT_STATUS','Zmena stavu incidentu',f"{row['title']} → {new_status}")
  audit('STATUS_CHANGE',f'{what}:{i} → {new_status}')
- return redirect(request.referrer or '/')
+ return redirect(safe_referrer_url('/'))
 
 @app.get('/api/buildings/options')
 def api_building_options():
@@ -2206,24 +2279,51 @@ def api_asset_next_id():
 def api_search():
  term=(request.args.get('q') or '').strip()
  if len(term)<2:return jsonify([])
- like=f'%{term}%'; out=[]; oid=org_id()
+ needle=term.lower(); like=f'%{needle}%'; out=[]; oid=org_id()
  for r in q("""select a.id,a.asset_id,a.name,a.profession,b.code building,r.code room
   from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
-  where b.organization_id=? and (a.asset_id like ? or a.name like ? or a.manufacturer like ?)
-  order by a.asset_id limit 8""",(oid,like,like,like)):
+  where b.organization_id=? and (
+   lower(coalesce(a.asset_id,'')) like ? or lower(coalesce(a.name,'')) like ?
+   or lower(coalesce(a.manufacturer,'')) like ? or lower(coalesce(a.model,'')) like ?
+   or lower(coalesce(a.serial,'')) like ? or lower(coalesce(a.system_id,'')) like ?
+  ) order by a.asset_id limit 8""",(oid,like,like,like,like,like,like)):
   location=' / '.join(x for x in [r['building'],r['room']] if x)
   out.append({'kind':'Asset','title':f"{r['asset_id']} · {r['name']}",'subtitle':f"{r['profession'] or ''} · {location}".strip(' ·'),'url':f"/asset/{r['id']}"})
  for r in q("""select id,code,name,address from buildings
-  where organization_id=? and (code like ? or name like ? or address like ?)
+  where organization_id=? and (lower(coalesce(code,'')) like ? or lower(coalesce(name,'')) like ? or lower(coalesce(address,'')) like ?)
   order by name limit 5""",(oid,like,like,like)):
   out.append({'kind':'Budova','title':f"{r['code']} · {r['name']}",'subtitle':r['address'] or '','url':f"/building/{r['id']}"})
- if ticket_staff():
-  ticket_rows=q("select id,ticket_no,subject,status,priority from tickets where organization_id=? and (ticket_no like ? or subject like ?) order by updated desc limit 5",(oid,like,like))
+ for r in q("""select r.id,r.code,r.name,f.code floor_code,b.id building_id,b.code building_code,b.name building_name
+  from rooms r join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id
+  where b.organization_id=? and (lower(coalesce(r.code,'')) like ? or lower(coalesce(r.name,'')) like ? or lower(coalesce(r.tenant,'')) like ? or lower(coalesce(r.zone,'')) like ?)
+  order by b.name,f.id,r.code limit 6""",(oid,like,like,like,like)):
+  out.append({'kind':'Miestnosť','title':f"{r['code']} · {r['name']}",'subtitle':f"{r['building_code']} · {r['building_name']} / {r['floor_code']}",'url':f"/building/{r['building_id']}#spaces"})
+ if can('maintenance_write') or can('reports_view'):
+  for r in q("""select w.id,w.title,w.status,w.priority,a.id asset_id,a.asset_id asset_code
+   from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
+   where b.organization_id=? and (lower(coalesce(w.title,'')) like ? or lower(coalesce(w.technician,'')) like ? or lower(coalesce(w.supplier,'')) like ?)
+   order by w.id desc limit 5""",(oid,like,like,like)):
+   out.append({'kind':'Údržba','title':r['title'],'subtitle':f"{r['asset_code']} · {r['priority']} · {r['status']}",'url':f"/asset/{r['asset_id']}#service"})
+ if can('incident_write') or can('reports_view'):
+  for r in q("""select i.id,i.title,i.status,i.severity,a.id asset_id,a.asset_id asset_code
+   from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
+   where b.organization_id=? and (lower(coalesce(i.title,'')) like ? or lower(coalesce(i.impact,'')) like ? or lower(coalesce(i.cause,'')) like ?)
+   order by i.id desc limit 5""",(oid,like,like,like)):
+   out.append({'kind':'Incident','title':r['title'],'subtitle':f"{r['asset_code']} · {r['severity']} · {r['status']}",'url':f"/asset/{r['asset_id']}#faults"})
+ if platform_ticket_mode():
+  ticket_rows=q_system("""select t.id,t.ticket_no,t.subject,t.status,t.priority,o.name organization_name
+   from tickets t join organizations o on o.id=t.organization_id
+   where o.code<>'GAMO' and (lower(coalesce(t.ticket_no,'')) like ? or lower(coalesce(t.subject,'')) like ?)
+   order by t.updated desc limit 6""",(like,like))
+ elif ticket_staff():
+  ticket_rows=q("select id,ticket_no,subject,status,priority from tickets where organization_id=? and (lower(coalesce(ticket_no,'')) like ? or lower(coalesce(subject,'')) like ?) order by updated desc limit 6",(oid,like,like))
  else:
-  ticket_rows=q("select id,ticket_no,subject,status,priority from tickets where organization_id=? and created_by=? and (ticket_no like ? or subject like ?) order by updated desc limit 5",(oid,session.get('user_id'),like,like))
+  ticket_rows=q("select id,ticket_no,subject,status,priority from tickets where organization_id=? and created_by=? and (lower(coalesce(ticket_no,'')) like ? or lower(coalesce(subject,'')) like ?) order by updated desc limit 6",(oid,session.get('user_id'),like,like))
  for r in ticket_rows:
-  out.append({'kind':'Ticket','title':f"{r['ticket_no']} · {r['subject']}",'subtitle':f"{r['priority']} · {r['status']}",'url':f"/ticket/{r['id']}"})
- return jsonify(out[:12])
+  subtitle=f"{r['priority']} · {r['status']}"
+  if platform_ticket_mode(): subtitle=f"{r['organization_name']} · {subtitle}"
+  out.append({'kind':'Ticket','title':f"{r['ticket_no']} · {r['subject']}",'subtitle':subtitle,'url':f"/ticket/{r['id']}"})
+ return jsonify(out[:20])
 
 @app.get('/api/health')
 def api_health():
