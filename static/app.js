@@ -318,10 +318,34 @@ async function toggleDesktopFullscreen(){
  }catch(e){console.warn('Fullscreen toggle failed',e)}
 }
 document.addEventListener('keydown',e=>{
- if(e.key==='F11'){e.preventDefault();toggleDesktopFullscreen()}
+ if(e.key==='F11'){e.preventDefault();toggleDesktopFullscreen();return}
+ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){
+  e.preventDefault();
+  const panel=document.querySelector('#quickSearch');
+  panel?.classList.add('showpanel');
+  setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),30);
+  return;
+ }
+ if(e.key==='Escape'){
+  document.querySelector('#quickSearch')?.classList.remove('showpanel');
+  document.querySelector('#notifications')?.classList.remove('showpanel');
+  document.querySelectorAll('.modal.show').forEach(m=>m.classList.remove('show'));
+  window._gamoConfirmForm=null;
+ }
 });
 
-function toggleQuickSearch(){document.querySelector('#quickSearch').classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
+function initFlashMessages(){
+ document.querySelectorAll('.flashwrap .flash').forEach((el,index)=>{
+  el.setAttribute('role','status');
+  const close=document.createElement('button');close.type='button';close.className='flash-close';close.setAttribute('aria-label','Zavrieť správu');close.textContent='×';
+  close.addEventListener('click',()=>{el.classList.add('flash-leave');setTimeout(()=>el.remove(),220)});
+  el.appendChild(close);
+  setTimeout(()=>{if(el.isConnected){el.classList.add('flash-leave');setTimeout(()=>el.remove(),220)}},6000+index*350);
+ });
+}
+document.addEventListener('DOMContentLoaded',initFlashMessages);
+
+function toggleQuickSearch(){document.querySelector('#quickSearch')?.classList.toggle('showpanel');setTimeout(()=>document.querySelector('#globalSearchInput')?.focus(),50)}
 const NOTIFICATION_READ_KEY='gamo_read_notifications_v1';
 function notificationReadSet(){try{return new Set(JSON.parse(localStorage.getItem(NOTIFICATION_READ_KEY)||'[]'))}catch(e){return new Set()}}
 function notificationTime(value){
