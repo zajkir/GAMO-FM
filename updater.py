@@ -242,7 +242,8 @@ try {
     '/VERYSILENT',
     '/SUPPRESSMSGBOXES',
     '/CLOSEAPPLICATIONS',
-    '/NORESTART'
+    '/NORESTART',
+    '/NOLAUNCH=1'
   ) -Wait -PassThru
 
   $code = [int]$setup.ExitCode

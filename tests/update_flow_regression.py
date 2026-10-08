@@ -10,6 +10,7 @@ sys.path.insert(0, str(root))
 import updater
 source = (root / "updater.py").read_text(encoding="utf-8")
 launcher_source = (root / "launcher.py").read_text(encoding="utf-8")
+version = json.loads((root / "version.json").read_text(encoding="utf-8"))["version"]
 
 assert "def consume_update_result():" in source
 assert "def launch_installer_after_process_exit(path, process_id=None, relaunch_path=None, version=''):" in source
@@ -18,6 +19,7 @@ assert "Start-Process -FilePath $Relaunch" in source
 assert "Save-Result 'success'" in source
 assert "Save-Result 'failed'" in source
 assert "update_helper.log" in source
+assert "'/NOLAUNCH=1'" in source
 assert "Launcher sa zavrie, nainštaluje aktualizáciu a automaticky sa znovu spustí." in launcher_source
 assert "consume_update_result" in launcher_source
 assert "_show_previous_update_result" in launcher_source
@@ -33,11 +35,11 @@ with tempfile.TemporaryDirectory() as tmp:
             "status": "success",
             "message": "OK",
             "exit_code": 0,
-            "version": "9.0.0.15",
+            "version": version,
         }), encoding="utf-8")
         result = updater.consume_update_result()
         assert result["status"] == "success"
-        assert result["version"] == "9.0.0.15"
+        assert result["version"] == version
         assert not result_path.exists()
         assert updater.consume_update_result() is None
 
@@ -56,7 +58,7 @@ with tempfile.TemporaryDirectory() as tmp:
                     installer,
                     process_id=43210,
                     relaunch_path=relaunch,
-                    version="9.0.0.15",
+                    version=version,
                 ) is True
             finally:
                 updater.subprocess.Popen = original_popen
@@ -72,7 +74,7 @@ with tempfile.TemporaryDirectory() as tmp:
             assert "-Wait -PassThru" in helper_text
             assert "Start-Process -FilePath $Relaunch" in helper_text
             assert str(relaunch.resolve()) in args
-            assert "9.0.0.15" in args
+            assert version in args
     finally:
         if old is None:
             os.environ.pop("LOCALAPPDATA", None)

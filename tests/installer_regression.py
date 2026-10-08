@@ -9,6 +9,10 @@ assert 'CloseApplicationsFilter={#MyAppExeName};{#MyLauncherExeName}' in iss
 assert '/F /T /IM "{#MyLauncherExeName}"' in iss
 assert '/F /T /IM "{#MyAppExeName}"' in iss
 assert 'restartreplace' in iss
+assert 'function ShouldLaunchAfterInstall(): Boolean;' in iss
+assert "{param:NOLAUNCH|0}" in iss
+assert 'Check: ShouldLaunchAfterInstall' in iss
+assert 'skipifsilent' not in [line for line in iss.splitlines() if line.startswith('Filename: "{app}\\{#MyLauncherExeName}"')][0]
 assert 'function PrepareToInstall(var NeedsRestart: Boolean): String;' in iss
 assert 'ForceCloseLauncher();' in iss
 assert 'Source: "..\\dist\\GAMO_FM\\*"' not in iss
