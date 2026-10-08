@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="sk">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>{{status}} · GAMO a.s.</title>
+ <link rel="stylesheet" href="/static/app.css?v={{app_version}}">
+</head>
+<body class="app-error-page">
+ <main class="app-error-shell">
+  <section class="app-error-card">
+   <div class="app-error-brand"><span>G</span><div><b>GAMO a.s.</b><small>FACILITY PLATFORM</small></div></div>
+   <div class="app-error-code">{{status}}</div>
+   <span class="admin-kicker">APPLICATION STATUS</span>
+   <h1>{{title}}</h1>
+   <p>{{message}}</p>
+   <div class="app-error-actions">
+    <button type="button" onclick="history.length>1?history.back():location.assign('/')">← Späť</button>
+    <a href="/">Prejsť na prehľad</a>
+    {% if status>=500 %}<a class="support" href="/tickets">Vytvoriť support ticket</a>{% endif %}
+   </div>
+   <small class="app-error-version">GAMO Facility Platform · {{app_version}}</small>
+  </section>
+ </main>
+</body>
+</html>
