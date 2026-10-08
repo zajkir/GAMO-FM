@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tkinter as tk
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
@@ -176,6 +177,43 @@ def show_error(title, message):
         pass
 
 
+def cloud_health(server_url):
+    """Best-effort cloud preflight; failure never blocks the user automatically."""
+    health_path = str(CONFIG.get("health_path", "/healthz") or "/healthz")
+    if not health_path.startswith("/"):
+        health_path = "/" + health_path
+    timeout = max(2, min(20, int(CONFIG.get("health_timeout_seconds", 6))))
+    try:
+        req = urllib.request.Request(
+            server_url.rstrip("/") + health_path,
+            headers={"User-Agent": f"GAMO-Desktop/{current_version()}", "Cache-Control": "no-cache"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return 200 <= int(response.status) < 500
+    except Exception as exc:
+        write_log(f"Cloud preflight unavailable: {exc}")
+        return False
+
+
+def confirm_open_when_offline(server_url):
+    if cloud_health(server_url):
+        return True
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        proceed = messagebox.askyesno(
+            "GAMO a.s. — pripojenie",
+            "Cloudová platforma momentálne neodpovedá.\n\n"
+            "Môže ísť o krátky štart servera alebo výpadok internetu. "
+            "Chceš aplikáciu napriek tomu otvoriť a skúsiť pripojenie znova v okne GAMO?",
+            parent=root,
+        )
+        root.destroy()
+        return bool(proceed)
+    except Exception:
+        return True
+
+
 def check_update_before_open():
     """Offer a verified installer update without showing any launcher UI."""
     try:
@@ -342,6 +380,10 @@ def main():
             "GAMO a.s. — konfigurácia",
             "Aplikácia nemá platnú adresu cloudovej platformy.",
         )
+        return
+
+    if not confirm_open_when_offline(server_url):
+        write_log("Application start cancelled after cloud preflight failure")
         return
 
     renderer = str(CONFIG.get("renderer", "edge_app")).strip().lower()
