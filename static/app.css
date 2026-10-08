@@ -994,3 +994,29 @@ body small{font-size:10px;line-height:1.42}
 @media(max-width:1550px){.admin-v2-metrics{grid-template-columns:repeat(3,1fr)}.customer-table-head,.customer-row{grid-template-columns:minmax(170px,1.4fr) minmax(135px,1fr) 76px 130px 160px 120px 110px 85px;gap:9px}.customer-row{padding-left:14px;padding-right:14px}}
 @media(max-width:1200px){.super-admin-grid{grid-template-columns:1fr}.super-admin-command{align-items:flex-start;flex-direction:column}.super-admin-command-actions{justify-content:flex-start}.customer-table-head{display:none}.customer-row{grid-template-columns:1.4fr 1fr .6fr 1fr;gap:12px}.customer-row>*{min-width:0}.customer-actions{justify-self:end}}
 @media(max-width:820px){.admin-v2-metrics{grid-template-columns:1fr 1fr}.super-admin-command-actions{display:grid;grid-template-columns:1fr;width:100%}.super-admin-command-actions>a,.super-admin-command-actions>button{width:100%}.customer-center-actions{width:100%;flex-direction:column;align-items:stretch}.customer-export-btn{justify-content:center}.platform-access-list>div{grid-template-columns:1fr}.platform-access-list time{text-align:left}}
+
+
+/* Super Admin layout cache-safe hotfix v9.0.0.26 */
+.super-admin-grid{display:grid!important;grid-template-columns:minmax(360px,.9fr) minmax(460px,1.1fr)!important;gap:16px!important;align-items:stretch!important;margin:0 0 16px!important}
+.super-admin-grid>.admin-v2-panel{min-width:0!important;height:auto!important;align-self:stretch!important}
+.platform-attention-list,.platform-ticket-list{display:block!important}
+.platform-attention-list>a,.platform-ticket-list>a{display:grid!important;grid-template-columns:30px minmax(0,1fr) auto!important;align-items:center!important;gap:12px!important;min-height:54px!important;padding:12px 18px!important;border-top:1px solid #edf1f6!important}
+.platform-attention-list>a:first-child,.platform-ticket-list>a:first-child{border-top:0!important}
+.platform-attention-list a>div,.platform-ticket-list a>div{display:flex!important;flex-direction:column!important;gap:3px!important;min-width:0!important}
+.platform-attention-list b,.platform-ticket-list b{display:block!important;font-size:10px!important;line-height:1.35!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.platform-attention-list small,.platform-ticket-list small{display:block!important;margin:0!important;font-size:8px!important;line-height:1.35!important;color:#77859a!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.platform-empty-good{min-height:72px!important;padding:18px 20px!important}
+.platform-access-strip{height:auto!important;min-height:0!important;margin-bottom:16px!important}
+.platform-access-list{display:block!important;max-height:330px!important;overflow:auto!important}
+.platform-access-list>div{display:grid!important;grid-template-columns:90px minmax(0,1fr) 185px!important;align-items:center!important;gap:14px!important;min-height:54px!important;padding:11px 18px!important;border-top:1px solid #edf1f6!important}
+.platform-access-list>div:first-child{border-top:0!important}
+.platform-access-list>div>span{display:inline-flex!important;align-items:center!important;justify-content:center!important;justify-self:start!important;max-width:90px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+.platform-access-list p{display:block!important;margin:0!important;min-width:0!important}
+.platform-access-list b,.platform-access-list small{display:block!important;line-height:1.35!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.platform-access-list time{display:block!important;text-align:right!important;font-size:8px!important;color:#8995a6!important;white-space:nowrap!important}
+.customer-center{clear:both!important;margin-top:0!important}
+.admin-v2-panel.customer-center{overflow:visible!important}
+.super-admin-command{margin-bottom:16px!important}
+.super-admin-command-actions>a,.super-admin-command-actions>button{min-height:58px!important}
+@media(max-width:1280px){.super-admin-grid{grid-template-columns:1fr!important}.platform-access-list>div{grid-template-columns:80px minmax(0,1fr) 150px!important}}
+@media(max-width:760px){.platform-access-list>div{grid-template-columns:1fr!important}.platform-access-list time{text-align:left!important}.platform-attention-list>a,.platform-ticket-list>a{grid-template-columns:28px minmax(0,1fr) auto!important}}

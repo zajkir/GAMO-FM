@@ -25,6 +25,7 @@ try:
         APP_VERSION=str(json.load(_vf).get('version','unknown'))
 except Exception:
     APP_VERSION='unknown'
+STATIC_REV=(os.environ.get('RENDER_GIT_COMMIT') or APP_VERSION or 'dev')[:16]
 if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
 else:
@@ -949,7 +950,7 @@ def ctx():
  unread_tickets=0
  try: unread_tickets=ticket_unread_count()
  except Exception: unread_tickets=0
- return dict(today=date.today(),app_version=APP_VERSION,runtime_defaults=org_runtime_defaults() if org_id() else {},csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
+ return dict(today=date.today(),app_version=APP_VERSION,static_rev=STATIC_REV,runtime_defaults=org_runtime_defaults() if org_id() else {},csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
