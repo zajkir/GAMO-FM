@@ -850,3 +850,12 @@ button.loading{position:relative;pointer-events:none}.modalbox button.loading,.a
 .dt2-inspector{scrollbar-width:thin;scrollbar-color:#244e78 #07192d}
 @media(max-width:900px){.confirm-impact{grid-template-columns:1fr}.admin-section-guide{grid-template-columns:1fr 1fr}.ops-upload-inline{grid-template-columns:1fr}.ops-upload-inline input[type=file]{max-width:100%}}
 @media(max-width:560px){.admin-section-guide{grid-template-columns:1fr}}
+
+
+/* Dashboard operational intelligence */
+.dashboard-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.dashboard-metrics .metric.alert{border-color:#f2cbd2;background:linear-gradient(145deg,#fff,#fff8f9)}
+.dashboard-metrics .metric.alert>b{color:#bd3348}.dashboard-metrics .metric.alert>span{color:#9f4351}
+.bi-trend{margin:18px 0;padding:15px 16px;border:1px solid #e4e9f1;border-radius:12px;background:#fbfcfe}.bi-trend-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.bi-trend-head span{font-size:8px;font-weight:900;letter-spacing:.08em;color:#56677d}.bi-trend-head small{color:#8a96a5;font-size:8px}
+.bi-trend-bars{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;align-items:end;height:160px}.bi-trend-col{display:grid;grid-template-rows:auto 1fr auto auto;min-width:0;height:100%;text-align:center}.bi-trend-col>b{font-size:8px;color:#3b4d64;white-space:nowrap}.bi-trend-col>i{position:relative;display:flex;align-items:flex-end;justify-content:center;width:100%;height:108px;margin:5px 0;border-radius:7px;background:linear-gradient(180deg,#f3f6fa,#edf2f7);overflow:hidden}.bi-trend-col>i>em{display:block;width:58%;min-height:3px;border-radius:5px 5px 0 0;background:linear-gradient(180deg,var(--brand,#2868c7),#173f78);box-shadow:0 -4px 12px rgba(36,99,184,.15)}.bi-trend-col>span{font-size:8px;font-weight:850;color:#56667b}.bi-trend-col>small{margin-top:2px;color:#929dac;font-size:7px}
+@media(max-width:1000px){.dashboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:580px){.dashboard-metrics{grid-template-columns:1fr 1fr}.bi-trend-bars{gap:5px}.bi-trend-col>b{font-size:7px}}
