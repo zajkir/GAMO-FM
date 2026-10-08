@@ -4,14 +4,12 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'launcher.py'
       - 'desktop.py'
       - 'updater.py'
       - 'desktop_config.json'
       - 'update_config.json'
       - 'version.json'
       - 'installer/**'
-      - 'tests/launcher_ui_static.py'
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
@@ -21,14 +19,12 @@ on:
     branches:
       - main
     paths:
-      - 'launcher.py'
       - 'desktop.py'
       - 'updater.py'
       - 'desktop_config.json'
       - 'update_config.json'
       - 'version.json'
       - 'installer/**'
-      - 'tests/launcher_ui_static.py'
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
@@ -55,23 +51,22 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt pyinstaller
 
-      - name: Validate launcher and installer regression
+      - name: Validate direct app and installer regression
         run: |
-          python -m py_compile launcher.py updater.py desktop.py
-          python tests/launcher_ui_static.py
+          python -m py_compile updater.py desktop.py
           python tests/desktop_window_static.py
           python tests/installer_regression.py
           python tests/release_workflow_static.py
           python tests/update_flow_regression.py
 
-      - name: Build GAMO single-process cloud client
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_Launcher --distpath dist_launcher --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." launcher.py
+      - name: Build GAMO direct Windows application
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_FM --distpath dist_app --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
 
-      - name: Prepare versioned launcher payload
+      - name: Prepare versioned portable application
         shell: pwsh
         run: |
           $version = (Get-Content version.json | ConvertFrom-Json).version
-          Copy-Item "dist_launcher\GAMO_Launcher.exe" "dist_launcher\GAMO_Launcher_$version.exe" -Force
+          Copy-Item "dist_app\GAMO_FM.exe" "dist_app\GAMO_FM_$version.exe" -Force
 
       - name: Install Inno Setup
         run: choco install innosetup -y
@@ -96,6 +91,10 @@ jobs:
             Write-Error "Installer is unexpectedly small: $size bytes"
             exit 1
           }
+          if (-not (Test-Path "dist_app\GAMO_FM.exe")) {
+            Write-Error "Direct application executable is missing."
+            exit 1
+          }
           Write-Host "Installer OK: $expected ($size bytes)"
 
       - uses: actions/upload-artifact@v4
@@ -103,7 +102,7 @@ jobs:
           name: GAMO-FM-Windows-Release
           path: |
             dist_installer/*.exe
-            dist_launcher/GAMO_Launcher_*.exe
+            dist_app/GAMO_FM_*.exe
           if-no-files-found: error
 
       - name: Publish versioned GitHub Release
@@ -116,44 +115,39 @@ jobs:
           $version = (Get-Content version.json | ConvertFrom-Json).version
           $tag = "v$version"
           $installer = Get-ChildItem dist_installer\GAMO_FM_Setup_$version.exe | Select-Object -First 1
-          $launcher = Get-ChildItem dist_launcher\GAMO_Launcher_$version.exe | Select-Object -First 1
-          if (-not $installer) {
-            throw "Installer for version $version was not found."
-          }
-          if (-not $launcher) {
-            throw "Launcher payload for version $version was not found."
-          }
+          $portable = Get-ChildItem dist_app\GAMO_FM_$version.exe | Select-Object -First 1
+          if (-not $installer) { throw "Installer for version $version was not found." }
+          if (-not $portable) { throw "Portable application for version $version was not found." }
 
           $notes = @"
           GAMO a.s. $version
 
-          - Legacy 9.0.0.17 installer bridge keeps the original launcher directory
-          - Direct self-update of GAMO_Launcher.exe for modern launchers
-          - Automatic rollback copy and SHA-256 verification after replacement
-          - Installer fallback for protected installation directories
-          - Automatic launcher relaunch after successful update
+          - Direct Windows application: no launcher
+          - One click opens the GAMO Facility Platform immediately
+          - Persistent WebView2 session for remembered login
+          - Verified installer updates with SHA-256
           - Tenant-isolated cloud application with MFA, Privacy Center and ticket messaging
           "@
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $installer.FullName $launcher.FullName --clobber
+            gh release upload $tag $installer.FullName $portable.FullName --clobber
           } else {
-            gh release create $tag $installer.FullName $launcher.FullName --target "${{ github.sha }}" --title "GAMO a.s. $version" --notes $notes
+            gh release create $tag $installer.FullName $portable.FullName --target "${{ github.sha }}" --title "GAMO a.s. $version" --notes $notes
           }
 
           $installerSha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
-          $launcherSha = (Get-FileHash $launcher.FullName -Algorithm SHA256).Hash.ToLower()
+          $portableSha = (Get-FileHash $portable.FullName -Algorithm SHA256).Hash.ToLower()
           $installerDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($installer.Name)"
-          $launcherDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($launcher.Name)"
+          $portableDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($portable.Name)"
           $manifest = [ordered]@{
             version = $version
-            update_mode = "launcher"
-            launcher_url = $launcherDownload
-            launcher_sha256 = $launcherSha
+            update_mode = "installer"
             installer_url = $installerDownload
             sha256 = $installerSha
-            notes = "GAMO a.s. $version - legacy updater bridge + verified direct self-update"
+            portable_url = $portableDownload
+            portable_sha256 = $portableSha
+            notes = "GAMO a.s. $version - direct application release without launcher"
             published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json
 
@@ -175,6 +169,7 @@ jobs:
         run: |
           $version = (Get-Content version.json | ConvertFrom-Json).version
           "### GAMO a.s. Windows $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "- Installer fallback: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "- Direct launcher payload: GAMO_Launcher_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "- SHA-256 hashes for both payloads are generated automatically on main." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installed app: GAMO_FM.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installer: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Portable app: GAMO_FM_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- No launcher process or launcher screen." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
