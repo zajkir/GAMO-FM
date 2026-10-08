@@ -4,7 +4,9 @@ import os
 import subprocess
 import sys
 import threading
+import traceback
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -20,27 +22,31 @@ from updater import (
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 
-NAVY = "#071729"
-NAVY_2 = "#0D2A49"
-BLUE = "#2867F0"
-BLUE_SOFT = "#EAF1FF"
-GREEN = "#17966C"
-GREEN_SOFT = "#EAF8F2"
-RED = "#D53A4E"
+NAVY = "#07182C"
+NAVY_2 = "#0B2440"
+NAVY_3 = "#10355D"
+BLUE = "#2F6DF6"
+BLUE_DARK = "#2459CA"
+BLUE_SOFT = "#EDF3FF"
+GREEN = "#15865F"
+GREEN_SOFT = "#E7F7EF"
+RED = "#C93B50"
 RED_SOFT = "#FDECEF"
-AMBER = "#B9770E"
-AMBER_SOFT = "#FFF4D9"
+AMBER = "#A86B00"
+AMBER_SOFT = "#FFF3D8"
 TEXT = "#172337"
-MUTED = "#6E7B8E"
-LINE = "#E2E8F0"
-BG = "#F3F6FA"
+MUTED = "#6F7D91"
+SOFT_TEXT = "#8D9AAF"
+LINE = "#E1E7EF"
+BG = "#EEF2F7"
+CARD = "#F8FAFD"
 WHITE = "#FFFFFF"
 
 
 def load_desktop_config():
     defaults = {
         "server_url": "https://gamo-fm.onrender.com",
-        "connect_timeout_seconds": 12,
+        "connect_timeout_seconds": 8,
     }
     for base in (APP_DIR, BASE_DIR):
         path = base / "desktop_config.json"
@@ -56,22 +62,36 @@ def load_desktop_config():
     return defaults
 
 
-def single_instance_guard():
-    """Return a Windows mutex handle, or None outside Windows.
+def log_path():
+    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "GAMO_FM" / "logs"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "launcher.log"
 
-    Keeping the handle alive for the process lifetime prevents accidental
-    duplicate launcher windows.
-    """
+
+def write_log(message):
+    try:
+        with log_path().open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now().isoformat(timespec='seconds')}  {message}\n")
+    except Exception:
+        pass
+
+
+def single_instance_guard():
     if os.name != "nt":
         return None
     kernel32 = ctypes.windll.kernel32
-    handle = kernel32.CreateMutexW(None, False, "Global\\GAMO_Facility_Launcher")
-    if not handle:
-        return None
-    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        kernel32.CloseHandle(handle)
-        return False
-    return handle
+    for name in ("Global\\GAMO_Facility_Launcher", "Local\\GAMO_Facility_Launcher"):
+        try:
+            handle = kernel32.CreateMutexW(None, False, name)
+            if not handle:
+                continue
+            if kernel32.GetLastError() == 183:
+                kernel32.CloseHandle(handle)
+                return False
+            return handle
+        except Exception:
+            continue
+    return None
 
 
 class Launcher(tk.Tk):
@@ -79,41 +99,85 @@ class Launcher(tk.Tk):
         super().__init__()
         self.config_data = load_desktop_config()
         self.server_url = str(self.config_data.get("server_url", "")).strip().rstrip("/")
-        self.timeout = max(3, int(self.config_data.get("connect_timeout_seconds", 12)))
+        self.timeout = max(3, min(15, int(self.config_data.get("connect_timeout_seconds", 8))))
         self.online = False
         self.update_manifest = None
         self.busy = False
+        self.launching = False
         self._fullscreen = False
+        self._closing = False
 
-        self.title("GAMO a.s. — Launcher")
-        self.geometry("1020x640")
-        self.minsize(920, 580)
+        self.title("GAMO a.s. — Facility Platform")
+        self.geometry("1180x720")
+        self.minsize(1000, 640)
         self.configure(bg=BG)
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<F11>", self.toggle_fullscreen)
         self.bind("<Escape>", self.exit_fullscreen)
+        self.report_callback_exception = self._callback_error
+
+        try:
+            self.state("normal")
+        except tk.TclError:
+            pass
 
         self._center()
         self._build_styles()
         self._build_ui()
-        self.after(250, self.refresh_status)
+        self._post(220, self.refresh_status)
 
     def _center(self):
         self.update_idletasks()
-        width, height = 1020, 640
+        width, height = 1180, 720
         x = max(0, (self.winfo_screenwidth() - width) // 2)
         y = max(0, (self.winfo_screenheight() - height) // 2)
         self.geometry(f"{width}x{height}+{x}+{y}")
 
+    def _post(self, delay, callback):
+        if self._closing:
+            return
+        try:
+            self.after(delay, lambda: None if self._closing else callback())
+        except tk.TclError:
+            pass
+
+    def _callback_error(self, exc_type, exc_value, exc_tb):
+        detail = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        write_log("UI exception:\n" + detail)
+        if self._closing:
+            return
+        try:
+            messagebox.showerror(
+                "GAMO a.s. — Launcher",
+                "Launcher zachytil chybu rozhrania. Aplikácia zostala bezpečne otvorená.\n\n"
+                "Ak sa problém zopakuje, pošli súbor launcher.log podpore.",
+                parent=self,
+            )
+        except Exception:
+            pass
+
+    def _close(self):
+        self._closing = True
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
+
     def toggle_fullscreen(self, _event=None):
         self._fullscreen = not self._fullscreen
-        self.attributes("-fullscreen", self._fullscreen)
+        try:
+            self.attributes("-fullscreen", self._fullscreen)
+        except tk.TclError:
+            pass
         return "break"
 
     def exit_fullscreen(self, _event=None):
         if self._fullscreen:
             self._fullscreen = False
-            self.attributes("-fullscreen", False)
+            try:
+                self.attributes("-fullscreen", False)
+            except tk.TclError:
+                pass
         return "break"
 
     def _build_styles(self):
@@ -129,152 +193,204 @@ class Launcher(tk.Tk):
             bordercolor="#E7ECF3",
             lightcolor=BLUE,
             darkcolor=BLUE,
-            thickness=8,
+            thickness=7,
         )
+
+    def _label(self, parent, text, size=10, weight="normal", fg=TEXT, bg=WHITE, **kwargs):
+        return tk.Label(
+            parent,
+            text=text,
+            font=("Segoe UI", size, weight),
+            fg=fg,
+            bg=bg,
+            **kwargs,
+        )
+
+    def _button(self, parent, text, command, primary=False, small=False):
+        bg = BLUE if primary else WHITE
+        fg = WHITE if primary else TEXT
+        active_bg = BLUE_DARK if primary else BLUE_SOFT
+        btn = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            relief="flat",
+            bd=0,
+            bg=bg,
+            fg=fg,
+            activebackground=active_bg,
+            activeforeground=WHITE if primary else BLUE,
+            disabledforeground="#A9B5C5",
+            font=("Segoe UI", 10 if small else 11, "bold"),
+            padx=16 if small else 22,
+            pady=8 if small else 12,
+            cursor="hand2",
+            highlightthickness=0,
+        )
+        return btn
 
     def _build_ui(self):
-        shell = tk.Frame(self, bg=WHITE, highlightthickness=1, highlightbackground=LINE)
-        shell.pack(fill="both", expand=True, padx=26, pady=26)
+        shell = tk.Frame(self, bg=WHITE, highlightthickness=1, highlightbackground="#D9E1EB")
+        shell.pack(fill="both", expand=True, padx=22, pady=22)
+        shell.grid_rowconfigure(0, weight=1)
+        shell.grid_columnconfigure(0, minsize=300)
+        shell.grid_columnconfigure(1, weight=1)
 
-        left = tk.Canvas(shell, width=330, bg=NAVY, highlightthickness=0)
-        left.pack(side="left", fill="y")
-        left.create_oval(208, -54, 430, 168, fill=NAVY_2, outline="")
-        left.create_oval(-104, 420, 190, 714, fill="#0A213B", outline="")
-        left.create_rectangle(30, 34, 76, 80, fill=BLUE, outline="")
-        left.create_text(53, 57, text="G", anchor="center", fill=WHITE, font=("Segoe UI", 22, "bold"))
-        left.create_text(32, 111, text="GAMO a.s.", anchor="nw", fill=WHITE, font=("Segoe UI", 21, "bold"))
-        left.create_text(
-            32, 148, text="SMART FACILITY PLATFORM", anchor="nw",
-            fill="#9BB2CD", font=("Segoe UI", 10, "bold")
+        self._build_sidebar(shell)
+        self._build_main(shell)
+
+    def _build_sidebar(self, shell):
+        left = tk.Frame(shell, bg=NAVY, width=300)
+        left.grid(row=0, column=0, sticky="nsew")
+        left.grid_propagate(False)
+        left.grid_rowconfigure(5, weight=1)
+
+        brand = tk.Frame(left, bg=NAVY)
+        brand.grid(row=0, column=0, sticky="ew", padx=30, pady=(32, 0))
+        g = tk.Label(
+            brand, text="G", bg=BLUE, fg=WHITE,
+            font=("Segoe UI", 20, "bold"), width=2, height=1
         )
-        left.create_text(
-            32, 219,
-            text="Jedna platforma pre\nbudovy, technológie\na servis.",
-            anchor="nw", fill="#E6EEF7", font=("Segoe UI", 16, "bold"), width=250
+        g.pack(side="left")
+        btxt = tk.Frame(brand, bg=NAVY)
+        btxt.pack(side="left", padx=(13, 0))
+        self._label(btxt, "GAMO a.s.", 18, "bold", WHITE, NAVY).pack(anchor="w")
+        self._label(btxt, "FACILITY PLATFORM", 8, "bold", "#83A0C1", NAVY).pack(anchor="w", pady=(2, 0))
+
+        self._label(
+            left,
+            "Riadenie budov,\ntechnológií a servisu.",
+            19, "bold", WHITE, NAVY, justify="left"
+        ).grid(row=1, column=0, sticky="w", padx=30, pady=(64, 0))
+
+        self._label(
+            left,
+            "Bezpečný desktop klient pre cloudové\nprostredie GAMO. Žiadna lokálna databáza\nzákazníka, žiadne manuálne aktualizácie.",
+            10, "normal", "#A8BDD4", NAVY, justify="left"
+        ).grid(row=2, column=0, sticky="w", padx=30, pady=(18, 0))
+
+        features = tk.Frame(left, bg=NAVY)
+        features.grid(row=3, column=0, sticky="ew", padx=30, pady=(45, 0))
+        for title, subtitle in (
+            ("Cloudové dáta", "Centrálne a tenantovo izolované"),
+            ("Automatické aktualizácie", "Overené cez SHA-256"),
+            ("Bezpečný prístup", "HTTPS · RLS · MFA"),
+        ):
+            row = tk.Frame(features, bg=NAVY)
+            row.pack(fill="x", pady=9)
+            badge = tk.Label(
+                row, text="✓", bg=NAVY_3, fg="#69D9AA",
+                font=("Segoe UI", 9, "bold"), width=2, height=1
+            )
+            badge.pack(side="left", anchor="n")
+            copy = tk.Frame(row, bg=NAVY)
+            copy.pack(side="left", fill="x", expand=True, padx=(10, 0))
+            self._label(copy, title, 10, "bold", WHITE, NAVY).pack(anchor="w")
+            self._label(copy, subtitle, 8, "normal", "#8EA6C0", NAVY).pack(anchor="w", pady=(2, 0))
+
+        footer = tk.Frame(left, bg=NAVY)
+        footer.grid(row=6, column=0, sticky="sew", padx=30, pady=(0, 28))
+        self._label(footer, "DESKTOP CLIENT", 8, "bold", "#6F89A6", NAVY).pack(anchor="w")
+        self._label(footer, f"v{current_version()}", 10, "bold", "#B8C9DA", NAVY).pack(anchor="w", pady=(3, 0))
+
+    def _build_main(self, shell):
+        main = tk.Frame(shell, bg=WHITE)
+        main.grid(row=0, column=1, sticky="nsew")
+        main.grid_columnconfigure(0, weight=1)
+        main.grid_rowconfigure(6, weight=1)
+
+        top = tk.Frame(main, bg=WHITE)
+        top.grid(row=0, column=0, sticky="ew", padx=42, pady=(38, 0))
+        top.grid_columnconfigure(0, weight=1)
+
+        eyebrow = tk.Frame(top, bg=WHITE)
+        eyebrow.grid(row=0, column=0, sticky="ew")
+        self._label(eyebrow, "GAMO CLOUD CLIENT", 9, "bold", BLUE, WHITE).pack(side="left")
+        self._label(eyebrow, "F11  ·  celá obrazovka", 8, "normal", SOFT_TEXT, WHITE).pack(side="right")
+
+        self._label(top, "Facility Platform", 30, "bold", TEXT, WHITE).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self._label(
+            top,
+            "Rýchly a bezpečný vstup do cloudového prostredia GAMO a.s.",
+            11, "normal", MUTED, WHITE,
+        ).grid(row=2, column=0, sticky="w", pady=(5, 0))
+
+        status = tk.Frame(main, bg=CARD, highlightthickness=1, highlightbackground=LINE)
+        status.grid(row=1, column=0, sticky="ew", padx=42, pady=(28, 14))
+        status.grid_columnconfigure(1, weight=1)
+
+        self.status_badge = tk.Label(
+            status, text="…", bg=AMBER_SOFT, fg=AMBER,
+            font=("Segoe UI", 14, "bold"), width=3, height=1
         )
-        left.create_text(
-            32, 325,
-            text="Launcher pred spustením overí cloud,\nverziu aplikácie a bezpečné HTTPS\npripojenie.",
-            anchor="nw", fill="#A8BDD3", font=("Segoe UI", 11), width=258
-        )
+        self.status_badge.grid(row=0, column=0, rowspan=2, padx=(18, 12), pady=18)
 
-        features = [
-            ("✓", "Cloudové dáta", "Bez lokálnej databázy zákazníka"),
-            ("✓", "Automatické aktualizácie", "Kontrola verzie pred spustením"),
-            ("✓", "Bezpečný prístup", "HTTPS · tenant izolácia · MFA"),
-        ]
-        y = 418
-        for symbol, title, subtitle in features:
-            left.create_oval(32, y, 54, y + 22, fill="#103658", outline="")
-            left.create_text(43, y + 11, text=symbol, anchor="center", fill="#66D7A7", font=("Segoe UI", 10, "bold"))
-            left.create_text(66, y - 1, text=title, anchor="nw", fill=WHITE, font=("Segoe UI", 10, "bold"))
-            left.create_text(66, y + 18, text=subtitle, anchor="nw", fill="#8FA6C0", font=("Segoe UI", 9))
-            y += 58
+        self.status_title = self._label(status, "Kontrolujem systém…", 13, "bold", TEXT, CARD)
+        self.status_title.grid(row=0, column=1, sticky="sw", pady=(14, 0))
+        self.status_detail = self._label(status, "Pripájam sa ku GAMO Cloud.", 9, "normal", MUTED, CARD)
+        self.status_detail.grid(row=1, column=1, sticky="nw", pady=(3, 14))
 
-        left.create_text(
-            32, 597, text=f"DESKTOP CLIENT  ·  v{current_version()}",
-            anchor="sw", fill="#7E98B5", font=("Segoe UI", 9, "bold")
-        )
+        self.refresh_btn = self._button(status, "↻  Obnoviť", self.refresh_status, small=True)
+        self.refresh_btn.grid(row=0, column=2, rowspan=2, padx=16, pady=14)
 
-        right = tk.Frame(shell, bg=WHITE)
-        right.pack(side="left", fill="both", expand=True)
+        info = tk.Frame(main, bg=WHITE)
+        info.grid(row=2, column=0, sticky="ew", padx=42)
+        for i in range(3):
+            info.grid_columnconfigure(i, weight=1)
 
-        header = tk.Frame(right, bg=WHITE)
-        header.pack(fill="x", padx=38, pady=(34, 0))
-        top_line = tk.Frame(header, bg=WHITE)
-        top_line.pack(fill="x")
-        tk.Label(
-            top_line, text="GAMO LAUNCHER", bg=WHITE, fg=BLUE, font=("Segoe UI", 10, "bold")
-        ).pack(side="left")
-        tk.Label(
-            top_line, text="F11 · celá obrazovka", bg=WHITE, fg="#8B98AA", font=("Segoe UI", 9)
-        ).pack(side="right")
-        tk.Label(
-            header, text="Facility Platform", bg=WHITE, fg=TEXT, font=("Segoe UI", 30, "bold")
-        ).pack(anchor="w", pady=(6, 0))
-        tk.Label(
-            header,
-            text="Bezpečný vstup do cloudového prostredia GAMO a.s.",
-            bg=WHITE, fg=MUTED, font=("Segoe UI", 11),
-        ).pack(anchor="w", pady=(5, 0))
+        self.version_info = self._info_box(info, 0, "VERZIA", f"v{current_version()}")
+        self.cloud_info = self._info_box(info, 1, "GAMO CLOUD", "Kontrola…")
+        self.security_info = self._info_box(info, 2, "PRIPOJENIE", "HTTPS")
 
-        self.status_card = tk.Frame(right, bg="#F8FAFD", highlightthickness=1, highlightbackground=LINE)
-        self.status_card.pack(fill="x", padx=38, pady=(28, 16))
-        status_inner = tk.Frame(self.status_card, bg="#F8FAFD")
-        status_inner.pack(fill="x", padx=18, pady=17)
-
-        self.status_dot = tk.Canvas(status_inner, width=40, height=40, bg="#F8FAFD", highlightthickness=0)
-        self.status_dot.pack(side="left")
-        self.dot_id = self.status_dot.create_oval(5, 5, 35, 35, fill=AMBER_SOFT, outline="")
-        self.dot_text = self.status_dot.create_text(20, 20, text="…", fill=AMBER, font=("Segoe UI", 13, "bold"))
-
-        status_text = tk.Frame(status_inner, bg="#F8FAFD")
-        status_text.pack(side="left", padx=(12, 0), fill="x", expand=True)
-        self.status_title = tk.Label(
-            status_text, text="Kontrolujem systém…", bg="#F8FAFD", fg=TEXT, font=("Segoe UI", 13, "bold")
-        )
-        self.status_title.pack(anchor="w")
-        self.status_detail = tk.Label(
-            status_text, text="Pripájam sa ku GAMO Cloud.", bg="#F8FAFD", fg=MUTED, font=("Segoe UI", 10)
-        )
-        self.status_detail.pack(anchor="w", pady=(4, 0))
-
-        self.refresh_btn = tk.Button(
-            status_inner, text="↻  Obnoviť", command=self.refresh_status, relief="flat",
-            bg=WHITE, fg=TEXT, activebackground=BLUE_SOFT, activeforeground=BLUE,
-            font=("Segoe UI", 10, "bold"), padx=15, pady=9, cursor="hand2"
-        )
-        self.refresh_btn.pack(side="right")
-
-        info = tk.Frame(right, bg=WHITE)
-        info.pack(fill="x", padx=38, pady=(0, 18))
-        self.version_info = self._info_box(info, "VERZIA APLIKÁCIE", f"v{current_version()}")
-        self.version_info.pack(side="left", fill="x", expand=True, padx=(0, 7))
-        self.cloud_info = self._info_box(info, "GAMO CLOUD", "Kontrola…")
-        self.cloud_info.pack(side="left", fill="x", expand=True, padx=(7, 0))
+        self.update_card = tk.Frame(main, bg=BLUE_SOFT, highlightthickness=1, highlightbackground="#D6E4FF")
+        self.update_card.grid_columnconfigure(0, weight=1)
+        self.update_title = self._label(self.update_card, "Je dostupná nová verzia", 10, "bold", TEXT, BLUE_SOFT)
+        self.update_title.grid(row=0, column=0, sticky="w", padx=16, pady=(12, 2))
+        self.update_detail = self._label(self.update_card, "Odporúčame aktualizovať pred spustením.", 8, "normal", MUTED, BLUE_SOFT)
+        self.update_detail.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 12))
+        self.update_btn = self._button(self.update_card, "Aktualizovať", self.install_update, primary=True, small=True)
+        self.update_btn.grid(row=0, column=1, rowspan=2, padx=14, pady=10)
+        self.update_card.grid(row=3, column=0, sticky="ew", padx=42, pady=(14, 0))
+        self.update_card.grid_remove()
 
         self.progress_var = tk.DoubleVar(value=0)
         self.progress = ttk.Progressbar(
-            right, variable=self.progress_var, maximum=100, style="GAMO.Horizontal.TProgressbar"
+            main, variable=self.progress_var, maximum=100, style="GAMO.Horizontal.TProgressbar"
         )
+        self.progress.grid(row=4, column=0, sticky="ew", padx=42, pady=(11, 0))
+        self.progress.grid_remove()
 
-        self.update_card = tk.Frame(right, bg=BLUE_SOFT, highlightthickness=1, highlightbackground="#D8E5FF")
-        update_inner = tk.Frame(self.update_card, bg=BLUE_SOFT)
-        update_inner.pack(fill="x", padx=16, pady=13)
-        tk.Label(
-            update_inner, text="Nová verzia je pripravená", bg=BLUE_SOFT, fg=TEXT,
-            font=("Segoe UI", 11, "bold")
-        ).pack(side="left")
-        self.update_btn = tk.Button(
-            update_inner, text="Aktualizovať", command=self.install_update, relief="flat",
-            bg=BLUE, fg=WHITE, activebackground="#1E55C9", activeforeground=WHITE,
-            font=("Segoe UI", 10, "bold"), padx=16, pady=8, cursor="hand2"
-        )
-        self.update_btn.pack(side="right")
+        actions = tk.Frame(main, bg=WHITE)
+        actions.grid(row=5, column=0, sticky="ew", padx=42, pady=(20, 0))
+        actions.grid_columnconfigure(0, weight=1)
 
-        actions = tk.Frame(right, bg=WHITE)
-        actions.pack(fill="x", padx=38, pady=(10, 0))
-        self.launch_btn = tk.Button(
-            actions, text="Spustiť GAMO a.s.  →", command=self.launch_app, relief="flat",
-            bg=BLUE, fg=WHITE, disabledforeground="#AAB6C6",
-            activebackground="#1E55C9", activeforeground=WHITE,
-            font=("Segoe UI", 13, "bold"), padx=24, pady=15, cursor="hand2", state="disabled"
-        )
-        self.launch_btn.pack(fill="x")
+        self.launch_btn = self._button(actions, "Spustiť GAMO a.s.  →", self.launch_app, primary=True)
+        self.launch_btn.grid(row=0, column=0, sticky="ew")
+        self.launch_btn.config(state="disabled")
 
-        tk.Label(
-            right,
-            text="GAMO a.s.  ·  Cloud Facility Platform  ·  HTTPS  ·  automatické aktualizácie",
-            bg=WHITE, fg="#8592A4", font=("Segoe UI", 10),
-        ).pack(side="bottom", pady=22)
+        hint = tk.Frame(main, bg=WHITE)
+        hint.grid(row=6, column=0, sticky="sew", padx=42, pady=(24, 0))
+        self._label(
+            hint,
+            "Launcher kontroluje iba dostupnosť cloudu a aktualizácie.\n"
+            "Po spustení sa bezpečne zatvorí a nezaťažuje aplikáciu na pozadí.",
+            9, "normal", SOFT_TEXT, WHITE, justify="left"
+        ).pack(anchor="sw", pady=(0, 14))
 
-    def _info_box(self, parent, label, value):
-        box = tk.Frame(parent, bg="#F8FAFD", highlightthickness=1, highlightbackground=LINE)
-        tk.Label(
-            box, text=label, bg="#F8FAFD", fg="#758397", font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", padx=14, pady=(11, 0))
-        value_label = tk.Label(box, text=value, bg="#F8FAFD", fg=TEXT, font=("Segoe UI", 12, "bold"))
-        value_label.pack(anchor="w", padx=14, pady=(4, 11))
+        bottom = tk.Frame(main, bg="#F8FAFD", highlightthickness=1, highlightbackground="#EEF2F6")
+        bottom.grid(row=7, column=0, sticky="ew")
+        self._label(
+            bottom,
+            "GAMO a.s.   ·   Cloud Facility Platform   ·   HTTPS   ·   automatické aktualizácie",
+            8, "normal", "#8492A5", "#F8FAFD"
+        ).pack(pady=13)
+
+    def _info_box(self, parent, column, label, value):
+        box = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=LINE)
+        box.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 6, 0 if column == 2 else 6))
+        self._label(box, label, 8, "bold", "#7B899D", CARD).pack(anchor="w", padx=14, pady=(12, 0))
+        value_label = self._label(box, value, 12, "bold", TEXT, CARD)
+        value_label.pack(anchor="w", padx=14, pady=(4, 12))
         box.value_label = value_label
         return box
 
@@ -288,32 +404,36 @@ class Launcher(tk.Tk):
         bg, fg, symbol = palette.get(state, palette["checking"])
         self.status_title.config(text=title)
         self.status_detail.config(text=detail)
-        self.status_dot.itemconfigure(self.dot_id, fill=bg)
-        self.status_dot.itemconfigure(self.dot_text, text=symbol, fill=fg)
+        self.status_badge.config(text=symbol, bg=bg, fg=fg)
 
     def probe_server(self):
         if not self.server_url.startswith(("https://", "http://")):
             return False
         req = urllib.request.Request(
             self.server_url + "/login",
-            headers={"User-Agent": f"GAMO-Launcher/{current_version()}"},
+            method="HEAD",
+            headers={
+                "User-Agent": f"GAMO-Launcher/{current_version()}",
+                "Cache-Control": "no-cache",
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 return 200 <= response.status < 500
-        except Exception:
+        except Exception as exc:
+            write_log(f"Cloud probe failed: {exc}")
             return False
 
     def refresh_status(self):
-        if self.busy:
+        if self.busy or self._closing:
             return
         self.busy = True
         self.launch_btn.config(state="disabled")
         self.refresh_btn.config(state="disabled")
-        self.update_card.pack_forget()
-        self.progress.pack_forget()
+        self.update_card.grid_remove()
+        self.progress.grid_remove()
         self.progress_var.set(0)
-        self.set_status("Kontrolujem GAMO Cloud…", "Overujem server a dostupné aktualizácie.", "checking")
+        self.set_status("Kontrolujem GAMO Cloud…", "Overujem dostupnosť servera a aktualizácie.", "checking")
         self.cloud_info.value_label.config(text="Kontrola…")
         threading.Thread(target=self._refresh_worker, daemon=True, name="GAMO-Launcher-Check").start()
 
@@ -326,9 +446,12 @@ class Launcher(tk.Tk):
                 manifest = check_for_update()
             except Exception as exc:
                 update_error = str(exc)
-        self.after(0, lambda: self._finish_refresh(online, manifest, update_error))
+                write_log(f"Update check skipped: {exc}")
+        self._post(0, lambda: self._finish_refresh(online, manifest, update_error))
 
     def _finish_refresh(self, online, manifest, update_error):
+        if self._closing:
+            return
         self.busy = False
         self.online = online
         self.update_manifest = manifest
@@ -336,69 +459,82 @@ class Launcher(tk.Tk):
 
         if not online:
             self.cloud_info.value_label.config(text="Nedostupný")
+            self.security_info.value_label.config(text="Čaká na cloud")
             self.set_status(
                 "GAMO Cloud nie je dostupný",
-                "Skontroluj internetové pripojenie a skús kontrolu zopakovať.",
+                "Skontroluj internetové pripojenie a potom klikni na Obnoviť.",
                 "offline",
             )
             self.launch_btn.config(state="disabled")
             return
 
-        self.cloud_info.value_label.config(text="Online · HTTPS")
+        self.cloud_info.value_label.config(text="Online")
+        self.security_info.value_label.config(text="HTTPS · OK")
         self.launch_btn.config(state="normal")
 
         if manifest:
             version = str(manifest.get("version", "nová"))
             self.set_status(
                 f"Aktualizácia v{version} je dostupná",
-                "Odporúčame ju nainštalovať pred spustením aplikácie.",
+                "Novú verziu môžeš bezpečne nainštalovať jedným kliknutím.",
                 "update",
             )
+            self.update_title.config(text=f"Nová verzia v{version} je pripravená")
             self.update_btn.config(text=f"Aktualizovať na v{version}", state="normal")
-            self.update_card.pack(fill="x", padx=34, pady=(0, 10), before=self.launch_btn.master)
+            self.update_card.grid()
         else:
-            detail = "Cloud je online. Aplikácia je pripravená."
+            detail = "Cloud je online. Aplikácia je pripravená na spustenie."
             if update_error:
-                detail += " Kontrola aktualizácie sa preskočila."
+                detail += " Kontrola aktualizácie sa tentoraz preskočila."
             self.set_status("Všetko je pripravené", detail, "online")
 
     def install_update(self):
-        if not self.update_manifest or self.busy:
+        if not self.update_manifest or self.busy or self._closing:
             return
         self.busy = True
         self.launch_btn.config(state="disabled")
         self.refresh_btn.config(state="disabled")
         self.update_btn.config(state="disabled", text="Sťahujem…")
-        self.progress.pack(fill="x", padx=34, pady=(0, 12))
-        self.set_status("Sťahujem aktualizáciu…", "Po stiahnutí overím SHA-256 podpis balíka.", "update")
+        self.progress.grid()
+        self.set_status("Sťahujem aktualizáciu…", "Po stiahnutí overím SHA-256 kontrolný súčet.", "update")
         threading.Thread(target=self._update_worker, daemon=True, name="GAMO-Launcher-Update").start()
 
     def _update_worker(self):
         try:
             installer = download_update(
                 self.update_manifest,
-                progress=lambda value: self.after(0, lambda v=value: self.progress_var.set(v)),
+                progress=lambda value: self._post(0, lambda v=value: self.progress_var.set(v)),
             )
             backup_user_data("pre_update")
-            self.after(0, lambda: self.set_status("Aktualizácia je pripravená", "Spúšťam bezpečný installer.", "online"))
+            self._post(0, lambda: self.set_status(
+                "Aktualizácia je pripravená",
+                "Spúšťam overený inštalátor.",
+                "online",
+            ))
             launch_installer_after_process_exit(installer, os.getpid())
-            self.after(0, self.destroy)
+            self._post(80, self._close)
         except Exception as exc:
-            self.after(0, lambda: self._update_failed(str(exc)))
+            write_log(f"Update failed: {exc}")
+            self._post(0, lambda e=str(exc): self._update_failed(e))
 
     def _update_failed(self, detail):
         self.busy = False
         self.refresh_btn.config(state="normal")
         self.launch_btn.config(state="normal" if self.online else "disabled")
         self.update_btn.config(state="normal", text="Skúsiť znova")
-        self.set_status("Aktualizácia zlyhala", detail or "Skús to znova.", "offline")
+        short = detail.strip()[:180] if detail else "Skús to znova."
+        self.set_status("Aktualizácia zlyhala", short, "offline")
 
     def launch_app(self):
-        if self.busy or not self.online:
+        if self.busy or self.launching or not self.online or self._closing:
             return
+        self.launching = True
+        self.launch_btn.config(state="disabled", text="Spúšťam GAMO a.s. …")
+        self.refresh_btn.config(state="disabled")
         executable = APP_DIR / "GAMO_FM.exe"
         env = os.environ.copy()
         env["GAMO_SKIP_UPDATE"] = "1"
+        env["GAMO_CLOUD_VERIFIED"] = "1"
         if self.server_url:
             env["GAMO_SERVER_URL"] = self.server_url
 
@@ -412,8 +548,12 @@ class Launcher(tk.Tk):
                 if not source.exists():
                     raise FileNotFoundError("GAMO_FM.exe sa v inštalácii nenašiel.")
                 subprocess.Popen([sys.executable, str(source)], cwd=str(source.parent), env=env, close_fds=True)
-            self.after(350, self.destroy)
+            self._post(300, self._close)
         except Exception as exc:
+            self.launching = False
+            self.launch_btn.config(state="normal", text="Spustiť GAMO a.s.  →")
+            self.refresh_btn.config(state="normal")
+            write_log(f"Application launch failed: {exc}")
             messagebox.showerror(
                 "GAMO a.s. — Launcher",
                 f"Aplikáciu sa nepodarilo spustiť.\n\n{exc}",
@@ -425,6 +565,7 @@ def main():
     mutex = single_instance_guard()
     if mutex is False:
         return
+    write_log(f"Launcher started · v{current_version()}")
     app = Launcher()
     app._mutex = mutex
     app.mainloop()
