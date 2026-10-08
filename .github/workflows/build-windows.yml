@@ -11,13 +11,32 @@ on:
       - 'update_config.json'
       - 'version.json'
       - 'installer/**'
+      - 'tests/launcher_ui_static.py'
+      - 'tests/desktop_window_static.py'
+      - 'tests/installer_regression.py'
       - '.github/workflows/build-windows.yml'
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'launcher.py'
+      - 'desktop.py'
+      - 'updater.py'
+      - 'desktop_config.json'
+      - 'update_config.json'
+      - 'version.json'
+      - 'installer/**'
+      - 'tests/launcher_ui_static.py'
+      - 'tests/desktop_window_static.py'
+      - 'tests/installer_regression.py'
+      - '.github/workflows/build-windows.yml'
 
 permissions:
   contents: write
+
+concurrency:
+  group: gamo-windows-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -54,33 +73,86 @@ jobs:
           $version = (Get-Content version.json | ConvertFrom-Json).version
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\GAMO_FM.iss
 
+      - name: Validate installer output
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $expected = "dist_installer\GAMO_FM_Setup_$version.exe"
+          if (-not (Test-Path $expected)) {
+            Write-Error "Expected installer was not created: $expected"
+            exit 1
+          }
+          $size = (Get-Item $expected).Length
+          if ($size -lt 1000000) {
+            Write-Error "Installer is unexpectedly small: $size bytes"
+            exit 1
+          }
+          Write-Host "Installer OK: $expected ($size bytes)"
+
       - uses: actions/upload-artifact@v4
         with:
           name: GAMO-FM-Windows-Installer
           path: dist_installer/*.exe
+          if-no-files-found: error
 
-      - name: Publish GitHub Release and update manifest
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish versioned GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          $installer = Get-ChildItem dist_installer\*.exe | Select-Object -First 1
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $tag = "v$version"
+          $installer = Get-ChildItem dist_installer\GAMO_FM_Setup_$version.exe | Select-Object -First 1
+          if (-not $installer) {
+            throw "Installer for version $version was not found."
+          }
+
+          $notes = @"
+          GAMO a.s. $version
+
+          - Windows Launcher with cloud health check
+          - verified automatic updates
+          - SHA-256 installer validation
+          - tenant-isolated cloud application
+          - MFA, Privacy Center, ticket messaging and Digital Twin workspace
+          "@
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer.FullName --clobber
+          } else {
+            gh release create $tag $installer.FullName --target "${{ github.sha }}" --title "GAMO a.s. $version" --notes $notes
+          }
+
           $sha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
-          gh release create "${{ github.ref_name }}" $installer.FullName --title "GAMO a.s. $version" --notes "Automatické vydanie GAMO a.s. $version s Windows Launcherom"
-          $download = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($installer.Name)"
-          $manifest = @{
+          $download = "https://github.com/${{ github.repository }}/releases/download/$tag/$($installer.Name)"
+          $manifest = [ordered]@{
             version = $version
             installer_url = $download
             sha256 = $sha
             notes = "GAMO a.s. $version – automatická aktualizácia cez GAMO Launcher"
+            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json
-          git fetch origin main
-          git checkout main
+
           $manifest | Set-Content -Path update.json -Encoding UTF8
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add update.json
-          git commit -m "Update manifest for $version"
-          git push origin main
+
+          if (git diff --cached --quiet) {
+            Write-Host "Update manifest is already current."
+          } else {
+            git commit -m "Publish update manifest for $version"
+            git push origin HEAD:main
+          }
+
+      - name: Release summary
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          "### GAMO a.s. Windows $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installer: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- SHA-256 manifest is generated automatically on main." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
