@@ -1,7 +1,7 @@
 {
   "mode": "cloud",
   "server_url": "https://gamo-fm.onrender.com",
-  "connect_timeout_seconds": 20,
+  "connect_timeout_seconds": 8,
   "allow_local_fallback": false,
   "start_maximized": true
 }
