@@ -1163,6 +1163,24 @@ def _migration_15(db, using_postgres):
                 WITH CHECK ({platform} OR organization_id={tenant})"""
         )
 
+
+def _migration_16(db, using_postgres):
+    """Indexes for large tenant datasets, dashboards, workflow filters and audits."""
+    indexes = (
+        "CREATE INDEX IF NOT EXISTS idx_floors_building_code ON floors(building_id,code)",
+        "CREATE INDEX IF NOT EXISTS idx_rooms_floor_code ON rooms(floor_id,code)",
+        "CREATE INDEX IF NOT EXISTS idx_assets_org_criticality ON assets(organization_id,criticality)",
+        "CREATE INDEX IF NOT EXISTS idx_assets_org_profession ON assets(organization_id,profession)",
+        "CREATE INDEX IF NOT EXISTS idx_workorders_status_due_asset ON workorders(status,due,asset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_incidents_status_severity_asset ON incidents(status,severity,asset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_documents_building_uploaded ON documents(building_id,uploaded)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_org_action_created ON audit_log(organization_id,action,created)",
+        "CREATE INDEX IF NOT EXISTS idx_tickets_org_creator_updated ON tickets(organization_id,created_by,updated)",
+        "CREATE INDEX IF NOT EXISTS idx_ticket_messages_org_ticket_id ON ticket_messages(organization_id,ticket_id,id)",
+    )
+    for sql in indexes:
+        db.execute(sql)
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -1179,39 +1197,52 @@ MIGRATIONS = (
     (13, "platform_ticket_inbox", _migration_13),
     (14, "asset_documents_and_ticket_attachments", _migration_14),
     (15, "remembered_devices_and_performance_indexes", _migration_15),
+    (16, "large_dataset_performance_indexes", _migration_16),
 )
 
 
 def run_migrations(connect, using_postgres):
-    """Apply every unapplied migration inside its own transaction."""
+    """Apply migrations with one startup connection and serialize PostgreSQL deploys."""
     with connect() as db:
-        db.execute(
-            """CREATE TABLE IF NOT EXISTS schema_migrations(
-                version INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                applied_at TEXT NOT NULL
-            )"""
-        )
-        db.commit()
+        locked = False
+        try:
+            if using_postgres:
+                db.execute("select pg_advisory_lock(64102026)")
+                locked = True
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS schema_migrations(
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    applied_at TEXT NOT NULL
+                )"""
+            )
+            db.commit()
 
-    for version, name, migration in MIGRATIONS:
-        with connect() as db:
-            row = db.execute(
-                "select version from schema_migrations where version=%s" if using_postgres
-                else "select version from schema_migrations where version=?",
-                (version,),
-            ).fetchone()
-            if row:
-                continue
-            try:
-                migration(db, using_postgres)
-                sql = (
-                    "insert into schema_migrations(version,name,applied_at) values(%s,%s,%s)"
-                    if using_postgres
-                    else "insert into schema_migrations(version,name,applied_at) values(?,?,?)"
-                )
-                db.execute(sql, (version, name, datetime.utcnow().isoformat(timespec="seconds") + "Z"))
-                db.commit()
-            except Exception:
-                db.rollback()
-                raise
+            for version, name, migration in MIGRATIONS:
+                placeholder = "%s" if using_postgres else "?"
+                row = db.execute(
+                    f"select version from schema_migrations where version={placeholder}",
+                    (version,),
+                ).fetchone()
+                if row:
+                    continue
+                try:
+                    migration(db, using_postgres)
+                    sql = (
+                        "insert into schema_migrations(version,name,applied_at) values(%s,%s,%s)"
+                        if using_postgres
+                        else "insert into schema_migrations(version,name,applied_at) values(?,?,?)"
+                    )
+                    db.execute(sql, (version, name, datetime.utcnow().isoformat(timespec="seconds") + "Z"))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+        finally:
+            if using_postgres and locked:
+                try:
+                    db.execute("select pg_advisory_unlock(64102026)")
+                    db.commit()
+                except Exception:
+                    pass
+
