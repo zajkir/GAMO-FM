@@ -60,11 +60,8 @@ jobs:
           python tests/installer_regression.py
           python tests/release_workflow_static.py
 
-      - name: Build desktop application
-        run: pyinstaller --noconfirm --clean --windowed --name GAMO_FM --add-data "templates;templates" --add-data "static;static" --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
-
-      - name: Build GAMO Launcher
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_Launcher --distpath dist_launcher --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." launcher.py
+      - name: Build GAMO single-process cloud client
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_Launcher --distpath dist_launcher --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." launcher.py
 
       - name: Install Inno Setup
         run: choco install innosetup -y
@@ -114,11 +111,11 @@ jobs:
           $notes = @"
           GAMO a.s. $version
 
-          - Windows Launcher with cloud health check
-          - Verified automatic updates
-          - SHA-256 installer validation
-          - Tenant-isolated cloud application
-          - MFA, Privacy Center, ticket messaging and Digital Twin workspace
+          - Single-process Windows cloud client (no child GAMO_FM.exe)
+          - Cloud health check and native WebView window
+          - Safe browser fallback when WebView2 is unavailable
+          - Verified automatic updates with SHA-256 validation
+          - Tenant-isolated cloud application with MFA, Privacy Center, ticket messaging and Digital Twin
           "@
 
           gh release view $tag *> $null

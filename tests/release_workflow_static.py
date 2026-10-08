@@ -15,5 +15,9 @@ assert "installer_url" in workflow
 assert "sha256" in workflow
 assert "git push origin HEAD:main" in workflow
 assert "GAMO_FM_Setup_$version.exe" in workflow
+assert "Build desktop application" not in workflow
+assert "Build GAMO single-process cloud client" in workflow
+assert "--collect-all webview" in workflow
+assert "Single-process Windows cloud client" in workflow
 
-print(f"Windows release workflow OK for {version}")
+print(f"Windows single-process release workflow OK for {version}")

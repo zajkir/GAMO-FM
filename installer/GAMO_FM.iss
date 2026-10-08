@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.13"
+#define MyAppVersion "9.0.0.14"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -30,8 +30,12 @@ VersionInfoVersion={#MyAppVersion}
 ; Používateľské dáta sú zámerne mimo {app} v %LOCALAPPDATA%\GAMO_FM.
 ; Installer ich pri upgrade ani odinštalovaní nemaže ani neprepisuje.
 
+[InstallDelete]
+; Remove files from legacy two-process desktop builds. Customer data are outside {app}.
+Type: files; Name: "{app}\{#MyAppExeName}"
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
-Source: "..\dist\GAMO_FM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist_launcher\GAMO_Launcher.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 
 [Icons]

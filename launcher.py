@@ -1,9 +1,9 @@
 import ctypes
 import json
 import os
-import subprocess
 import sys
 import threading
+import webbrowser
 import traceback
 import urllib.request
 from datetime import datetime
@@ -112,7 +112,7 @@ class Launcher(tk.Tk):
         self._fullscreen = False
         self._closing = False
         self._retry_after_id = None
-        self._app_process = None
+        self._cloud_target = None
 
         self.title("GAMO a.s. — Facility Platform")
         self.geometry("1180x720")
@@ -594,63 +594,129 @@ class Launcher(tk.Tk):
         if self.busy or self.launching or not self.online or self._closing:
             return
         self.launching = True
-        self.launch_btn.config(state="disabled", text="Spúšťam GAMO a.s. …")
+        self.launch_btn.config(state="disabled", text="Otváram GAMO a.s. …")
         self.refresh_btn.config(state="disabled")
-        executable = APP_DIR / "GAMO_FM.exe"
-        env = os.environ.copy()
-        env["GAMO_SKIP_UPDATE"] = "1"
-        env["GAMO_CLOUD_VERIFIED"] = "1"
-        if self.server_url:
-            env["GAMO_SERVER_URL"] = self.server_url
-
-        try:
-            if executable.exists():
-                process = subprocess.Popen([str(executable)], cwd=str(APP_DIR), env=env, close_fds=True)
-            else:
-                source = APP_DIR / "desktop.py"
-                if not source.exists():
-                    source = BASE_DIR / "desktop.py"
-                if not source.exists():
-                    raise FileNotFoundError("GAMO_FM.exe sa v inštalácii nenašiel.")
-                process = subprocess.Popen([sys.executable, str(source)], cwd=str(source.parent), env=env, close_fds=True)
-            self._app_process = process
-            self.set_status("Spúšťam aplikáciu…", "Overujem, že desktop klient zostal stabilne spustený.", "checking")
-            self._post(1800, lambda p=process: self._verify_app_started(p))
-        except Exception as exc:
-            self.launching = False
-            self.launch_btn.config(state="normal", text="Spustiť GAMO a.s.  →")
-            self.refresh_btn.config(state="normal")
-            write_log(f"Application launch failed: {exc}")
-            messagebox.showerror(
-                "GAMO a.s. — Launcher",
-                f"Aplikáciu sa nepodarilo spustiť.\n\n{exc}",
-                parent=self,
-            )
-
-    def _verify_app_started(self, process):
-        if self._closing or process is not self._app_process:
-            return
-        code = process.poll()
-        if code is None:
-            write_log(f"Desktop client started successfully · pid={process.pid}")
-            self._close()
-            return
-        self.launching = False
-        self._app_process = None
-        self.launch_btn.config(state="normal", text="Spustiť GAMO a.s.  →")
-        self.refresh_btn.config(state="normal")
-        write_log(f"Desktop client exited during startup · code={code}")
         self.set_status(
-            "Desktop klient sa nespustil",
-            "Proces sa ukončil hneď po štarte. Otvor Diagnostiku a pošli launcher.log podpore.",
-            "offline",
+            "Otváram GAMO Cloud…",
+            "Launcher sa zmení na desktop klient bez spúšťania ďalšieho EXE súboru.",
+            "checking",
         )
-        messagebox.showerror(
-            "GAMO a.s. — Launcher",
-            "Desktop klient sa ukončil počas štartu.\n\n"
-            "Klikni na Diagnostika a pošli súbor launcher.log podpore.",
-            parent=self,
+        self._cloud_target = self.server_url
+        write_log(f"Cloud client handoff prepared · {self.server_url}")
+        self._post(120, self._close)
+
+
+class CloudClientApi:
+    """Native window controls exposed to the cloud UI in the same launcher process."""
+
+    def __init__(self):
+        self.window = None
+
+    def bind_window(self, window):
+        self.window = window
+
+    def toggle_fullscreen(self):
+        try:
+            if self.window:
+                self.window.toggle_fullscreen()
+                return True
+        except Exception as exc:
+            write_log(f"Fullscreen toggle failed: {exc}")
+        return False
+
+    def maximize(self):
+        try:
+            if self.window:
+                self.window.maximize()
+                return True
+        except Exception as exc:
+            write_log(f"Window maximize failed: {exc}")
+        return False
+
+    def restore(self):
+        try:
+            if self.window:
+                self.window.restore()
+                return True
+        except Exception as exc:
+            write_log(f"Window restore failed: {exc}")
+        return False
+
+
+def _show_cloud_window(window):
+    try:
+        window.maximize()
+    except Exception as exc:
+        write_log(f"Initial maximize skipped: {exc}")
+
+
+def _show_cloud_fallback_error(url, detail):
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showwarning(
+            "GAMO a.s. — Desktop klient",
+            "Natívne okno GAMO sa na tomto počítači nepodarilo otvoriť.\n\n"
+            "Aplikáciu som preto otvoril v predvolenom webovom prehliadači.\n\n"
+            f"Detail: {detail}\n\n{url}",
+            parent=root,
         )
+        root.destroy()
+    except Exception:
+        pass
+
+
+def open_cloud_client(url):
+    """Open GAMO Cloud inside the launcher process.
+
+    No second application executable is spawned. This avoids Windows
+    Application Control blocking a legacy child executable while preserving the
+    installed desktop experience. The browser fallback does not weaken or
+    bypass Windows security policy.
+    """
+    try:
+        import webview
+
+        api = CloudClientApi()
+        window = webview.create_window(
+            f"GAMO a.s. {current_version()} — Facility Platform",
+            url,
+            width=1500,
+            height=920,
+            min_size=(1100, 700),
+            resizable=True,
+            confirm_close=False,
+            text_select=True,
+            js_api=api,
+        )
+        api.bind_window(window)
+        write_log("Opening single-process GAMO Cloud client.")
+        webview.start(_show_cloud_window, window, debug=False)
+        return True
+    except Exception as exc:
+        detail = str(exc)
+        write_log(f"Native cloud client failed: {detail}")
+        try:
+            opened = bool(webbrowser.open(url, new=1))
+        except Exception as browser_exc:
+            write_log(f"Browser fallback failed: {browser_exc}")
+            opened = False
+        if opened:
+            _show_cloud_fallback_error(url, detail)
+            return False
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "GAMO a.s. — Desktop klient",
+                "Aplikáciu sa nepodarilo otvoriť ani v natívnom okne, ani v prehliadači.\n\n"
+                "Skontroluj Microsoft Edge WebView2 Runtime alebo kontaktuj správcu.",
+                parent=root,
+            )
+            root.destroy()
+        except Exception:
+            pass
+        return False
 
 
 def main():
@@ -661,6 +727,9 @@ def main():
     app = Launcher()
     app._mutex = mutex
     app.mainloop()
+    target = getattr(app, "_cloud_target", None)
+    if target:
+        open_cloud_client(target)
 
 
 if __name__ == "__main__":
