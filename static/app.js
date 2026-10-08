@@ -107,12 +107,41 @@ async function wireRecordPickers(host){
  }
  for(const s of assets)await loadAssetOptions(s,s.dataset.preferred||'',s.dataset.optional==='1',s.dataset.exclude||'');
 }
+const FORM_SECTIONS={
+ asset:[
+  {before:'asset_id',title:'Identifikácia',hint:'Permanentné ID, Asset Tag a názov zariadenia.'},
+  {before:'building_id',title:'Umiestnenie',hint:'Budova → podlažie → miestnosť. Výbery sú navzájom previazané.'},
+  {before:'profession',title:'Klasifikácia technológie',hint:'Profesia, skupina a typ zariadenia.'},
+  {before:'manufacturer',title:'Technické údaje',hint:'Výrobca, model, výrobné číslo a systémové väzby.'},
+  {before:'status',title:'Prevádzka & servis',hint:'Stav, kritickosť, intervaly, cena a životný cyklus.'},
+  {before:'ip',title:'Integrácia & poznámky',hint:'Sieťové údaje a doplňujúci technický kontext.'}
+ ],
+ workorder:[
+  {before:'asset_id',title:'Servisný objekt',hint:'Zariadenie, ktorého sa zásah týka.'},
+  {before:'title',title:'Workflow zásahu',hint:'Typ, priorita, stav a termín.'},
+  {before:'supplier',title:'Realizácia & náklady',hint:'Dodávateľ, technik, cena a popis vykonanej práce.'}
+ ],
+ incident:[
+  {before:'asset_id',title:'Dotknuté zariadenie',hint:'Asset, na ktorom bola udalosť nahlásená.'},
+  {before:'title',title:'Incident',hint:'Názov, závažnosť, stav a dátum nahlásenia.'},
+  {before:'impact',title:'Dopad & príčina',hint:'Prevádzkový dopad, koreňová príčina a náklady.'}
+ ],
+ building:[{before:'code',title:'Identita objektu',hint:'Kód, názov, adresa a zodpovedný správca.'}],
+ room:[{before:'floor_id',title:'Priestor',hint:'Podlažie, kód, názov, plocha, nájomca a zóna.'}],
+ floor:[{before:'building_id',title:'Podlažie',hint:'Budova, kód podlažia a používateľský názov.'}],
+ user:[{before:'name',title:'Používateľský účet',hint:'Identita, rola, stav a dočasné heslo.'}]
+};
+function formSectionFor(type,name){
+ const list=FORM_SECTIONS[type]||[];return list.find(x=>x.before===name)||null;
+}
 function modal(t,editData=null){
  const f=defs[t],host=document.querySelector('#fields');if(!f||!host)return;
  const editing=!!(editData&&editData.id);let h='<div class="formgrid">';
  f.forEach((raw,i)=>{
   const a={...fieldDef(raw)};
   if(editing&&Object.prototype.hasOwnProperty.call(editData,a.name))a.value=editData[a.name]??'';
+  const section=formSectionFor(t,a.name);
+  if(section)h+=`<div class="form-section-title full"><div><b>${escapeHtml(section.title)}</b><small>${escapeHtml(section.hint)}</small></div></div>`;
   if(editing&&((t==='building'&&a.name==='floors_count')||(t==='floor'&&a.name==='building_id')||(t==='room'&&a.name==='floor_id')))return;
   const full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;
   const required=(a.required===true||((a.required!==false)&&i<2))?' required':'';
@@ -127,7 +156,7 @@ function modal(t,editData=null){
    const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.placeholder?`placeholder="${escapeHtml(a.placeholder)}"`:'',a.name==='password'?'minlength="10" autocomplete="new-password"':''].filter(Boolean).join(' ');
    control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value??'')}"${required} ${attrs}>`;
   }
-  h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}${a.help?`<small class="field-help">${escapeHtml(a.help)}</small>`:''}</div>`;
+  h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}${required?'<em class="required-mark">povinné</em>':''}</label>${control}${a.help?`<small class="field-help">${escapeHtml(a.help)}</small>`:''}</div>`;
  });
  h+='</div>';host.innerHTML=h;wireRecordPickers(host);
  const form=document.querySelector('#mform');form.action=editing?'/edit/'+t+'/'+editData.id:'/add/'+t;form.method='post';
@@ -282,8 +311,19 @@ async function refreshTicketInboxState(initial=false){
   const kpi=document.querySelector('#ticketInboxUnread');if(kpi)kpi.textContent=String(data.unread||0);
   if(initial||!previous){list.dataset.inboxVersion=data.version||'';return}
   if(String(data.version||'')!==String(previous)){
-   document.querySelector('#ticketInboxRefreshHint')?.removeAttribute('hidden');
+   const hint=document.querySelector('#ticketInboxRefreshHint');
+   const active=document.activeElement;
+   const typing=!!(active&&['INPUT','TEXTAREA','SELECT'].includes(active.tagName));
+   const modalOpen=!!document.querySelector('.modal.show');
    document.title=document.title.startsWith('● ')?document.title:'● '+document.title;
+   if(!typing&&!modalOpen&&!document.hidden){
+    list.dataset.inboxVersion=data.version||'';
+    if(hint){hint.hidden=false;hint.textContent='↻ Nová aktivita · obnovujem…'}
+    clearTimeout(window.GAMO_TICKET_AUTO_RELOAD);
+    window.GAMO_TICKET_AUTO_RELOAD=setTimeout(()=>location.reload(),650);
+   }else if(hint){
+    hint.hidden=false;hint.textContent='↻ Nová aktivita · načítať';
+   }
   }
  }catch(_){}
 }
@@ -294,7 +334,7 @@ function initTicketInboxWatch(){
  const tick=()=>{clearTimeout(window.GAMO_TICKET_INBOX_TIMER);window.GAMO_TICKET_INBOX_TIMER=setTimeout(async()=>{
   if(!running){running=true;try{await refreshTicketInboxState(false)}finally{running=false}}
   tick()
- },document.hidden?60000:15000)};
+ },document.hidden?45000:5000)};
  tick();document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTicketInboxState(false)});
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_INBOX_TIMER));
 }
@@ -525,7 +565,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 function twinWorld(){return document.querySelector('.dt2-world')}
 function twinApply(){
  const w=twinWorld();if(!w)return;
- const angle=parseFloat(w.dataset.angle||'-28'),tilt=Math.max(18,Math.min(76,parseFloat(w.dataset.tilt||'58'))),zoom=Math.max(.62,Math.min(1.7,parseFloat(w.dataset.zoom||'1')));
+ let angle=parseFloat(w.dataset.angle||'-28');angle=((angle+540)%360)-180;
+ const tilt=Math.max(18,Math.min(76,parseFloat(w.dataset.tilt||'58'))),zoom=Math.max(.62,Math.min(1.7,parseFloat(w.dataset.zoom||'1')));
  w.dataset.angle=String(angle);w.dataset.tilt=String(tilt);w.dataset.zoom=String(zoom);
  w.style.setProperty('--dt2-angle',angle+'deg');w.style.setProperty('--dt2-tilt',tilt+'deg');w.style.setProperty('--dt2-zoom',zoom.toFixed(2));
  const needle=document.querySelector('.dt2-compass i');if(needle)needle.style.transform='rotate('+(-angle)+'deg)';
