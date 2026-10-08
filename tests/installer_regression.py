@@ -11,6 +11,9 @@ assert '/F /T /IM "{#MyAppExeName}"' in iss
 assert 'restartreplace' in iss
 assert 'function PrepareToInstall(var NeedsRestart: Boolean): String;' in iss
 assert 'ForceCloseLauncher();' in iss
+assert 'Source: "..\\dist\\GAMO_FM\\*"' not in iss
+assert 'Type: files; Name: "{app}\\{#MyAppExeName}"' in iss
+assert 'Type: filesandordirs; Name: "{app}\\_internal"' in iss
 assert f'#define MyAppVersion "{version}"' in iss
 
 print("Installer self-update regression checks OK")
