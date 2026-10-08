@@ -91,7 +91,7 @@ page1 = client.get("/assets?q=PERF-&page=1")
 assert page1.status_code == 200
 assert b"PERF-000001" in page1.data
 assert b"PERF-000130" not in page1.data
-assert b"130 z" in page1.data or b"130 zÃ¡znamov" in page1.data
+assert "130 záznamov" in page1.get_data(as_text=True)
 
 page2 = client.get("/assets?q=PERF-&page=2")
 assert page2.status_code == 200
@@ -124,6 +124,6 @@ oversized = client.post(
     content_type="application/octet-stream",
 )
 assert oversized.status_code == 413
-assert b"SÃºbor je prÃ­liÅ¡ veÄ¾kÃ½" in oversized.data or b"16 MB" in oversized.data
+assert "16 MB" in oversized.get_data(as_text=True)
 
 print("GAMO performance regression OK")
