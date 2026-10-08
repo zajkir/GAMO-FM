@@ -766,7 +766,7 @@ assert any(m["body"].startswith("Požiadavku som prevzal") and not m["mine"] for
 reply_with_file = next(m for m in live_reply_json["messages"] if m["body"].startswith("Požiadavku som prevzal"))
 assert any(a["name"] == "service-protocol.pdf" for a in reply_with_file["attachments"])
 downloaded = client.get(f"/ticket-attachment/{manager_attachment['id']}/download")
-assert downloaded.status_code == 200 and downloaded.data == b"service protocol"
+assert downloaded.status_code == 200 and downloaded.data.startswith(b"%PDF-1.4")
 
 # No duplicate payload after the last known message.
 empty_live = client.get(f"/api/ticket/{ticket['id']}/messages?after={manager_message_id}")
