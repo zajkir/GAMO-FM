@@ -6,6 +6,7 @@ try:
  from psycopg.rows import dict_row
 except ImportError:
  psycopg=None; dict_row=None
+DB_INTEGRITY_ERRORS=(sqlite3.IntegrityError,)+( (psycopg.IntegrityError,) if psycopg else () )
 from functools import wraps
 import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -265,7 +266,7 @@ def generate_maintenance_plan():
     values(?,?,?,?,?,?,?,?,?,?,?,?)""",(row['asset_db_id'],title,row['kind'],priority,'Plánované',row['due'],'','',0,description,'AUTO',generated_key))
    asset_event(row['asset_db_id'],'WORKORDER_AUTO','Automaticky vytvorený pracovný príkaz',f"{row['kind']} · termín {row['due']}")
    created+=1
-  except IntegrityError:
+  except DB_INTEGRITY_ERRORS:
    skipped+=1
  audit('MAINTENANCE_PLAN_SYNC',f'Vytvorených {created} · preskočených {skipped} · horizont {warning_days} dní')
  return created,skipped
@@ -1151,7 +1152,7 @@ def ticket_create():
  no=next_ticket_no(); now=datetime.utcnow().isoformat(timespec='seconds')+'Z'
  try:
   tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   no=next_ticket_no()
   tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
  mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
@@ -2377,7 +2378,7 @@ def add(what):
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
  except HTTPException:
   raise
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Záznam sa nepodarilo uložiť pre konflikt v databáze. Skontroluj unikátne kódy a identifikátory.','error')
  except ValueError as exc:
   flash(str(exc) or 'Záznam sa nepodarilo uložiť. Skontroluj zadané hodnoty.','error')
@@ -2414,7 +2415,7 @@ def update_user(i):
    session['user_name']=name; session['user_role']=role
   audit('USER_UPDATE',f'{name} · {role} · {status}')
   flash('Používateľ bol úspešne upravený.','success')
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Tento e-mail už používa iný účet.','error')
  return redirect('/admin#usersAdmin')
 
@@ -2505,7 +2506,7 @@ def edit_record(what,i):
   abort(404)
  except HTTPException:
   raise
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Záznam s rovnakým kódom alebo identifikátorom už existuje.','error')
  except (ValueError,TypeError):
   flash('Záznam sa nepodarilo upraviť. Skontroluj povinné polia a zadané hodnoty.','error')
