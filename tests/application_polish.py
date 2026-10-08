@@ -34,6 +34,14 @@ def login(c=client, remember=False):
     return r
 
 
+def planner_rows():
+    with client.session_transaction() as sess:
+        snapshot = dict(sess)
+    with app.app.test_request_context("/maintenance"):
+        app.session.update(snapshot)
+        return app.maintenance_plan_rows()
+
+
 login()
 
 # Branded error handling instead of raw Flask pages.
@@ -110,6 +118,60 @@ r = client.post(
 assert r.status_code in (302, 303)
 asset = app.one("select * from assets where organization_id=? and asset_id=?", (oid, "POL-000001"))
 assert asset
+
+# Preventive maintenance planner: calculate an overdue PM cycle from installation date.
+desired_due = app.date.today() - app.timedelta(days=1)
+installed = app._add_months(desired_due, -6)
+app.x("update assets set installed=?,service_months=?,revision_months=? where id=?", (installed.isoformat(), 6, 12, asset["id"]))
+plan = [x for x in planner_rows() if x["asset_db_id"] == asset["id"]]
+pm = next(x for x in plan if x["kind"] == "PM")
+rev = next(x for x in plan if x["kind"] == "REV")
+assert pm["state"] == "overdue" and pm["due"] == desired_due.isoformat()
+assert rev["due"] == app._add_months(installed, 12).isoformat()
+
+# Planner warnings appear even before an order exists.
+notifications = client.get("/api/notifications").get_json()
+assert any(str(x["key"]).startswith(f"planner:{asset['id']}:PM:") for x in notifications), notifications
+
+# Sync creates exactly one generated workorder and is idempotent.
+r = client.post("/maintenance/generate", data={"_csrf": csrf()}, follow_redirects=False)
+assert r.status_code in (302, 303)
+auto_orders = app.q(
+    "select * from workorders where asset_id=? and kind='PM' and source='AUTO'",
+    (asset["id"],),
+)
+assert len(auto_orders) == 1
+auto_order = auto_orders[0]
+assert auto_order["generated_key"]
+assert str(auto_order["due"])[:10] == desired_due.isoformat()
+
+r = client.post("/maintenance/generate", data={"_csrf": csrf()}, follow_redirects=False)
+assert r.status_code in (302, 303)
+assert app.one(
+    "select count(*) n from workorders where asset_id=? and kind='PM' and source='AUTO'",
+    (asset["id"],),
+)["n"] == 1
+
+# Completing the cycle records completion time and moves the next PM forward.
+r = client.post(
+    f"/status/workorder/{auto_order['id']}",
+    data={"_csrf": csrf(), "status": "Ukončené"},
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+completed = app.one("select completed_at,status from workorders where id=?", (auto_order["id"],))
+assert completed["status"] == "Ukončené" and completed["completed_at"]
+next_pm = next(
+    x for x in planner_rows()
+    if x["asset_db_id"] == asset["id"] and x["kind"] == "PM"
+)
+assert next_pm["last_done"] == str(completed["completed_at"])[:10]
+assert next_pm["due"] == app._add_months(app._as_date(completed["completed_at"]), 6).isoformat()
+
+planner_page = client.get("/maintenance")
+assert planner_page.status_code == 200
+assert b"AUTOMATICK" in planner_page.data
+assert b"POL-000001" in planner_page.data
 
 # Global search is case-insensitive and includes rooms.
 results = client.get("/api/search?q=pol-000001").get_json()
@@ -218,3 +280,7 @@ assert "@media(prefers-reduced-motion:reduce)" in css_source
 assert 'id="confirmModal"' in template_source
 assert 'id="digitalTwinV2"' in template_source
 assert 'id="ticketInboxRefreshHint"' in template_source
+assert 'id="planner"' in template_source
+assert "Preventívna údržba & revízie" in template_source
+assert "/* Preventive maintenance planner */" in css_source
+

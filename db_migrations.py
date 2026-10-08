@@ -1178,6 +1178,30 @@ def _migration_16(db, using_postgres):
            WHERE asset_tag IS NOT NULL AND asset_tag<>''"""
     )
 
+
+def _migration_17(db, using_postgres):
+    """Preventive maintenance planner metadata and idempotent generated workorders."""
+    cols = _columns(db, "workorders", using_postgres)
+    additions = {
+        "source": "TEXT DEFAULT 'MANUAL'",
+        "generated_key": "TEXT",
+        "completed_at": "TIMESTAMPTZ" if using_postgres else "TEXT",
+    }
+    for column, definition in additions.items():
+        if column not in cols:
+            db.execute(f"ALTER TABLE workorders ADD COLUMN {column} {definition}")
+
+    db.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS uq_workorders_generated_key
+           ON workorders(generated_key)
+           WHERE generated_key IS NOT NULL AND generated_key<>''"""
+    )
+    db.execute(
+        """CREATE INDEX IF NOT EXISTS idx_workorders_planner
+           ON workorders(asset_id,kind,status,due,completed_at)"""
+    )
+
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -1195,6 +1219,7 @@ MIGRATIONS = (
     (14, "asset_documents_and_ticket_attachments", _migration_14),
     (15, "remembered_devices_and_performance_indexes", _migration_15),
     (16, "asset_tag_identity", _migration_16),
+    (17, "preventive_maintenance_planner", _migration_17),
 )
 
 
