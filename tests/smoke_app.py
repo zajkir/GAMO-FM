@@ -153,6 +153,7 @@ r = client.post(
     data={
         "_csrf": csrf(),
         "asset_id": "QA-000001",
+        "asset_tag": "QA-TAG-001",
         "name": "Smoke Asset",
         "building_id": str(building["id"]),
         "floor_id": str(floor["id"]),
@@ -165,11 +166,16 @@ r = client.post(
         "service_months": "6",
         "revision_months": "12",
         "purchase_price": "1250.50",
+        "installed": "2026-01-15",
+        "warranty": "2028-01-15",
     },
 )
 assert r.status_code in (302, 303)
 asset = app.one("select * from assets where asset_id=? and organization_id=?", ("QA-000001", gamo_org_id))
 assert asset
+assert asset["asset_tag"] == "QA-TAG-001"
+assert str(asset["installed"])[:10] == "2026-01-15"
+assert str(asset["warranty"])[:10] == "2028-01-15"
 
 # Regression: new asset may leave Asset ID empty; server must generate a tenant-safe ID.
 expected_auto_id = client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"]
@@ -255,12 +261,13 @@ r = client.post(
         "reported": "2026-10-07",
         "impact": "Test",
         "cause": "Smoke",
+        "solution": "Reset riadenia a kontrola napájania",
         "cost": "10.10",
     },
 )
 assert r.status_code in (302, 303)
 incident = app.one("select * from incidents where asset_id=? and title=?", (asset["id"], "QA incident"))
-assert incident
+assert incident and incident["solution"] == "Reset riadenia a kontrola napájania"
 
 # Regression: resolved incidents and cancelled workorders are not active,
 # overdue or notification-worthy anywhere in the application.
@@ -287,8 +294,8 @@ assert not any(x.get("title") == "QA resolved incident" for x in active_notifica
 assert not any(x.get("title") == "QA cancelled overdue" for x in active_notifications)
 # Legacy NULL room area must not break the Digital Twin aggregation.
 null_room_id = app.x(
-    "insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",
-    (floor["id"], "NULL-AREA", "Legacy room without area", None, "GAMO", "LEGACY"),
+    "insert into rooms(floor_id,code,name,area,tenant,zone,organization_id) values(?,?,?,?,?,?,?)",
+    (floor["id"], "NULL-AREA", "Legacy room without area", None, "GAMO", "LEGACY", gamo_org_id),
 )
 building_page = client.get(f"/building/{building['id']}")
 assert building_page.status_code == 200
@@ -328,17 +335,18 @@ room = app.one("select * from rooms where id=?", (room["id"],))
 assert room["name"] == "QA Room Edited" and float(room["area"]) == 44.5 and room["zone"] == "SECURE"
 
 asset_edit = {
-    "_csrf": csrf(), "asset_id": "QA-000001", "name": "Smoke Asset Edited",
+    "_csrf": csrf(), "asset_id": "QA-000001", "asset_tag": "QA-TAG-EDITED", "name": "Smoke Asset Edited",
     "building_id": str(building["id"]), "floor_id": str(floor["id"]), "room_id": str(room["id"]),
     "profession": "ELE", "grp": "QA", "type": "TEST", "manufacturer": "GAMO QA",
     "model": "M2", "serial": "QA-SERIAL", "system_id": "QA-SYS", "parent_id": "",
     "status": "Servis", "criticality": "A", "service_months": "3", "revision_months": "6",
-    "purchase_price": "1500.25", "ip": "10.0.0.10", "protocol": "HTTPS", "notes": "Edited by smoke test"
+    "purchase_price": "1500.25", "installed": "2026-02-01", "warranty": "2029-02-01", "ip": "10.0.0.10", "protocol": "HTTPS", "notes": "Edited by smoke test"
 }
 r = client.post(f"/edit/asset/{asset['id']}", data=asset_edit, follow_redirects=False)
 assert r.status_code in (302, 303)
 asset = app.one("select * from assets where id=?", (asset["id"],))
 assert asset["name"] == "Smoke Asset Edited" and asset["status"] == "Servis" and asset["criticality"] == "A"
+assert asset["asset_tag"] == "QA-TAG-EDITED" and str(asset["installed"])[:10] == "2026-02-01" and str(asset["warranty"])[:10] == "2029-02-01"
 assert float(asset["purchase_price"]) == 1500.25
 building_after_asset_edit = client.get(f"/building/{building['id']}#twin")
 assert building_after_asset_edit.status_code == 200
@@ -491,10 +499,13 @@ assert app.one_system("select name from users where id=?", (gamo_admin["id"],))[
 r = client.get("/reports/export.xlsx")
 assert r.status_code == 200
 book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
-for sheet in ("Súhrn", "Assety", "Údržba", "Incidenty", "Po termíne"):
+for sheet in ("Súhrn", "Budovy", "Assety", "Údržba", "Incidenty", "Po termíne"):
     assert sheet in book.sheetnames
 assert book["Súhrn"]["A1"].value.startswith("GAMO FACILITY REPORT")
-assert "QA-000001" in [cell.value for row in book["Assety"].iter_rows() for cell in row]
+asset_export_values = [cell.value for row in book["Assety"].iter_rows() for cell in row]
+assert "QA-000001" in asset_export_values
+assert "QA-TAG-EDITED" in asset_export_values
+assert "SMK" in [cell.value for row in book["Budovy"].iter_rows() for cell in row]
 assert len(book["Súhrn"]._charts) >= 1
 expected_open_incidents = app.one(
     """select count(*) n from incidents i join assets a on a.id=i.asset_id
@@ -842,6 +853,8 @@ with zipfile.ZipFile(io.BytesIO(backup_bytes), "r") as z:
     assert "data/ticket_messages.json" in z.namelist()
     assert "data/asset_documents.json" in z.namelist()
     assert "data/ticket_attachments.json" in z.namelist()
+    assert "data/workorder_attachments.json" in z.namelist()
+    assert "data/incident_attachments.json" in z.namelist()
     ticket_export = json.loads(z.read("data/tickets.json"))
     assert any(t["ticket_no"] == ticket["ticket_no"] for t in ticket_export)
     attachment_export = json.loads(z.read("data/ticket_attachments.json"))
