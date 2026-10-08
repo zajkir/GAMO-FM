@@ -15,6 +15,7 @@ on:
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
+      - 'tests/update_flow_regression.py'
       - '.github/workflows/build-windows.yml'
   push:
     branches:
@@ -30,6 +31,8 @@ on:
       - 'tests/launcher_ui_static.py'
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
+      - 'tests/release_workflow_static.py'
+      - 'tests/update_flow_regression.py'
       - '.github/workflows/build-windows.yml'
 
 permissions:
@@ -59,6 +62,7 @@ jobs:
           python tests/desktop_window_static.py
           python tests/installer_regression.py
           python tests/release_workflow_static.py
+          python tests/update_flow_regression.py
 
       - name: Build GAMO single-process cloud client
         run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_Launcher --distpath dist_launcher --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." launcher.py
@@ -115,6 +119,7 @@ jobs:
           - Cloud health check and native WebView window
           - Safe browser fallback when WebView2 is unavailable
           - Verified automatic updates with SHA-256 validation
+          - Reliable silent self-update with installer result logging and automatic launcher relaunch
           - Tenant-isolated cloud application with MFA, Privacy Center, ticket messaging and Digital Twin
           "@
 

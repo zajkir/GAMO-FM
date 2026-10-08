@@ -44,6 +44,8 @@ jobs:
         run: python tests/launcher_ui_static.py
       - name: Check installer self-update regression
         run: python tests/installer_regression.py
+      - name: Check updater relaunch regression
+        run: python tests/update_flow_regression.py
       - name: Run SQLite smoke tests
         run: python tests/smoke_app.py
       - name: Create non-superuser PostgreSQL app role

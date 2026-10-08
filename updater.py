@@ -145,32 +145,156 @@ def restore_latest_backup():
     return backups[0]
 
 
+def update_state_dir():
+    base = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAMO_FM' / 'updates'
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def update_result_path():
+    return update_state_dir() / 'last_update.json'
+
+
+def consume_update_result():
+    """Read and remove the result written by the detached update helper."""
+    path = update_result_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding='utf-8-sig'))
+    except Exception:
+        data = {'status': 'failed', 'message': 'Výsledok aktualizácie sa nepodarilo načítať.'}
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return data
+
+
 def launch_installer(path):
-    flags = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS']
-    subprocess.Popen([str(path), *flags], close_fds=True)
+    flags = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/CLOSEAPPLICATIONS', '/NORESTART']
+    return subprocess.Popen([str(path), *flags], close_fds=True)
 
 
-def launch_installer_after_process_exit(path, process_id=None):
-    """Start the installer only after the launcher process has fully exited.
+def launch_installer_after_process_exit(path, process_id=None, relaunch_path=None, version=''):
+    """Install a verified update after the current launcher exits, then relaunch.
 
-    This prevents Inno Setup from detecting GAMO_Launcher.exe as a file-in-use
-    application during self-update. On Windows a tiny hidden PowerShell helper
-    waits for the launcher PID and then starts the verified installer.
+    A detached PowerShell helper owns the handoff because Windows cannot replace
+    GAMO_Launcher.exe while that executable is still running. The helper waits
+    for this PID, runs Inno Setup synchronously, writes a durable result file,
+    and starts the newly-installed launcher. If Setup fails or Windows blocks it,
+    the previous launcher is started again so the user sees the failure instead
+    of the application simply disappearing.
     """
     if os.name != 'nt' or not process_id:
-        return launch_installer(path)
+        process = launch_installer(path)
+        return process
 
     installer = str(Path(path).resolve())
+    relaunch = str(Path(relaunch_path or (APP_DIR / 'GAMO_Launcher.exe')).resolve())
     pid = int(process_id)
-    ps_script = (
-        f"$ErrorActionPreference='SilentlyContinue'; "
-        f"Wait-Process -Id {pid}; "
-        f"Start-Process -FilePath {json.dumps(installer)} "
-        f"-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CLOSEAPPLICATIONS','/NORESTART'"
+    state_dir = update_state_dir()
+    result_file = str(update_result_path())
+    log_file = str(state_dir / 'update_helper.log')
+    helper = state_dir / f'update_helper_{datetime.now().strftime("%Y%m%d_%H%M%S")}.ps1'
+
+    script = r'''param(
+  [int]$LauncherPid,
+  [string]$Installer,
+  [string]$Relaunch,
+  [string]$ResultFile,
+  [string]$LogFile,
+  [string]$TargetVersion
+)
+$ErrorActionPreference = 'Stop'
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    $stamp = (Get-Date).ToString('s')
+    Add-Content -LiteralPath $LogFile -Value "$stamp  $Message" -Encoding UTF8
+  } catch {}
+}
+
+function Save-Result([string]$Status, [string]$Message, [int]$ExitCode) {
+  try {
+    $payload = [ordered]@{
+      status = $Status
+      message = $Message
+      exit_code = $ExitCode
+      version = $TargetVersion
+      finished_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    } | ConvertTo-Json
+    $payload | Set-Content -LiteralPath $ResultFile -Encoding UTF8
+  } catch {}
+}
+
+try {
+  Write-UpdateLog "Waiting for launcher PID $LauncherPid to exit."
+  Wait-Process -Id $LauncherPid -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 900
+
+  if (-not (Test-Path -LiteralPath $Installer)) {
+    throw "Verified installer file is missing: $Installer"
+  }
+
+  Write-UpdateLog "Starting installer: $Installer"
+  $setup = Start-Process -FilePath $Installer -ArgumentList @(
+    '/VERYSILENT',
+    '/SUPPRESSMSGBOXES',
+    '/CLOSEAPPLICATIONS',
+    '/NORESTART'
+  ) -Wait -PassThru
+
+  $code = [int]$setup.ExitCode
+  Write-UpdateLog "Installer exited with code $code."
+
+  if ($code -eq 0) {
+    Save-Result 'success' "Aktualizácia $TargetVersion bola úspešne nainštalovaná." $code
+  } else {
+    Save-Result 'failed' "Inštalátor skončil s kódom $code." $code
+  }
+} catch {
+  $message = $_.Exception.Message
+  Write-UpdateLog "Update helper failed: $message"
+  Save-Result 'failed' $message -1
+} finally {
+  try {
+    if (Test-Path -LiteralPath $Relaunch) {
+      Write-UpdateLog "Relaunching: $Relaunch"
+      Start-Process -FilePath $Relaunch
+    } else {
+      Write-UpdateLog "Relaunch executable not found: $Relaunch"
+    }
+  } catch {
+    Write-UpdateLog "Relaunch failed: $($_.Exception.Message)"
+  }
+  try { Remove-Item -LiteralPath $Installer -Force -ErrorAction SilentlyContinue } catch {}
+}
+'''
+    helper.write_text(script, encoding='utf-8-sig')
+
+    creationflags = (
+        getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        | getattr(subprocess, 'DETACHED_PROCESS', 0)
     )
-    creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) | getattr(subprocess, 'DETACHED_PROCESS', 0)
     subprocess.Popen(
-        ['powershell.exe', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps_script],
+        [
+            'powershell.exe',
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-WindowStyle',
+            'Hidden',
+            '-File',
+            str(helper),
+            str(pid),
+            installer,
+            relaunch,
+            result_file,
+            log_file,
+            str(version or ''),
+        ],
         close_fds=True,
         creationflags=creationflags,
     )

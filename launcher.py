@@ -17,6 +17,7 @@ from updater import (
     current_version,
     download_update,
     launch_installer_after_process_exit,
+    consume_update_result,
 )
 
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -132,7 +133,9 @@ class Launcher(tk.Tk):
         self._center()
         self._build_styles()
         self._build_ui()
-        self._post(220, self.refresh_status)
+        self._update_result = consume_update_result()
+        self._post(120, self._show_previous_update_result)
+        self._post(320, self.refresh_status)
 
     def _center(self):
         self.update_idletasks()
@@ -198,6 +201,41 @@ class Launcher(tk.Tk):
         self._retry_after_id = None
         if not self._closing and not self.busy and not self.online:
             self.refresh_status()
+
+    def _show_previous_update_result(self):
+        result = self._update_result
+        self._update_result = None
+        if not result or self._closing:
+            return
+        status = str(result.get("status", "")).lower()
+        version = str(result.get("version", "")).strip()
+        message = str(result.get("message", "")).strip()
+        exit_code = result.get("exit_code")
+        if status == "success":
+            write_log(f"Update completed successfully · v{version or current_version()} · code={exit_code}")
+            try:
+                messagebox.showinfo(
+                    "GAMO a.s. — Aktualizácia",
+                    f"Aktualizácia na verziu {version or current_version()} bola úspešne dokončená.\n\n"
+                    "Launcher sa automaticky znovu spustil a môžeš pokračovať.",
+                    parent=self,
+                )
+            except Exception:
+                pass
+        else:
+            write_log(f"Previous update failed · v{version or '?'} · code={exit_code} · {message}")
+            try:
+                messagebox.showerror(
+                    "GAMO a.s. — Aktualizácia zlyhala",
+                    "Aktualizáciu sa nepodarilo dokončiť. Launcher bol znovu spustený, "
+                    "takže aplikácia nezostane zatvorená.\n\n"
+                    f"Detail: {message or 'Neznáma chyba'}\n"
+                    f"Kód: {exit_code if exit_code is not None else '—'}\n\n"
+                    "Klikni na Diagnostika a pošli update_helper.log, ak sa chyba zopakuje.",
+                    parent=self,
+                )
+            except Exception:
+                pass
 
     def open_diagnostics(self):
         folder = log_path().parent
@@ -571,13 +609,21 @@ class Launcher(tk.Tk):
                 progress=lambda value: self._post(0, lambda v=value: self.progress_var.set(v)),
             )
             backup_user_data("pre_update")
+            version = str(self.update_manifest.get("version", "")).strip()
             self._post(0, lambda: self.set_status(
                 "Aktualizácia je pripravená",
-                "Spúšťam overený inštalátor.",
-                "online",
+                "Launcher sa zavrie, nainštaluje aktualizáciu a automaticky sa znovu spustí.",
+                "update",
             ))
-            launch_installer_after_process_exit(installer, os.getpid())
-            self._post(80, self._close)
+            relaunch = APP_DIR / "GAMO_Launcher.exe"
+            launch_installer_after_process_exit(
+                installer,
+                os.getpid(),
+                relaunch_path=relaunch,
+                version=version,
+            )
+            write_log(f"Update handoff created · target=v{version} · installer={installer}")
+            self._post(450, self._close)
         except Exception as exc:
             write_log(f"Update failed: {exc}")
             self._post(0, lambda e=str(exc): self._update_failed(e))
