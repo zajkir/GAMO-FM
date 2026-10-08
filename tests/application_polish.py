@@ -39,7 +39,7 @@ def planner_rows():
         snapshot = dict(sess)
     with app.app.test_request_context("/maintenance"):
         app.session.update(snapshot)
-        return planner_rows()
+        return app.maintenance_plan_rows()
 
 
 login()
@@ -123,7 +123,7 @@ assert asset
 desired_due = app.date.today() - app.timedelta(days=1)
 installed = app._add_months(desired_due, -6)
 app.x("update assets set installed=?,service_months=?,revision_months=? where id=?", (installed.isoformat(), 6, 12, asset["id"]))
-plan = [x for x in app.maintenance_plan_rows() if x["asset_db_id"] == asset["id"]]
+plan = [x for x in planner_rows() if x["asset_db_id"] == asset["id"]]
 pm = next(x for x in plan if x["kind"] == "PM")
 rev = next(x for x in plan if x["kind"] == "REV")
 assert pm["state"] == "overdue" and pm["due"] == desired_due.isoformat()
@@ -162,7 +162,7 @@ assert r.status_code in (302, 303)
 completed = app.one("select completed_at,status from workorders where id=?", (auto_order["id"],))
 assert completed["status"] == "Ukončené" and completed["completed_at"]
 next_pm = next(
-    x for x in app.maintenance_plan_rows()
+    x for x in planner_rows()
     if x["asset_db_id"] == asset["id"] and x["kind"] == "PM"
 )
 assert next_pm["last_done"] == str(completed["completed_at"])[:10]
