@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.15"
+#define MyAppVersion "9.0.0.16"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -46,10 +46,18 @@ Name: "{autodesktop}\GAMO a.s."; Filename: "{app}\{#MyLauncherExeName}"; Tasks: 
 Name: "desktopicon"; Description: "Vytvoriť ikonu na ploche"; GroupDescription: "Ďalšie možnosti:"; Flags: checkedonce
 
 [Run]
-Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launcher"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launcher"; Flags: nowait postinstall; Check: ShouldLaunchAfterInstall
 
 
 [Code]
+function ShouldLaunchAfterInstall(): Boolean;
+begin
+  { Old launchers do not pass NOLAUNCH, so silent upgrades from those versions
+    automatically start the newly installed launcher. New launchers pass
+    /NOLAUNCH=1 because their detached helper owns result reporting + relaunch. }
+  Result := CompareText(ExpandConstant('{param:NOLAUNCH|0}'), '1') <> 0;
+end;
+
 procedure ForceCloseDesktop();
 var
   ResultCode: Integer;
