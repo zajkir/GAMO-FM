@@ -23,7 +23,7 @@ def _load_desktop_config():
     defaults = {
         'mode': 'cloud',
         'server_url': 'https://gamo-fm.onrender.com',
-        'connect_timeout_seconds': 20,
+        'connect_timeout_seconds': 8,
         'allow_local_fallback': False,
     }
     for base in (APP_DIR, BASE_DIR):
@@ -66,9 +66,13 @@ def cloud_available(url, timeout):
     try:
         req = urllib.request.Request(
             url.rstrip('/') + '/login',
-            headers={'User-Agent': f'GAMO-Facility-Desktop/{current_version()}'},
+            method='HEAD',
+            headers={
+                'User-Agent': f'GAMO-Facility-Desktop/{current_version()}',
+                'Cache-Control': 'no-cache',
+            },
         )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with urllib.request.urlopen(req, timeout=max(3, min(10, timeout))) as response:
             return 200 <= response.status < 500
     except Exception as exc:
         print(f'Cloud connectivity check failed: {exc}')
@@ -169,7 +173,8 @@ def main():
     timeout = max(3, int(CONFIG.get('connect_timeout_seconds', 20)))
 
     if mode == 'cloud' and cloud_url.startswith(('https://', 'http://')):
-        if cloud_available(cloud_url, timeout):
+        launcher_verified = os.environ.get('GAMO_CLOUD_VERIFIED') == '1'
+        if launcher_verified or cloud_available(cloud_url, timeout):
             target_url = cloud_url
         elif CONFIG.get('allow_local_fallback'):
             threading.Thread(target=run_local_server, daemon=True, name='GAMO-Local-Server').start()
@@ -197,12 +202,19 @@ def main():
         height=920,
         min_size=(1100, 700),
         resizable=True,
-        confirm_close=True,
+        confirm_close=False,
         text_select=True,
         js_api=api,
     )
     api.bind_window(window)
-    webview.start(_show_desktop_window, window, debug=False)
+    try:
+        webview.start(_show_desktop_window, window, debug=False)
+    except Exception as exc:
+        print(f'Desktop webview failed: {exc}')
+        _show_startup_error(
+            'Desktop okno GAMO sa nepodarilo spustiť.\n\n'
+            'Skús aplikáciu spustiť znova. Ak sa problém opakuje, aktualizuj Microsoft Edge WebView2 Runtime.'
+        )
 
 
 if __name__ == '__main__':
