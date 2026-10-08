@@ -551,6 +551,22 @@ init()
 with con() as c:
  c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
 
+@app.errorhandler(413)
+def request_too_large(error):
+ message='Súbor alebo požiadavka je príliš veľká. Maximálna veľkosť jednej požiadavky je 16 MB.'
+ if request.path.startswith('/api/') or request.headers.get('X-Requested-With'):
+  return jsonify({'ok':False,'error':message}),413
+ return render_template('error.html',code=413,title='Súbor je príliš veľký',message=message),413
+
+@app.errorhandler(500)
+def internal_server_error(error):
+ original=getattr(error,'original_exception',None) or error
+ app.logger.error('Unhandled request error on %s %s: %s',request.method,request.path,original,exc_info=original if isinstance(original,BaseException) else None)
+ message='Požiadavku sa nepodarilo dokončiť. Dáta zostali zachované. Skús stránku obnoviť; ak problém pretrváva, kontaktuj podporu.'
+ if request.path.startswith('/api/') or request.headers.get('X-Requested-With'):
+  return jsonify({'ok':False,'error':message}),500
+ return render_template('error.html',code=500,title='Niečo sa nepodarilo',message=message),500
+
 @app.after_request
 def security_headers(response):
  response.headers['X-Content-Type-Options']='nosniff'
