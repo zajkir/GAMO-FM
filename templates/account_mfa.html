@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="sk">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MFA · {{org.branding_name or org.name}}</title><link rel="stylesheet" href="/static/app.css?v={{app_version}}"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MFA · {{org.branding_name or org.name}}</title><link rel="stylesheet" href="/static/app.css?v={{static_rev}}"></head>
 <body class="mfa-account-page mfa-account-v4" style="--brand:{{org.brand_color or '#E31B23'}}">
  <main class="mfa-account-shell">
   <header class="mfa-account-header"><a href="/" class="mfa-back">← Späť do aplikácie</a><div><span class="admin-kicker">ACCOUNT SECURITY</span><h1>Dvojfaktorové overenie</h1><p>{{current_user.email}} · {{org.name}}</p></div><span class="mfa-state {{'on' if current_user.mfa_enabled else 'off'}}"><i></i>{{'MFA ACTIVE' if current_user.mfa_enabled else 'SETUP REQUIRED'}}</span></header>
