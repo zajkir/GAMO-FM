@@ -43,10 +43,14 @@ print("Launcher retry and diagnostics checks OK")
 
 assert 'def open_cloud_client(url):' in source
 assert 'webview.create_window(' in source
-assert 'webview.start(_show_cloud_window, window, debug=False)' in source
+assert 'webview.start(_show_cloud_window, window, debug=False, gui="edgechromium")' in source
 assert 'webbrowser.open(url, new=1)' in source
 assert 'self._cloud_target = self.server_url' in source
 assert 'subprocess.Popen' not in source
 assert 'GAMO_FM.exe' not in source
 print("Launcher single-process cloud client checks OK")
 
+
+assert 'executable={Path(sys.executable).resolve()}' in source
+assert 'app_dir={APP_DIR}' in source
+print("Launcher path diagnostics checks OK")
