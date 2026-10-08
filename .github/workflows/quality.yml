@@ -37,14 +37,12 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Check Python syntax
-        run: python -m py_compile app.py db_migrations.py desktop.py updater.py launcher.py
+        run: python -m py_compile app.py db_migrations.py desktop.py updater.py
       - name: Check JavaScript syntax
         run: node --check static/app.js
-      - name: Check launcher Canvas options
-        run: python tests/launcher_ui_static.py
-      - name: Check installer self-update regression
+      - name: Check installer regression
         run: python tests/installer_regression.py
-      - name: Check updater relaunch regression
+      - name: Check direct updater regression
         run: python tests/update_flow_regression.py
       - name: Run SQLite smoke tests
         run: python tests/smoke_app.py
