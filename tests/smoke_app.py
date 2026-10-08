@@ -1047,6 +1047,31 @@ assert r.status_code == 400
 client.get("/logout")
 r = login_password("admin@gamo.sk", "TestGamo2026!")
 assert r.status_code in (302, 303)
+# GAMO Super Admin must aggregate platform metadata without opening customer facility content.
+super_admin = client.get("/admin")
+assert super_admin.status_code == 200
+assert b"Super Admin Control Center" in super_admin.data
+assert b"PLATFORM OPERATIONS" in super_admin.data
+assert b"Smoke Customer" in super_admin.data
+assert b"Nefunguje klimatiz" in super_admin.data
+assert b"Private Customer Building" not in super_admin.data
+assert b'data-attention=' in super_admin.data
+
+portfolio_export = client.get("/platform/customers/export.xlsx")
+assert portfolio_export.status_code == 200
+assert portfolio_export.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+portfolio_book = load_workbook(io.BytesIO(portfolio_export.data), read_only=False, data_only=False)
+assert "Zákazníci" in portfolio_book.sheetnames
+assert "Súhrn" in portfolio_book.sheetnames
+customer_sheet_values = [cell.value for row in portfolio_book["Zákazníci"].iter_rows() for cell in row]
+assert "SMOKE" in customer_sheet_values
+assert "Smoke Customer s.r.o." in customer_sheet_values
+assert "Private Customer Building" not in customer_sheet_values
+assert app.one_system(
+    "select count(*) n from audit_log where organization_id=? and action='PLATFORM_CUSTOMERS_EXPORT'",
+    (gamo_org_id,),
+)["n"] >= 1
+
 r = client.get(f"/platform/customer/{customer['id']}")
 assert r.status_code == 200
 assert b"Private Customer Building" not in r.data
