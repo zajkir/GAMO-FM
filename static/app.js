@@ -5,7 +5,9 @@ building:[['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adr
 floor:[{name:'building_id',label:'Budova',type:'building',required:true},['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
 room:[{name:'floor_id',label:'Podlažie',type:'floor',required:true},['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],{name:'area',label:'Plocha m²',type:'number',value:'25',step:'0.01',min:'0'},['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
 asset:[
- {name:'asset_id',label:'Asset ID',type:'text',value:'',required:false,placeholder:'Automaticky podľa profesie'},['name','Názov zariadenia',''],
+ {name:'asset_id',label:'Asset ID',type:'text',value:'',required:false,placeholder:'Automaticky podľa profesie'},
+ {name:'asset_tag',label:'Asset Tag / QR',type:'text',value:'',required:false,placeholder:'Napr. QR-HVAC-001'},
+ ['name','Názov zariadenia',''],
  {name:'building_id',label:'Budova',type:'building',required:true},
  {name:'floor_id',label:'Podlažie',type:'floor',required:true},
  {name:'room_id',label:'Miestnosť',type:'room',required:true},
@@ -19,6 +21,8 @@ asset:[
  {name:'service_months',label:'Servis interval mes.',type:'number',value:'6',min:'0'},
  {name:'revision_months',label:'Revízia interval mes.',type:'number',value:'12',min:'0'},
  {name:'purchase_price',label:'Cena €',type:'number',value:'0',min:'0',step:'0.01'},
+ {name:'installed',label:'Dátum inštalácie',type:'date',value:''},
+ {name:'warranty',label:'Záruka do',type:'date',value:''},
  ['ip','IP adresa',''],['protocol','Protokol',''],['notes','Poznámka','']
 ],
 workorder:[
@@ -34,7 +38,7 @@ incident:[
  {name:'asset_id',label:'Asset',type:'asset',value:currentAsset||'',required:true},['title','Názov incidentu',''],
  {name:'severity',label:'Závažnosť',type:'select',options:['Nízka','Stredná','Vysoká','Kritická','Havária'],value:'Stredná',required:true},
  {name:'status',label:'Stav',type:'select',options:['Otvorená','Pridelená','Rieši sa','Čaká na diel','Vyriešená','Ukončená'],value:'Otvorená',required:true},
- {name:'reported',label:'Nahlásené',type:'date',value:new Date().toISOString().slice(0,10)},['impact','Dopad',''],['cause','Príčina',''],
+ {name:'reported',label:'Nahlásené',type:'date',value:new Date().toISOString().slice(0,10)},['impact','Dopad',''],['cause','Príčina',''],['solution','Riešenie / vykonané opatrenie',''],
  {name:'cost',label:'Náklad €',type:'number',value:'0',min:'0',step:'0.01'}
 ],
 user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'select',options:['Administrator','Facility Manager','Technik','Servisný technik','Viewer'],value:'Technik',required:true},{name:'status',label:'Stav používateľa',type:'select',options:['Aktívny','Neaktívny'],value:'Aktívny',required:true},{name:'password',label:'Dočasné heslo',type:'password',value:'',required:true}]
@@ -110,7 +114,7 @@ function modal(t,editData=null){
   const a={...fieldDef(raw)};
   if(editing&&Object.prototype.hasOwnProperty.call(editData,a.name))a.value=editData[a.name]??'';
   if(editing&&((t==='building'&&a.name==='floors_count')||(t==='floor'&&a.name==='building_id')||(t==='room'&&a.name==='floor_id')))return;
-  const full=['notes','description','impact','cause'].includes(a.name)?'full':'';let control;
+  const full=['notes','description','impact','cause','solution'].includes(a.name)?'full':'';let control;
   const required=(a.required===true||((a.required!==false)&&i<2))?' required':'';
   if(a.type==='select'){
    const opts=[...(a.options||[])];if(editing&&a.value&&!opts.includes(a.value))opts.unshift(a.value);
@@ -142,14 +146,45 @@ function modal(t,editData=null){
  }
 }
 function editRecord(type,data){modal(type,data)}
-function closeM(){document.querySelector('#modal').classList.remove('show')}function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa nedá jednoducho vrátiť späť.'){
- const m=document.querySelector('#confirmModal');if(!m)return window.confirm(title);
+function closeM(){document.querySelector('#modal')?.classList.remove('show')}
+function renderDeleteImpact(data){
+ const impact=document.querySelector('#confirmImpact'),warning=document.querySelector('#confirmServerWarning'),button=document.querySelector('#confirmExecuteButton');
+ if(impact){
+  const items=Array.isArray(data?.items)?data.items:[];
+  impact.innerHTML=items.length?items.map(x=>'<div><span>'+escapeHtml(x.label)+'</span><b>'+escapeHtml(x.count)+'</b></div>').join(''):'<div><span>Naviazané záznamy</span><b>0</b></div>';
+ }
+ if(warning)warning.textContent=data?.warning||'GAMO pred odstránením overí oprávnenia a väzby.';
+ if(button){
+  button.disabled=!!data?.blocked;
+  button.textContent=data?.blocked?'Odstránenie je zablokované':'Áno, odstrániť';
+ }
+ const title=document.querySelector('#confirmTitle');if(title&&data?.title)title.textContent='Odstrániť '+data.title+'?';
+}
+function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa nedá jednoducho vrátiť späť.'){
+ const m=document.querySelector('#confirmModal');if(!m)return false;
  window._gamoConfirmForm=form;
- const t=m.querySelector('#confirmTitle'),d=m.querySelector('#confirmDetail');if(t)t.textContent=title;if(d)d.textContent=detail;
- m.classList.add('show');return false;
+ const t=m.querySelector('#confirmTitle'),d=m.querySelector('#confirmDetail'),impact=m.querySelector('#confirmImpact'),warning=m.querySelector('#confirmServerWarning'),button=m.querySelector('#confirmExecuteButton');
+ if(t)t.textContent=title;if(d)d.textContent=detail;if(impact)impact.innerHTML='<div class="loading-impact">Kontrolujem naviazané dáta…</div>';
+ if(warning)warning.textContent='Overujem dopad operácie na serveri…';
+ if(button){button.disabled=true;button.textContent='Kontrolujem…'}
+ m.classList.add('show');
+ try{
+  const url=new URL(form.action,location.origin),match=url.pathname.match(/^\/delete\/([^/]+)\/(\d+)$/);
+  if(!match){renderDeleteImpact({blocked:true,warning:'Dopad odstránenia sa nepodarilo bezpečne určiť.'});return false}
+  fetch('/api/delete-impact/'+encodeURIComponent(match[1])+'/'+encodeURIComponent(match[2]),{cache:'no-store',headers:{'Accept':'application/json'}})
+   .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
+   .then(renderDeleteImpact)
+   .catch(()=>renderDeleteImpact({blocked:true,warning:'Server nepotvrdil bezpečnosť odstránenia. Skús to znova.'}));
+ }catch(_){renderDeleteImpact({blocked:true,warning:'Dopad odstránenia sa nepodarilo bezpečne určiť.'})}
+ return false;
 }
 function closeConfirm(){document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null}
-function executeConfirm(){const f=window._gamoConfirmForm;if(!f)return;document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null;f.submit()}
+function executeConfirm(){
+ const f=window._gamoConfirmForm,button=document.querySelector('#confirmExecuteButton');if(!f||button?.disabled)return;
+ let confirm=f.querySelector('input[name="_confirm"]');if(!confirm){confirm=document.createElement('input');confirm.type='hidden';confirm.name='_confirm';f.appendChild(confirm)}
+ confirm.value='yes';if(button){button.disabled=true;button.textContent='Odstraňujem…'}
+ document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null;f.submit()
+}
 function filterOpsRows(filter,btn){
  document.querySelectorAll('.ops-filter-btn').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');
  document.querySelectorAll('[data-ops-row]').forEach(row=>{
@@ -333,6 +368,17 @@ document.addEventListener('keydown',e=>{
   window._gamoConfirmForm=null;
  }
 });
+
+function initSubmitLocks(){
+ document.addEventListener('submit',ev=>{
+  const form=ev.target;if(!(form instanceof HTMLFormElement)||form.id==='ticketReplyForm'||form.dataset.noSubmitLock==='1'||ev.defaultPrevented)return;
+  const button=form.querySelector('button[type="submit"],button:not([type]),input[type="submit"]');if(!button||button.disabled)return;
+  const original=button.tagName==='INPUT'?button.value:button.innerHTML;
+  button.dataset.originalLabel=original;button.disabled=true;button.classList.add('loading');
+  if(button.tagName==='INPUT')button.value='Ukladám…';else button.textContent='Ukladám…';
+ });
+}
+document.addEventListener('DOMContentLoaded',initSubmitLocks);
 
 function initFlashMessages(){
  document.querySelectorAll('.flashwrap .flash').forEach((el,index)=>{
