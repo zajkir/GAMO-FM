@@ -18,6 +18,11 @@ from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 BASE=os.path.dirname(os.path.abspath(__file__))
+try:
+    with open(os.path.join(BASE,'version.json'),encoding='utf-8-sig') as _vf:
+        APP_VERSION=str(json.load(_vf).get('version','unknown'))
+except Exception:
+    APP_VERSION='unknown'
 if os.environ.get('GAMO_DESKTOP') == '1':
     DATA_DIR=os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'GAMO_FM', 'data')
 else:
@@ -2133,7 +2138,7 @@ def api_health():
  ok=db_ok
  return jsonify({
   'status':'online' if ok else 'degraded','database':'online' if db_ok else 'offline','api':'online',
-  'database_ms':db_ms,'response_ms':round((time.time()-started)*1000,1),'version':'9.0.0.5','counts':counts,
+  'database_ms':db_ms,'response_ms':round((time.time()-started)*1000,1),'version':APP_VERSION,'counts':counts,
   'database_engine':'PostgreSQL' if USING_POSTGRES else 'SQLite','checked_at':datetime.now().isoformat(timespec='seconds')
  }), (200 if ok else 503)
 

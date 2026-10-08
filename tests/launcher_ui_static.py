@@ -21,7 +21,13 @@ assert 'self.bind("<F11>", self.toggle_fullscreen)' in source
 assert 'self.attributes("-fullscreen", self._fullscreen)' in source
 print("Launcher fullscreen binding OK")
 
-assert 'self.geometry("1020x640")' in source
-assert 'font=("Segoe UI", 10, "bold")' in source
-assert 'F11 · celá obrazovka' in source
+assert 'self.geometry("1180x720")' in source
+assert 'font=("Segoe UI", size, weight)' in source
+assert 'F11  ·  celá obrazovka' in source
 print("Launcher readable layout checks OK")
+
+assert 'GAMO_CLOUD_VERIFIED' in source
+assert 'method="HEAD"' in source
+assert 'def _post(self, delay, callback):' in source
+assert 'report_callback_exception = self._callback_error' in source
+print("Launcher stability and fast cloud handoff checks OK")

@@ -252,9 +252,13 @@ function initLiveTicket(){
   form.addEventListener('submit',submitTicketReply);
   form.querySelector('textarea')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();form.requestSubmit()}});
  }
- const schedule=(delay=1000)=>{clearTimeout(window.GAMO_TICKET_TIMER);window.GAMO_TICKET_TIMER=setTimeout(async()=>{if(!document.hidden)await refreshTicketMessages(false);schedule(document.hidden?6000:1000)},delay)};
+ let running=false;
+ const schedule=(delay=1800)=>{clearTimeout(window.GAMO_TICKET_TIMER);window.GAMO_TICKET_TIMER=setTimeout(async()=>{
+  if(!document.hidden&&!running){running=true;try{await refreshTicketMessages(false)}finally{running=false}}
+  schedule(document.hidden?15000:1800)
+ },delay)};
  refreshTicketMessages(false).finally(()=>schedule());
- document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTicketMessages(false);schedule(1000)}});
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTicketMessages(false);schedule(1800)}});
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_TIMER));
 }
 function setTicketNavCount(value){
@@ -281,8 +285,12 @@ async function refreshTicketInboxState(initial=false){
 }
 function initTicketInboxWatch(){
  const list=document.querySelector('#ticketInboxList');if(!list)return;
+ let running=false;
  refreshTicketInboxState(true);
- const tick=()=>{clearTimeout(window.GAMO_TICKET_INBOX_TIMER);window.GAMO_TICKET_INBOX_TIMER=setTimeout(async()=>{await refreshTicketInboxState(false);tick()},document.hidden?12000:4000)};
+ const tick=()=>{clearTimeout(window.GAMO_TICKET_INBOX_TIMER);window.GAMO_TICKET_INBOX_TIMER=setTimeout(async()=>{
+  if(!running){running=true;try{await refreshTicketInboxState(false)}finally{running=false}}
+  tick()
+ },document.hidden?30000:8000)};
  tick();document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTicketInboxState(false)});
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_INBOX_TIMER));
 }
@@ -417,7 +425,17 @@ async function checkSystemHealth(){
   const gauge=document.querySelector('#healthGauge');if(gauge)gauge.classList.add('health-offline');
  }
 }
-document.addEventListener('DOMContentLoaded',()=>{checkSystemHealth();setInterval(checkSystemHealth,30000)});
+function initHealthWatch(){
+ let running=false;
+ const tick=()=>{clearTimeout(window.GAMO_HEALTH_TIMER);window.GAMO_HEALTH_TIMER=setTimeout(async()=>{
+  if(!document.hidden&&!running){running=true;try{await checkSystemHealth()}finally{running=false}}
+  tick()
+ },document.hidden?120000:60000)};
+ checkSystemHealth().finally?.(()=>tick())||tick();
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkSystemHealth()});
+ window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_HEALTH_TIMER));
+}
+document.addEventListener('DOMContentLoaded',initHealthWatch);
 
 function buildingTab(name,btn){
  document.querySelectorAll('.building-tab-panel').forEach(p=>p.classList.remove('active'));
@@ -449,7 +467,17 @@ document.addEventListener('DOMContentLoaded',()=>{
  }
 });
 
-document.addEventListener('DOMContentLoaded',()=>{refreshNotifications(false);setInterval(()=>refreshNotifications(false),15000);setInterval(refreshNotificationTimes,30000);filterTicketAssets();initLiveTicket();initTicketInboxWatch();initDigitalTwinV2()});
+function initNotificationWatch(){
+ let running=false;
+ const tick=()=>{clearTimeout(window.GAMO_NOTIFICATION_TIMER);window.GAMO_NOTIFICATION_TIMER=setTimeout(async()=>{
+  if(!document.hidden&&!running){running=true;try{await refreshNotifications(false)}finally{running=false}}
+  refreshNotificationTimes();tick()
+ },document.hidden?120000:30000)};
+ refreshNotifications(false).finally(()=>tick());
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshNotifications(false)});
+ window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_NOTIFICATION_TIMER));
+}
+document.addEventListener('DOMContentLoaded',()=>{initNotificationWatch();filterTicketAssets();initLiveTicket();initTicketInboxWatch();initDigitalTwinV2()});
 
 function twinWorld(){return document.querySelector('.dt2-world')}
 function twinApply(){
@@ -517,9 +545,17 @@ function initDigitalTwinV2(){
   if(e.button!==0||e.target.closest('button'))return;
   drag=true;moved=false;lastX=e.clientX;lastY=e.clientY;stage.classList.add('dragging');stage.setPointerCapture?.(e.pointerId);
  });
+ let twinFrame=0,pendingDx=0,pendingDy=0;
  stage.addEventListener('pointermove',e=>{
   if(!drag)return;const dx=e.clientX-lastX,dy=e.clientY-lastY;if(Math.abs(dx)+Math.abs(dy)>2)moved=true;
-  lastX=e.clientX;lastY=e.clientY;world.dataset.angle=String(parseFloat(world.dataset.angle||'-28')+dx*.28);world.dataset.tilt=String(parseFloat(world.dataset.tilt||'58')-dy*.18);twinApply();
+  lastX=e.clientX;lastY=e.clientY;pendingDx+=dx;pendingDy+=dy;
+  if(twinFrame)return;
+  twinFrame=requestAnimationFrame(()=>{
+   twinFrame=0;
+   world.dataset.angle=String(parseFloat(world.dataset.angle||'-28')+pendingDx*.28);
+   world.dataset.tilt=String(parseFloat(world.dataset.tilt||'58')-pendingDy*.18);
+   pendingDx=0;pendingDy=0;twinApply();
+  });
  });
  const stop=e=>{if(!drag)return;drag=false;stage.classList.remove('dragging');try{stage.releasePointerCapture?.(e.pointerId)}catch(_){}};
  stage.addEventListener('pointerup',stop);stage.addEventListener('pointercancel',stop);
