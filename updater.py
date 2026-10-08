@@ -299,30 +299,3 @@ try {
         creationflags=creationflags,
     )
     return True
-
-
-def _legacy_launch_installer_after_process_exit_removed(path, process_id=None):
-    """Start the installer only after the launcher process has fully exited.
-
-    This prevents Inno Setup from detecting GAMO_Launcher.exe as a file-in-use
-    application during self-update. On Windows a tiny hidden PowerShell helper
-    waits for the launcher PID and then starts the verified installer.
-    """
-    if os.name != 'nt' or not process_id:
-        return launch_installer(path)
-
-    installer = str(Path(path).resolve())
-    pid = int(process_id)
-    ps_script = (
-        f"$ErrorActionPreference='SilentlyContinue'; "
-        f"Wait-Process -Id {pid}; "
-        f"Start-Process -FilePath {json.dumps(installer)} "
-        f"-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CLOSEAPPLICATIONS','/NORESTART'"
-    )
-    creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) | getattr(subprocess, 'DETACHED_PROCESS', 0)
-    subprocess.Popen(
-        ['powershell.exe', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps_script],
-        close_fds=True,
-        creationflags=creationflags,
-    )
-    return True
