@@ -49,6 +49,19 @@ PLAN_LIMITS={
  'INTERNAL':{'users':None,'buildings':None,'assets':None}
 }
 
+LIST_PAGE_SIZE=max(25,min(250,int(os.environ.get('GAMO_LIST_PAGE_SIZE','100'))))
+
+def requested_page():
+ try: return max(1,int(request.args.get('page') or 1))
+ except (TypeError,ValueError): return 1
+
+def pager(total,page=None,page_size=LIST_PAGE_SIZE):
+ total=max(0,int(total or 0)); page=page or requested_page()
+ pages=max(1,(total+page_size-1)//page_size); page=min(max(1,page),pages)
+ return {'page':page,'pages':pages,'page_size':page_size,'total':total,'offset':(page-1)*page_size,
+  'has_prev':page>1,'has_next':page<pages,'prev':max(1,page-1),'next':min(pages,page+1)}
+
+
 UPLOAD_ALLOWED_EXTS={'.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.txt','.csv','.log','.zip'}
 UPLOAD_MAX_BYTES=8*1024*1024
 
@@ -1389,7 +1402,19 @@ def delete_document(i):
  return redirect(f"/building/{d['building_id']}#documents")
 
 @app.route('/assets')
-def assets(): return render_template('index.html',page='assets',assets=q('select a.*,b.code building,r.code room from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id where b.organization_id=? order by a.asset_id',(org_id(),)))
+def assets():
+ oid=org_id(); term=(request.args.get('q') or '').strip()[:100]
+ where='a.organization_id=?'; args=[oid]
+ if term:
+  like=f'%{term}%'
+  where+=" and (lower(coalesce(a.asset_id,'')) like lower(?) or lower(coalesce(a.name,'')) like lower(?) or lower(coalesce(a.manufacturer,'')) like lower(?) or lower(coalesce(a.model,'')) like lower(?) or lower(coalesce(b.code,'')) like lower(?) or lower(coalesce(r.code,'')) like lower(?))"
+  args.extend([like]*6)
+ total=one(f'''select count(*) n from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id where {where}''',tuple(args))['n']
+ pg=pager(total)
+ rows=q(f'''select a.*,b.code building,r.code room from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
+  where {where} order by a.asset_id limit ? offset ?''',tuple(args+[pg['page_size'],pg['offset']]))
+ return render_template('index.html',page='assets',assets=rows,asset_query=term,pager=pg)
+
 @app.route('/asset/<int:i>')
 def asset(i):
  a=one('select a.*,b.name building,f.code floor,r.code room,r.name room_name,r.area from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id where a.id=? and b.organization_id=?',(i,org_id()))
@@ -1445,16 +1470,50 @@ def delete_asset_document(i):
 
 @app.route('/maintenance')
 def maintenance():
- orders=q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
- today=date.today().isoformat()
- stats={'total':len(orders),'active':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'}),'overdue':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'} and r['due'] and str(r['due'])[:10]<today),'critical':sum(1 for r in orders if r['priority']=='Kritická' and r['status'] not in {'Ukončené','Zrušené'}),'completed':sum(1 for r in orders if r['status']=='Ukončené')}
- return render_template('index.html',page='maintenance',orders=orders,maintenance_stats=stats,today_iso=today)
+ oid=org_id(); today=date.today().isoformat(); view=(request.args.get('view') or 'all').strip(); term=(request.args.get('q') or '').strip()[:100]
+ if view not in {'all','active','overdue','critical','done'}: view='all'
+ stats=one("""select count(*) total,
+  coalesce(sum(case when w.status not in ('Ukončené','Zrušené') then 1 else 0 end),0) active,
+  coalesce(sum(case when w.status not in ('Ukončené','Zrušené') and w.due is not null and w.due!='' and w.due<? then 1 else 0 end),0) overdue,
+  coalesce(sum(case when w.priority='Kritická' and w.status not in ('Ukončené','Zrušené') then 1 else 0 end),0) critical,
+  coalesce(sum(case when w.status='Ukončené' then 1 else 0 end),0) completed
+  from workorders w join assets a on a.id=w.asset_id where a.organization_id=?""",(today,oid))
+ where='a.organization_id=?'; args=[oid]
+ if view=='active': where+=" and w.status not in ('Ukončené','Zrušené')"
+ elif view=='overdue': where+=" and w.status not in ('Ukončené','Zrušené') and w.due is not null and w.due!='' and w.due<?"; args.append(today)
+ elif view=='critical': where+=" and w.priority='Kritická' and w.status not in ('Ukončené','Zrušené')"
+ elif view=='done': where+=" and w.status='Ukončené'"
+ if term:
+  like=f'%{term}%'; where+=" and (lower(coalesce(w.title,'')) like lower(?) or lower(coalesce(a.asset_id,'')) like lower(?) or lower(coalesce(a.name,'')) like lower(?) or lower(coalesce(w.supplier,'')) like lower(?) or lower(coalesce(w.technician,'')) like lower(?))"; args.extend([like]*5)
+ total=one(f'select count(*) n from workorders w join assets a on a.id=w.asset_id where {where}',tuple(args))['n']
+ pg=pager(total)
+ rows=q(f'''select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building
+  from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
+  where {where} order by w.id desc limit ? offset ?''',tuple(args+[pg['page_size'],pg['offset']]))
+ return render_template('index.html',page='maintenance',orders=rows,maintenance_stats=stats,today_iso=today,ops_view=view,ops_query=term,pager=pg)
 
 @app.route('/incidents')
 def incidents():
- rows=q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),))
- stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Ukončená','Vyriešená'}),'critical':sum(1 for r in rows if r['severity'] in {'Kritická','Havária'} and r['status'] not in {'Ukončená','Vyriešená'}),'resolved':sum(1 for r in rows if r['status'] in {'Ukončená','Vyriešená'}),'cost':sum(float(r['cost'] or 0) for r in rows)}
- return render_template('index.html',page='incidents',incidents=rows,incident_stats=stats)
+ oid=org_id(); view=(request.args.get('view') or 'all').strip(); term=(request.args.get('q') or '').strip()[:100]
+ if view not in {'all','active','critical','done'}: view='all'
+ stats=one("""select count(*) total,
+  coalesce(sum(case when i.status not in ('Ukončená','Vyriešená') then 1 else 0 end),0) open,
+  coalesce(sum(case when i.severity in ('Kritická','Havária') and i.status not in ('Ukončená','Vyriešená') then 1 else 0 end),0) critical,
+  coalesce(sum(case when i.status in ('Ukončená','Vyriešená') then 1 else 0 end),0) resolved,
+  coalesce(sum(i.cost),0) cost
+  from incidents i join assets a on a.id=i.asset_id where a.organization_id=?""",(oid,))
+ where='a.organization_id=?'; args=[oid]
+ if view=='active': where+=" and i.status not in ('Ukončená','Vyriešená')"
+ elif view=='critical': where+=" and i.severity in ('Kritická','Havária') and i.status not in ('Ukončená','Vyriešená')"
+ elif view=='done': where+=" and i.status in ('Ukončená','Vyriešená')"
+ if term:
+  like=f'%{term}%'; where+=" and (lower(coalesce(i.title,'')) like lower(?) or lower(coalesce(a.asset_id,'')) like lower(?) or lower(coalesce(a.name,'')) like lower(?) or lower(coalesce(i.impact,'')) like lower(?) or lower(coalesce(i.cause,'')) like lower(?))"; args.extend([like]*5)
+ total=one(f'select count(*) n from incidents i join assets a on a.id=i.asset_id where {where}',tuple(args))['n']
+ pg=pager(total)
+ rows=q(f'''select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building
+  from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
+  where {where} order by i.id desc limit ? offset ?''',tuple(args+[pg['page_size'],pg['offset']]))
+ return render_template('index.html',page='incidents',incidents=rows,incident_stats=stats,ops_view=view,ops_query=term,pager=pg)
 @app.route('/admin')
 def admin():
  org=one('select * from organizations where id=?',(org_id(),))
