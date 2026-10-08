@@ -70,7 +70,12 @@ def log_path():
 
 def write_log(message):
     try:
-        with log_path().open("a", encoding="utf-8") as handle:
+        path = log_path()
+        if path.exists() and path.stat().st_size > 1_000_000:
+            previous = path.with_name("launcher.previous.log")
+            previous.unlink(missing_ok=True)
+            path.replace(previous)
+        with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{datetime.now().isoformat(timespec='seconds')}  {message}\n")
     except Exception:
         pass
@@ -106,6 +111,8 @@ class Launcher(tk.Tk):
         self.launching = False
         self._fullscreen = False
         self._closing = False
+        self._retry_after_id = None
+        self._app_process = None
 
         self.title("GAMO a.s. — Facility Platform")
         self.geometry("1180x720")
@@ -114,6 +121,7 @@ class Launcher(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<F11>", self.toggle_fullscreen)
         self.bind("<Escape>", self.exit_fullscreen)
+        self.bind("<Return>", self._launch_from_keyboard)
         self.report_callback_exception = self._callback_error
 
         try:
@@ -158,10 +166,58 @@ class Launcher(tk.Tk):
 
     def _close(self):
         self._closing = True
+        self._cancel_retry()
         try:
             self.destroy()
         except tk.TclError:
             pass
+
+    def _launch_from_keyboard(self, _event=None):
+        if self.online and not self.busy and not self.launching:
+            self.launch_app()
+        return "break"
+
+    def _cancel_retry(self):
+        if self._retry_after_id is not None:
+            try:
+                self.after_cancel(self._retry_after_id)
+            except tk.TclError:
+                pass
+            self._retry_after_id = None
+
+    def _schedule_retry(self, delay_ms=15000):
+        self._cancel_retry()
+        if self._closing:
+            return
+        try:
+            self._retry_after_id = self.after(delay_ms, self._retry_connection)
+        except tk.TclError:
+            self._retry_after_id = None
+
+    def _retry_connection(self):
+        self._retry_after_id = None
+        if not self._closing and not self.busy and not self.online:
+            self.refresh_status()
+
+    def open_diagnostics(self):
+        folder = log_path().parent
+        write_log("Diagnostics folder opened.")
+        try:
+            if os.name == "nt":
+                os.startfile(str(folder))
+            else:
+                messagebox.showinfo(
+                    "GAMO a.s. — Diagnostika",
+                    f"Diagnostické logy nájdeš tu:\n\n{folder}",
+                    parent=self,
+                )
+        except Exception as exc:
+            write_log(f"Diagnostics open failed: {exc}")
+            messagebox.showinfo(
+                "GAMO a.s. — Diagnostika",
+                f"Diagnostické logy nájdeš tu:\n\n{folder}",
+                parent=self,
+            )
 
     def toggle_fullscreen(self, _event=None):
         self._fullscreen = not self._fullscreen
@@ -306,7 +362,11 @@ class Launcher(tk.Tk):
         eyebrow = tk.Frame(top, bg=WHITE)
         eyebrow.grid(row=0, column=0, sticky="ew")
         self._label(eyebrow, "GAMO CLOUD CLIENT", 9, "bold", BLUE, WHITE).pack(side="left")
-        self._label(eyebrow, "F11  ·  celá obrazovka", 8, "normal", SOFT_TEXT, WHITE).pack(side="right")
+        right_info = tk.Frame(eyebrow, bg=WHITE)
+        right_info.pack(side="right")
+        self.last_check_label = self._label(right_info, "Posledná kontrola: —", 8, "normal", SOFT_TEXT, WHITE)
+        self.last_check_label.pack(side="left")
+        self._label(right_info, "   ·   F11  celá obrazovka", 8, "normal", SOFT_TEXT, WHITE).pack(side="left")
 
         self._label(top, "Facility Platform", 30, "bold", TEXT, WHITE).grid(row=1, column=0, sticky="w", pady=(8, 0))
         self._label(
@@ -367,6 +427,8 @@ class Launcher(tk.Tk):
         self.launch_btn = self._button(actions, "Spustiť GAMO a.s.  →", self.launch_app, primary=True)
         self.launch_btn.grid(row=0, column=0, sticky="ew")
         self.launch_btn.config(state="disabled")
+        self.diagnostics_btn = self._button(actions, "Diagnostika", self.open_diagnostics, small=True)
+        self.diagnostics_btn.grid(row=0, column=1, padx=(12, 0))
 
         hint = tk.Frame(main, bg=WHITE)
         hint.grid(row=6, column=0, sticky="sew", padx=42, pady=(24, 0))
@@ -427,6 +489,7 @@ class Launcher(tk.Tk):
     def refresh_status(self):
         if self.busy or self._closing:
             return
+        self._cancel_retry()
         self.busy = True
         self.launch_btn.config(state="disabled")
         self.refresh_btn.config(state="disabled")
@@ -456,16 +519,18 @@ class Launcher(tk.Tk):
         self.online = online
         self.update_manifest = manifest
         self.refresh_btn.config(state="normal")
+        self.last_check_label.config(text=f"Posledná kontrola: {datetime.now().strftime('%H:%M:%S')}")
 
         if not online:
             self.cloud_info.value_label.config(text="Nedostupný")
             self.security_info.value_label.config(text="Čaká na cloud")
             self.set_status(
                 "GAMO Cloud nie je dostupný",
-                "Skontroluj internetové pripojenie a potom klikni na Obnoviť.",
+                "Skontroluj internet. Launcher sa automaticky pokúsi pripojiť znova o 15 sekúnd.",
                 "offline",
             )
             self.launch_btn.config(state="disabled")
+            self._schedule_retry(15000)
             return
 
         self.cloud_info.value_label.config(text="Online")
@@ -540,15 +605,17 @@ class Launcher(tk.Tk):
 
         try:
             if executable.exists():
-                subprocess.Popen([str(executable)], cwd=str(APP_DIR), env=env, close_fds=True)
+                process = subprocess.Popen([str(executable)], cwd=str(APP_DIR), env=env, close_fds=True)
             else:
                 source = APP_DIR / "desktop.py"
                 if not source.exists():
                     source = BASE_DIR / "desktop.py"
                 if not source.exists():
                     raise FileNotFoundError("GAMO_FM.exe sa v inštalácii nenašiel.")
-                subprocess.Popen([sys.executable, str(source)], cwd=str(source.parent), env=env, close_fds=True)
-            self._post(300, self._close)
+                process = subprocess.Popen([sys.executable, str(source)], cwd=str(source.parent), env=env, close_fds=True)
+            self._app_process = process
+            self.set_status("Spúšťam aplikáciu…", "Overujem, že desktop klient zostal stabilne spustený.", "checking")
+            self._post(1800, lambda p=process: self._verify_app_started(p))
         except Exception as exc:
             self.launching = False
             self.launch_btn.config(state="normal", text="Spustiť GAMO a.s.  →")
@@ -559,6 +626,31 @@ class Launcher(tk.Tk):
                 f"Aplikáciu sa nepodarilo spustiť.\n\n{exc}",
                 parent=self,
             )
+
+    def _verify_app_started(self, process):
+        if self._closing or process is not self._app_process:
+            return
+        code = process.poll()
+        if code is None:
+            write_log(f"Desktop client started successfully · pid={process.pid}")
+            self._close()
+            return
+        self.launching = False
+        self._app_process = None
+        self.launch_btn.config(state="normal", text="Spustiť GAMO a.s.  →")
+        self.refresh_btn.config(state="normal")
+        write_log(f"Desktop client exited during startup · code={code}")
+        self.set_status(
+            "Desktop klient sa nespustil",
+            "Proces sa ukončil hneď po štarte. Otvor Diagnostiku a pošli launcher.log podpore.",
+            "offline",
+        )
+        messagebox.showerror(
+            "GAMO a.s. — Launcher",
+            "Desktop klient sa ukončil počas štartu.\n\n"
+            "Klikni na Diagnostika a pošli súbor launcher.log podpore.",
+            parent=self,
+        )
 
 
 def main():
