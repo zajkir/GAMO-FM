@@ -3,10 +3,11 @@ import sys
 import json
 import os
 import tempfile
-import updater
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
+
+import updater
 source = (root / "updater.py").read_text(encoding="utf-8")
 launcher_source = (root / "launcher.py").read_text(encoding="utf-8")
 
