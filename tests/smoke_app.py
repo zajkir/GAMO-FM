@@ -473,6 +473,105 @@ r = client.post(
 assert r.status_code in (302, 303)
 assert client.get("/api/setting?section=smoke-test").get_json()["value"] == "tenant-value"
 
+# Saved admin configuration must change real runtime behavior, not only the modal UI.
+runtime_sections = {
+    "Technológie & číselníky": {"0": "ELE", "1": "Servis", "2": "A", "3": "Spravované číselníkom"},
+    "Asset ID generátor": {"0": "LAB-{PROF}-0001", "1": "50", "2": "4", "3": "Zapnuté"},
+    "Servis & SLA": {"0": "9", "1": "18", "2": "Vysoká", "3": "24 h"},
+    "Notifikačné centrum": {"0": "30 dní", "1": "Okamžite", "2": "Zapnuté", "3": "Zapnuté"},
+    "Role & bezpečnosť": {"0": "Technik", "1": "Zapnutý", "2": "Áno", "3": "Blokovať prihlásenie"},
+}
+for section, values in runtime_sections.items():
+    r = client.post(
+        "/settings/save",
+        data={"_csrf": csrf(), "section": section, "value": json.dumps(values, ensure_ascii=False)},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303), (section, r.status_code)
+
+configured_next = client.get("/api/assets/next-id?profession=ELE").get_json()["asset_id"]
+assert configured_next == "LAB-ELE-0050"
+
+r = client.post(
+    "/add/asset",
+    data={
+        "_csrf": csrf(),
+        "asset_id": "",
+        "name": "Configured Defaults Asset",
+        "building_id": str(building["id"]),
+        "floor_id": str(floor["id"]),
+        "room_id": str(room["id"]),
+        "profession": "",
+        "grp": "CONFIG",
+        "type": "DEFAULT",
+        "purchase_price": "0",
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+configured_asset = app.one_system(
+    "select * from assets where organization_id=? and name=?",
+    (gamo_org_id, "Configured Defaults Asset"),
+)
+assert configured_asset
+assert configured_asset["asset_id"] == "LAB-ELE-0050"
+assert configured_asset["profession"] == "ELE"
+assert configured_asset["status"] == "Servis"
+assert configured_asset["criticality"] == "A"
+assert configured_asset["service_months"] == 9
+assert configured_asset["revision_months"] == 18
+
+r = client.post(
+    "/add/workorder",
+    data={
+        "_csrf": csrf(),
+        "asset_id": str(configured_asset["id"]),
+        "title": "Configured SLA Task",
+        "kind": "PM",
+        "status": "Plánované",
+        "due": "2026-10-20",
+        "supplier": "",
+        "technician": "",
+        "cost": "0",
+        "description": "Uses organization defaults",
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+configured_order = app.one_system(
+    "select * from workorders where asset_id=? and title=?",
+    (configured_asset["id"], "Configured SLA Task"),
+)
+assert configured_order and configured_order["priority"] == "Vysoká"
+
+runtime_notifications = client.get("/api/notifications").get_json()
+configured_notice = next((x for x in runtime_notifications if x.get("title") == "Configured SLA Task"), None)
+assert configured_notice and configured_notice["level"] == "orange"
+assert configured_notice["status"] == "Blíži sa termín"
+
+r = client.post(
+    "/add/user",
+    data={
+        "_csrf": csrf(),
+        "name": "Configured Role User",
+        "email": "configured-role@example.test",
+        "status": "Aktívny",
+        "password": "ConfiguredPass2026!",
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+configured_user = app.one_system(
+    "select * from users where organization_id=? and lower(email)=?",
+    (gamo_org_id, "configured-role@example.test"),
+)
+assert configured_user and configured_user["role"] == "Technik"
+
+admin_runtime_page = client.get("/admin")
+assert admin_runtime_page.status_code == 200
+assert app.APP_VERSION.encode("utf-8") in admin_runtime_page.data
+assert b'"runtimeDefaults"' in admin_runtime_page.data
+
 viewer_id = app.x_system(
     "insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)",
     ("Settings Viewer", "settings-viewer@example.test", "Viewer", "Aktívny", app.generate_password_hash("ViewerPass2026!"), gamo_org_id, False if app.USING_POSTGRES else 0),

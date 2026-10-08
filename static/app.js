@@ -1,25 +1,31 @@
 const APP_BRAND=(window.GAMO_CONTEXT&&window.GAMO_CONTEXT.brandName)||'GAMO a.s.';
 const APP_ORG_CODE=(window.GAMO_CONTEXT&&window.GAMO_CONTEXT.orgCode)||'GAMO';
+const APP_VERSION=(window.GAMO_CONTEXT&&window.GAMO_CONTEXT.appVersion)||'unknown';
+const RUNTIME_DEFAULTS=(window.GAMO_CONTEXT&&window.GAMO_CONTEXT.runtimeDefaults)||{};
+const ASSET_DEFAULTS=RUNTIME_DEFAULTS.asset||{};
+const ASSET_ID_DEFAULTS=RUNTIME_DEFAULTS.asset_id||{};
+const WORKORDER_DEFAULTS=RUNTIME_DEFAULTS.workorder||{};
+const USER_DEFAULTS=RUNTIME_DEFAULTS.user||{};
 const defs={
 building:[['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adresa',''],['manager','Správca','Facility Management'],{name:'floors_count',label:'Počet podlaží pre 3D model',type:'number',value:'3',min:'0',max:'50'}],
 floor:[{name:'building_id',label:'Budova',type:'building',required:true},['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
 room:[{name:'floor_id',label:'Podlažie',type:'floor',required:true},['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],{name:'area',label:'Plocha m²',type:'number',value:'25',step:'0.01',min:'0'},['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
 asset:[
- {name:'asset_id',label:'Asset ID',type:'text',value:'',required:false,placeholder:'Automaticky podľa profesie',help:'Permanentný identifikátor zariadenia. Po vytvorení ho nemeň bez dôvodu.'},
+ {name:'asset_id',label:'Asset ID',type:'text',value:'',required:ASSET_ID_DEFAULTS.automatic===false,placeholder:ASSET_ID_DEFAULTS.automatic===false?'Zadaj Asset ID ručne':'Automaticky podľa profesie',help:'Permanentný identifikátor zariadenia. Po vytvorení ho nemeň bez dôvodu.'},
  {name:'asset_tag',label:'Asset Tag / QR',type:'text',value:'',required:false,placeholder:'Napr. QR-HVAC-001',help:'Samostatný fyzický štítok alebo hodnota QR kódu.'},
  ['name','Názov zariadenia',''],
  {name:'building_id',label:'Budova',type:'building',required:true},
  {name:'floor_id',label:'Podlažie',type:'floor',required:true},
  {name:'room_id',label:'Miestnosť',type:'room',required:true},
- {name:'profession',label:'Profesia',value:'HVAC',required:true},
+ {name:'profession',label:'Profesia',value:ASSET_DEFAULTS.profession||'HVAC',required:true},
  {name:'grp',label:'Skupina',value:'VRV systém',required:true},
  {name:'type',label:'Typ',value:'VRV-IN',required:true},
  ['manufacturer','Výrobca',''],['model','Model',''],['serial','Výrobné číslo',''],['system_id','System ID',''],
  {name:'parent_id',label:'Parent Asset',type:'asset',value:'',required:false,optionalLabel:'Bez parent assetu'},
- {name:'status',label:'Stav',type:'select',options:['Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'],value:'Prevádzka',required:true},
- {name:'criticality',label:'Kritickosť',type:'select',options:['A','B','C'],value:'B',required:true},
- {name:'service_months',label:'Servis interval mes.',type:'number',value:'6',min:'0'},
- {name:'revision_months',label:'Revízia interval mes.',type:'number',value:'12',min:'0'},
+ {name:'status',label:'Stav',type:'select',options:['Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'],value:ASSET_DEFAULTS.status||'Prevádzka',required:true},
+ {name:'criticality',label:'Kritickosť',type:'select',options:['A','B','C'],value:ASSET_DEFAULTS.criticality||'B',required:true},
+ {name:'service_months',label:'Servis interval mes.',type:'number',value:String(ASSET_DEFAULTS.service_months??6),min:'0'},
+ {name:'revision_months',label:'Revízia interval mes.',type:'number',value:String(ASSET_DEFAULTS.revision_months??12),min:'0'},
  {name:'purchase_price',label:'Cena €',type:'number',value:'0',min:'0',step:'0.01'},
  {name:'installed',label:'Dátum inštalácie',type:'date',value:'',required:false},
  {name:'warranty',label:'Záruka do',type:'date',value:'',required:false},
@@ -29,7 +35,7 @@ workorder:[
  {name:'asset_id',label:'Asset',type:'asset',value:currentAsset||'',required:true},
  {name:'title',label:'Názov pracovného príkazu',type:'select',options:['Preventívna údržba','Pravidelná revízia','Oprava poruchy','Havarijný zásah','Výmena zariadenia','Diagnostika','Kontrola zariadenia'],value:'Preventívna údržba',required:true},
  {name:'kind',label:'Typ zásahu',type:'select',options:['PM','REV','OPR','VYM'],value:'PM',required:true},
- {name:'priority',label:'Priorita',type:'select',options:['Nízka','Stredná','Vysoká','Kritická'],value:'Stredná',required:true},
+ {name:'priority',label:'Priorita',type:'select',options:['Nízka','Stredná','Vysoká','Kritická'],value:WORKORDER_DEFAULTS.priority||'Stredná',required:true},
  {name:'status',label:'Stav',type:'select',options:['Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'],value:'Plánované',required:true},
  {name:'due',label:'Termín',type:'date',value:''},['supplier','Dodávateľ',''],['technician','Technik',''],
  {name:'cost',label:'Náklad €',type:'number',value:'0',min:'0',step:'0.01'},['description','Popis','']
@@ -41,7 +47,7 @@ incident:[
  {name:'reported',label:'Nahlásené',type:'date',value:new Date().toISOString().slice(0,10)},['impact','Dopad',''],['cause','Príčina',''],
  {name:'cost',label:'Náklad €',type:'number',value:'0',min:'0',step:'0.01'}
 ],
-user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'select',options:['Administrator','Facility Manager','Technik','Servisný technik','Viewer'],value:'Technik',required:true},{name:'status',label:'Stav používateľa',type:'select',options:['Aktívny','Neaktívny'],value:'Aktívny',required:true},{name:'password',label:'Dočasné heslo',type:'password',value:'',required:true}]
+user:[['name','Meno',''],['email','E-mail',''],{name:'role',label:'Rola',type:'select',options:['Administrator','Facility Manager','Technik','Servisný technik','Viewer'],value:USER_DEFAULTS.role||'Viewer',required:true},{name:'status',label:'Stav používateľa',type:'select',options:['Aktívny','Neaktívny'],value:'Aktívny',required:true},{name:'password',label:'Dočasné heslo',type:'password',value:'',required:true}]
 }
 function fieldDef(a){return Array.isArray(a)?{name:a[0],label:a[1],value:a[2],type:(a[0]=='password'?'password':'text')} : a}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
@@ -425,7 +431,7 @@ const configSchemas={
 'Import / Export':{icon:'⇩',group:'SPRÁVA DÁT',fields:[['Formát exportu','CSV','select',['CSV','XLSX','JSON']],['Kódovanie','UTF-8','text'],['Import duplicít','Preskočiť','select',['Preskočiť','Aktualizovať','Zastaviť']],['Audit importu','Zapnutý','select',['Zapnutý','Vypnutý']]]},
 'Dokumentácia':{icon:'▤',group:'SPRÁVA DOKUMENTÁCIE',fields:[['Kategórie','Technická / Revízna / Servisná','text'],['Povolené prílohy','PDF, DOCX, XLSX, JPG, PNG','text'],['Verzovanie','Zapnuté','select',['Zapnuté','Vypnuté']],['Povinný popis','Áno','select',['Áno','Nie']]]},
 'Zálohovanie':{icon:'▣',group:'POLITIKA ZÁLOHOVANIA',fields:[['Automatické zálohy','Denne','select',['Denne','Týždenne','Manuálne']],['Čas zálohy','02:00','time'],['Retencia','30 dní','text'],['Kontrola integrity','Zapnutá','select',['Zapnutá','Vypnutá']]]},
-'Aktualizácie':{icon:'↻',group:'AKTUALIZAČNÝ KANÁL',fields:[['Kanál','Stable','select',['Stable','Preview','Manuálny']],['Automatická kontrola','Zapnutá','select',['Zapnutá','Vypnutá']],['Aktuálna verzia','9.0.0.5','text'],['Inštalácia','Po potvrdení','select',['Po potvrdení','Automaticky']]]},
+'Aktualizácie':{icon:'↻',group:'AKTUALIZAČNÝ KANÁL',fields:[['Kanál','Stable','select',['Stable','Preview','Manuálny']],['Automatická kontrola','Zapnutá','select',['Zapnutá','Vypnutá']],['Aktuálna verzia',APP_VERSION,'text'],['Inštalácia','Po potvrdení','select',['Po potvrdení','Automaticky']]]},
 'Relácie':{icon:'⌁',group:'BEZPEČNOSŤ RELÁCIÍ',fields:[['Čas relácie','8 hodín','text'],['Remember me','Povolené','select',['Povolené','Zakázané']],['Opätovné overenie admina','30 min','text'],['Odhlásiť pri neaktivite','Áno','select',['Áno','Nie']]]},
 'Prevádzka systému':{icon:'⚙',group:'PREVÁDZKA SYSTÉMU',fields:[['Režim','Produkcia','select',['Produkcia','Údržba']],['Časové pásmo','Europe/Bratislava','text'],['Logovanie','Štandardné','select',['Minimálne','Štandardné','Detailné']],['Health monitoring','Zapnutý','select',['Zapnutý','Vypnutý']]]}
 };
@@ -436,7 +442,7 @@ function configModal(title,desc){
  const box=document.querySelector('#configValue'); box.style.display='none';
  let host=document.querySelector('#configFields');
  if(!host){host=document.createElement('div');host.id='configFields';box.parentNode.insertBefore(host,box)}
- host.innerHTML='<div class="config-modal-hero"><span>'+schema.icon+'</span><div><small class="config-section-label">'+schema.group+'</small><b>'+title+'</b><p>'+desc+'</p></div></div><div class="config-field-grid">'+schema.fields.map((f,i)=>{let input=f[2]==='select'?'<select data-cfg="'+i+'">'+f[3].map(x=>'<option>'+x+'</option>').join('')+'</select>':'<input data-cfg="'+i+'" type="'+f[2]+'" value="'+f[1]+'">';return '<label><span>'+f[0]+'</span>'+input+'<small>'+(i===0?'Hlavné nastavenie tejto oblasti':'Upraviteľný systémový parameter')+'</small></label>'}).join('')+'</div>';
+ host.innerHTML='<div class="config-modal-hero"><span>'+schema.icon+'</span><div><small class="config-section-label">'+schema.group+'</small><b>'+title+'</b><p>'+desc+'</p></div></div><div class="config-field-grid">'+schema.fields.map((f,i)=>{let input=f[2]==='select'?'<select data-cfg="'+i+'">'+f[3].map(x=>'<option>'+x+'</option>').join('')+'</select>':'<input data-cfg="'+i+'" type="'+f[2]+'" value="'+escapeHtml(f[1])+'" '+(f[0]==='Aktuálna verzia'?'readonly aria-readonly="true"':'')+'>';return '<label><span>'+f[0]+'</span>'+input+'<small>'+(i===0?'Hlavné nastavenie tejto oblasti':'Upraviteľný systémový parameter')+'</small></label>'}).join('')+'</div>';
  fetch('/api/setting?section='+encodeURIComponent(title)).then(r=>r.json()).then(x=>{try{const vals=JSON.parse(x.value||'{}');host.querySelectorAll('[data-cfg]').forEach((el,i)=>{if(vals[i]!==undefined)el.value=vals[i]})}catch(e){}});
  const form=document.querySelector('#configModal form'); if(form) form.onsubmit=()=>{const vals={};host.querySelectorAll('[data-cfg]').forEach((el,i)=>vals[i]=el.value);box.value=JSON.stringify(vals)};
  document.querySelector('#configModal').classList.add('show')

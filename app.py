@@ -1,6 +1,6 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, mimetypes
+import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, re, mimetypes
 try:
  import psycopg
  from psycopg.rows import dict_row
@@ -112,19 +112,77 @@ def owns_asset(asset_id):
  oid=org_id()
  return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
 
+def org_config_values(section,oid=None):
+ oid=oid or org_id()
+ if not oid: return {}
+ try:
+  row=one('select v from organization_settings where organization_id=? and k=?',(oid,section))
+  raw=json.loads(row['v']) if row and row['v'] else {}
+  return raw if isinstance(raw,dict) else {}
+ except Exception:
+  return {}
+
+def org_runtime_defaults(oid=None):
+ oid=oid or org_id()
+ tech=org_config_values('Technológie & číselníky',oid)
+ asset_cfg=org_config_values('Asset ID generátor',oid)
+ service=org_config_values('Servis & SLA',oid)
+ notify=org_config_values('Notifikačné centrum',oid)
+ roles=org_config_values('Role & bezpečnosť',oid)
+ def num(value,default,minimum=0,maximum=999999999):
+  try:
+   match=re.search(r'-?\d+',str(value or ''))
+   return max(minimum,min(maximum,int(match.group(0)) if match else default))
+  except Exception:
+   return default
+ def choice(value,default,allowed):
+  value=str(value or default)
+  return value if value in allowed else default
+ return {
+  'asset_id':{
+   'mask':str(asset_cfg.get('0') or '{PROF}-000001')[:80],
+   'start':num(asset_cfg.get('1'),1,0,999999999),
+   'length':num(asset_cfg.get('2'),6,1,12),
+   'automatic':str(asset_cfg.get('3') or 'Zapnuté')!='Vypnuté'
+  },
+  'asset':{
+   'profession':str(tech.get('0') or 'HVAC')[:30].upper(),
+   'status':choice(tech.get('1'),'Prevádzka',{'Prevádzka','Servis','Mimo prevádzky','Porucha','Vyradené'}),
+   'criticality':choice(tech.get('2'),'B',{'A','B','C'}),
+   'service_months':num(service.get('0'),6,0,1200),
+   'revision_months':num(service.get('1'),12,0,1200)
+  },
+  'workorder':{
+   'priority':choice(service.get('2'),'Stredná',{'Nízka','Stredná','Vysoká','Kritická'})
+  },
+  'notifications':{
+   'due_warning_days':num(notify.get('0'),14,0,365)
+  },
+  'user':{
+   'role':choice(roles.get('0'),'Viewer',{'Administrator','Facility Manager','Technik','Servisný technik','Viewer'})
+  }
+ }
+
 def next_asset_id(profession,oid=None):
  oid=oid or org_id()
+ cfg=org_runtime_defaults(oid)['asset_id']
  prefix=''.join(ch for ch in (profession or 'ASSET').upper() if ch.isalnum())[:10] or 'ASSET'
- rows=q('select asset_id from assets where organization_id=? and upper(asset_id) like ?',(oid,f'{prefix}-%'))
- used=set()
- for row in rows:
-  value=str(row['asset_id'] or '').upper()
-  if value.startswith(prefix+'-'):
-   tail=value[len(prefix)+1:]
-   if tail.isdigit(): used.add(int(tail))
- n=1
- while n in used: n+=1
- return f'{prefix}-{n:06d}'
+ mask=(cfg['mask'] or '{PROF}-000001').replace('{PROF}',prefix)
+ width=max(1,min(12,int(cfg['length'] or 6)))
+ matches=list(re.finditer(r'\d+',mask))
+ number_match=matches[-1] if matches else None
+ used={str(r['asset_id'] or '').upper() for r in q('select asset_id from assets where organization_id=?',(oid,))}
+ n=max(0,int(cfg['start'] or 0))
+ for _ in range(1000000):
+  if number_match:
+   digits=max(width,len(number_match.group(0)))
+   candidate=mask[:number_match.start()]+str(n).zfill(digits)+mask[number_match.end():]
+  else:
+   candidate=f'{mask}{str(n).zfill(width)}'
+  candidate=candidate.upper()
+  if candidate not in used: return candidate
+  n+=1
+ raise RuntimeError('Nie je možné nájsť voľné Asset ID podľa zvolenej masky.')
 
 def ticket_staff():
  return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
@@ -806,7 +864,7 @@ def ctx():
  unread_tickets=0
  try: unread_tickets=ticket_unread_count()
  except Exception: unread_tickets=0
- return dict(today=date.today(),app_version=APP_VERSION,csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
+ return dict(today=date.today(),app_version=APP_VERSION,runtime_defaults=org_runtime_defaults() if org_id() else {},csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
@@ -2013,8 +2071,9 @@ def add(what):
   elif what=='asset':
    if not plan_allows('assets'):
     flash('Licenčný limit počtu assetov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/assets')
+   defaults=org_runtime_defaults()
    name=(f.get('name') or '').strip(); building_id=f.get('building_id'); floor_id=f.get('floor_id'); room_id=f.get('room_id'); parent_id=f.get('parent_id') or None
-   profession=(f.get('profession') or '').strip().upper(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
+   profession=(f.get('profession') or defaults['asset']['profession']).strip().upper(); grp=(f.get('grp') or '').strip(); asset_type=(f.get('type') or '').strip()
    if not name: raise ValueError('Zadaj názov zariadenia.')
    if not building_id or not floor_id or not room_id: raise ValueError('Vyber budovu, podlažie aj miestnosť.')
    if not profession or not grp or not asset_type: raise ValueError('Profesia, skupina a typ zariadenia sú povinné.')
@@ -2022,11 +2081,11 @@ def add(what):
    if not one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.id=? and b.organization_id=?',(floor_id,building_id,org_id())): raise ValueError('Vybrané podlažie nepatrí do zvolenej budovy.')
    if not one('select r.id from rooms r join floors fl on fl.id=r.floor_id join buildings b on b.id=fl.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id())): raise ValueError('Vybraná miestnosť nepatrí do zvoleného podlažia.')
    if parent_id and not owns_asset(parent_id): raise ValueError('Parent asset nepatrí do tvojej organizácie.')
-   status=(f.get('status') or 'Prevádzka').strip(); criticality=(f.get('criticality') or 'B').strip()
+   status=(f.get('status') or defaults['asset']['status']).strip(); criticality=(f.get('criticality') or defaults['asset']['criticality']).strip()
    if status not in {'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'}: raise ValueError('Neplatný stav assetu.')
    if criticality not in {'A','B','C'}: raise ValueError('Neplatná kritickosť assetu.')
    try:
-    service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+    service=max(0,int(f.get('service_months') or defaults['asset']['service_months'])); revision=max(0,int(f.get('revision_months') or defaults['asset']['revision_months'])); price=max(0,float(f.get('purchase_price') or 0))
    except (TypeError,ValueError): raise ValueError('Servisný interval, revízia a cena musia byť platné čísla.')
    installed=(f.get('installed') or '').strip() or None; warranty=(f.get('warranty') or '').strip() or None
    for raw,label in ((installed,'Dátum inštalácie'),(warranty,'Záruka')):
@@ -2036,7 +2095,9 @@ def add(what):
    asset_tag=(f.get('asset_tag') or '').strip()[:120] or None
    if asset_tag and one('select id from assets where organization_id=? and lower(asset_tag)=lower(?)',(org_id(),asset_tag)):
     raise ValueError(f'Asset Tag {asset_tag} už v tvojej organizácii existuje.')
-   manual_aid=(f.get('asset_id') or '').strip().upper(); aid=manual_aid or next_asset_id(profession)
+   manual_aid=(f.get('asset_id') or '').strip().upper()
+   if not manual_aid and not defaults['asset_id']['automatic']: raise ValueError('Automatické Asset ID je vypnuté. Zadaj Asset ID ručne.')
+   aid=manual_aid or next_asset_id(profession)
    if one('select id from assets where organization_id=? and upper(asset_id)=?',(org_id(),aid)):
     if manual_aid: raise ValueError(f'Asset ID {aid} už v tvojej organizácii existuje. Zmeň ho alebo nechaj pole prázdne pre automatické ID.')
     aid=next_asset_id(profession)
@@ -2047,13 +2108,14 @@ def add(what):
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
    title=(f.get('title') or '').strip(); asset_id=f.get('asset_id'); due=(f.get('due') or '').strip()
-   if not title or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(asset_id): raise ValueError('Skontroluj asset, typ, prioritu, stav a názov pracovného príkazu.')
+   priority=(f.get('priority') or org_runtime_defaults()['workorder']['priority']).strip()
+   if not title or priority not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(asset_id): raise ValueError('Skontroluj asset, typ, prioritu, stav a názov pracovného príkazu.')
    if due:
     try: datetime.strptime(due[:10],'%Y-%m-%d')
     except ValueError: raise ValueError('Termín pracovného príkazu nemá platný dátum.')
    try: cost=max(0,float(f.get('cost') or 0))
    except (TypeError,ValueError): raise ValueError('Náklad pracovného príkazu musí byť platné číslo.')
-   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip()))
+   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),priority,f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip()))
    asset_event(asset_id,'WORKORDER_CREATE','Nový pracovný príkaz',f"{f.get('kind','')} · {title}")
    audit('WORKORDER_CREATE',title); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident':
@@ -2072,7 +2134,7 @@ def add(what):
    if not plan_allows('users'):
     flash('Licenčný limit používateľov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/admin#usersAdmin')
    name=(f.get('name') or '').strip(); email=(f.get('email') or '').strip().lower(); pwd=f.get('password') or ''
-   role=f.get('role') or 'Viewer'; status=f.get('status') or 'Aktívny'
+   role=f.get('role') or org_runtime_defaults()['user']['role']; status=f.get('status') or 'Aktívny'
    if not name or not email or len(pwd)<10 or role not in {'Administrator','Facility Manager','Technik','Servisný technik','Viewer'} or status not in {'Aktívny','Neaktívny'}: raise ValueError()
    if one('select id from users where lower(email)=?',(email,)): raise IntegrityError()
    x('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id(),True if USING_POSTGRES else 1))
@@ -2395,11 +2457,18 @@ def api_notifications():
   where b.organization_id=? and i.status not in ('Ukončená','Vyriešená') order by i.id desc limit 6""",(oid,)):
   critical=r['severity'] in {'Vysoká','Kritická','Havária'}
   out.append({'key':f"incident:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · {r['severity']}",'status':r['status'],'level':'red' if critical else 'orange','url':f"/asset/{r['aid']}",'created_at':r['reported'] or ''})
+ warning_days=org_runtime_defaults()['notifications']['due_warning_days']
  for r in q("""select w.id,w.title,w.status,w.due,a.id aid,a.asset_id from workorders w
   join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
-  where b.organization_id=? and w.status not in ('Ukončené','Zrušené') order by w.id desc limit 8""",(oid,)):
+  where b.organization_id=? and w.status not in ('Ukončené','Zrušené')
+  order by case when w.due is null or w.due='' then 1 else 0 end,w.due asc,w.id desc limit 12""",(oid,)):
   overdue=bool(r['due'] and str(r['due'])[:10]<today_iso)
-  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':'Po termíne' if overdue else r['status'],'level':'red' if overdue else 'blue','url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
+  due_soon=False
+  if r['due'] and not overdue:
+   try: due_soon=(datetime.strptime(str(r['due'])[:10],'%Y-%m-%d').date()-date.today()).days<=warning_days
+   except Exception: due_soon=False
+  state='Po termíne' if overdue else ('Blíži sa termín' if due_soon else r['status'])
+  out.append({'key':f"workorder:{r['id']}",'title':r['title'],'subtitle':f"{r['asset_id']} · termín {r['due'] or '—'}",'status':state,'level':'red' if overdue else ('orange' if due_soon else 'blue'),'url':f"/asset/{r['aid']}",'created_at':r['due'] or ''})
  uid=session.get('user_id')
  if platform_ticket_mode():
   ticket_rows=q_system("""select t.id,t.ticket_no,t.subject,t.status,t.priority,t.updated,o.name organization_name
