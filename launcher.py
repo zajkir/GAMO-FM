@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, ttk
 
 from updater import (
@@ -23,24 +24,25 @@ from updater import (
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 
-NAVY = "#07182C"
-NAVY_2 = "#0B2440"
-NAVY_3 = "#10355D"
-BLUE = "#2F6DF6"
-BLUE_DARK = "#2459CA"
-BLUE_SOFT = "#EDF3FF"
-GREEN = "#15865F"
-GREEN_SOFT = "#E7F7EF"
-RED = "#C93B50"
-RED_SOFT = "#FDECEF"
-AMBER = "#A86B00"
-AMBER_SOFT = "#FFF3D8"
-TEXT = "#172337"
-MUTED = "#6F7D91"
-SOFT_TEXT = "#8D9AAF"
-LINE = "#E1E7EF"
-BG = "#EEF2F7"
-CARD = "#F8FAFD"
+NAVY = "#071627"
+NAVY_2 = "#0B2038"
+NAVY_3 = "#113251"
+BLUE = "#246BFD"
+BLUE_DARK = "#1857D8"
+BLUE_SOFT = "#EEF4FF"
+GREEN = "#138A63"
+GREEN_SOFT = "#E9F8F1"
+RED = "#D94157"
+RED_SOFT = "#FDEEF1"
+AMBER = "#A76C07"
+AMBER_SOFT = "#FFF5DF"
+TEXT = "#132238"
+MUTED = "#64748A"
+SOFT_TEXT = "#8B98A9"
+LINE = "#DDE5EF"
+BG = "#EAF0F6"
+CARD = "#F7F9FC"
+CARD_2 = "#F1F5FA"
 WHITE = "#FFFFFF"
 
 
@@ -100,6 +102,28 @@ def single_instance_guard():
     return None
 
 
+def enable_high_dpi():
+    """Use crisp Windows scaling without changing security or window behavior."""
+    if os.name != "nt":
+        return
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
+
+
+def webview_storage_path():
+    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "GAMO_FM" / "webview"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -116,9 +140,10 @@ class Launcher(tk.Tk):
         self._cloud_target = None
 
         self.title("GAMO a.s. — Facility Platform")
-        self.geometry("1180x720")
-        self.minsize(1000, 640)
+        self.geometry("1240x760")
+        self.minsize(1080, 680)
         self.configure(bg=BG)
+        self.ui_font = self._detect_font()
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<F11>", self.toggle_fullscreen)
         self.bind("<Escape>", self.exit_fullscreen)
@@ -139,7 +164,7 @@ class Launcher(tk.Tk):
 
     def _center(self):
         self.update_idletasks()
-        width, height = 1180, 720
+        width, height = 1240, 760
         x = max(0, (self.winfo_screenwidth() - width) // 2)
         y = max(0, (self.winfo_screenheight() - height) // 2)
         self.geometry(f"{width}x{height}+{x}+{y}")
@@ -274,6 +299,16 @@ class Launcher(tk.Tk):
                 pass
         return "break"
 
+    def _detect_font(self):
+        try:
+            families = set(tkfont.families(self))
+            for candidate in ("Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI"):
+                if candidate in families:
+                    return candidate
+        except Exception:
+            pass
+        return "Segoe UI"
+
     def _build_styles(self):
         style = ttk.Style(self)
         try:
@@ -282,19 +317,19 @@ class Launcher(tk.Tk):
             pass
         style.configure(
             "GAMO.Horizontal.TProgressbar",
-            troughcolor="#E7ECF3",
+            troughcolor="#E8EDF4",
             background=BLUE,
-            bordercolor="#E7ECF3",
+            bordercolor="#E8EDF4",
             lightcolor=BLUE,
             darkcolor=BLUE,
-            thickness=7,
+            thickness=8,
         )
 
     def _label(self, parent, text, size=10, weight="normal", fg=TEXT, bg=WHITE, **kwargs):
         return tk.Label(
             parent,
             text=text,
-            font=("Segoe UI", size, weight),
+            font=(self.ui_font, size, weight),
             fg=fg,
             bg=bg,
             **kwargs,
@@ -304,7 +339,7 @@ class Launcher(tk.Tk):
         bg = BLUE if primary else WHITE
         fg = WHITE if primary else TEXT
         active_bg = BLUE_DARK if primary else BLUE_SOFT
-        btn = tk.Button(
+        return tk.Button(
             parent,
             text=text,
             command=command,
@@ -314,183 +349,222 @@ class Launcher(tk.Tk):
             fg=fg,
             activebackground=active_bg,
             activeforeground=WHITE if primary else BLUE,
-            disabledforeground="#A9B5C5",
-            font=("Segoe UI", 10 if small else 11, "bold"),
-            padx=16 if small else 22,
-            pady=8 if small else 12,
+            disabledforeground="#A7B2C1",
+            font=(self.ui_font, 10 if small else 11, "bold"),
+            padx=17 if small else 24,
+            pady=9 if small else 13,
             cursor="hand2",
-            highlightthickness=0,
+            highlightthickness=1 if not primary else 0,
+            highlightbackground=LINE,
+            highlightcolor=LINE,
         )
-        return btn
 
     def _build_ui(self):
-        shell = tk.Frame(self, bg=WHITE, highlightthickness=1, highlightbackground="#D9E1EB")
-        shell.pack(fill="both", expand=True, padx=22, pady=22)
+        outer = tk.Frame(self, bg=BG)
+        outer.pack(fill="both", expand=True, padx=18, pady=18)
+        outer.grid_rowconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+
+        shell = tk.Frame(outer, bg=WHITE, highlightthickness=1, highlightbackground="#D4DEE9")
+        shell.grid(row=0, column=0, sticky="nsew")
         shell.grid_rowconfigure(0, weight=1)
-        shell.grid_columnconfigure(0, minsize=300)
+        shell.grid_columnconfigure(0, minsize=316)
         shell.grid_columnconfigure(1, weight=1)
 
         self._build_sidebar(shell)
         self._build_main(shell)
 
     def _build_sidebar(self, shell):
-        left = tk.Frame(shell, bg=NAVY, width=300)
+        left = tk.Frame(shell, bg=NAVY, width=316)
         left.grid(row=0, column=0, sticky="nsew")
         left.grid_propagate(False)
         left.grid_rowconfigure(5, weight=1)
 
-        brand = tk.Frame(left, bg=NAVY)
-        brand.grid(row=0, column=0, sticky="ew", padx=30, pady=(32, 0))
-        g = tk.Label(
-            brand, text="G", bg=BLUE, fg=WHITE,
-            font=("Segoe UI", 20, "bold"), width=2, height=1
-        )
-        g.pack(side="left")
-        btxt = tk.Frame(brand, bg=NAVY)
-        btxt.pack(side="left", padx=(13, 0))
-        self._label(btxt, "GAMO a.s.", 18, "bold", WHITE, NAVY).pack(anchor="w")
-        self._label(btxt, "FACILITY PLATFORM", 8, "bold", "#83A0C1", NAVY).pack(anchor="w", pady=(2, 0))
+        top = tk.Frame(left, bg=NAVY)
+        top.grid(row=0, column=0, sticky="ew", padx=32, pady=(34, 0))
+
+        mark = tk.Frame(top, bg=BLUE, width=46, height=46)
+        mark.pack(side="left")
+        mark.pack_propagate(False)
+        self._label(mark, "G", 21, "bold", WHITE, BLUE).place(relx=.5, rely=.5, anchor="center")
+
+        brand = tk.Frame(top, bg=NAVY)
+        brand.pack(side="left", padx=(14, 0))
+        self._label(brand, "GAMO a.s.", 18, "bold", WHITE, NAVY).pack(anchor="w")
+        self._label(brand, "CLOUD FACILITY SUITE", 8, "bold", "#7FA1C6", NAVY).pack(anchor="w", pady=(3, 0))
 
         self._label(
             left,
-            "Riadenie budov,\ntechnológií a servisu.",
-            19, "bold", WHITE, NAVY, justify="left"
-        ).grid(row=1, column=0, sticky="w", padx=30, pady=(64, 0))
+            "Prevádzka pod kontrolou.",
+            9, "bold", "#6F92B9", NAVY,
+        ).grid(row=1, column=0, sticky="w", padx=32, pady=(62, 0))
 
         self._label(
             left,
-            "Bezpečný desktop klient pre cloudové\nprostredie GAMO. Žiadna lokálna databáza\nzákazníka, žiadne manuálne aktualizácie.",
-            10, "normal", "#A8BDD4", NAVY, justify="left"
-        ).grid(row=2, column=0, sticky="w", padx=30, pady=(18, 0))
+            "Budovy, technológie\na servis v jednom\npracovnom priestore.",
+            22, "bold", WHITE, NAVY, justify="left",
+        ).grid(row=2, column=0, sticky="w", padx=32, pady=(8, 0))
+
+        self._label(
+            left,
+            "Desktop klient je iba bezpečná brána do GAMO Cloud.\n"
+            "Dáta zákazníka zostávajú centrálne, izolované\n"
+            "a synchronizované bez lokálnej databázy.",
+            9, "normal", "#A3B8CF", NAVY, justify="left",
+        ).grid(row=3, column=0, sticky="w", padx=32, pady=(18, 0))
 
         features = tk.Frame(left, bg=NAVY)
-        features.grid(row=3, column=0, sticky="ew", padx=30, pady=(45, 0))
-        for title, subtitle in (
-            ("Cloudové dáta", "Centrálne a tenantovo izolované"),
-            ("Automatické aktualizácie", "Overené cez SHA-256"),
-            ("Bezpečný prístup", "HTTPS · RLS · MFA"),
-        ):
-            row = tk.Frame(features, bg=NAVY)
-            row.pack(fill="x", pady=9)
+        features.grid(row=4, column=0, sticky="ew", padx=32, pady=(34, 0))
+        feature_rows = (
+            ("01", "Cloudové dáta", "Tenantová izolácia + PostgreSQL RLS"),
+            ("02", "Dôveryhodné zariadenie", "Prihlásenie vie zostať zapamätané 30 dní"),
+            ("03", "Automatické aktualizácie", "SHA-256 overenie pred inštaláciou"),
+        )
+        for code, title, subtitle in feature_rows:
+            row = tk.Frame(features, bg=NAVY_2, highlightthickness=1, highlightbackground="#173653")
+            row.pack(fill="x", pady=5)
             badge = tk.Label(
-                row, text="✓", bg=NAVY_3, fg="#69D9AA",
-                font=("Segoe UI", 9, "bold"), width=2, height=1
+                row, text=code, bg=NAVY_3, fg="#76A7FF",
+                font=(self.ui_font, 8, "bold"), width=4, height=2
             )
-            badge.pack(side="left", anchor="n")
-            copy = tk.Frame(row, bg=NAVY)
-            copy.pack(side="left", fill="x", expand=True, padx=(10, 0))
-            self._label(copy, title, 10, "bold", WHITE, NAVY).pack(anchor="w")
-            self._label(copy, subtitle, 8, "normal", "#8EA6C0", NAVY).pack(anchor="w", pady=(2, 0))
+            badge.pack(side="left", padx=9, pady=9)
+            copy = tk.Frame(row, bg=NAVY_2)
+            copy.pack(side="left", fill="x", expand=True, padx=(2, 8), pady=9)
+            self._label(copy, title, 9, "bold", WHITE, NAVY_2).pack(anchor="w")
+            self._label(copy, subtitle, 8, "normal", "#89A5C0", NAVY_2).pack(anchor="w", pady=(2, 0))
 
         footer = tk.Frame(left, bg=NAVY)
-        footer.grid(row=6, column=0, sticky="sew", padx=30, pady=(0, 28))
-        self._label(footer, "DESKTOP CLIENT", 8, "bold", "#6F89A6", NAVY).pack(anchor="w")
-        self._label(footer, f"v{current_version()}", 10, "bold", "#B8C9DA", NAVY).pack(anchor="w", pady=(3, 0))
+        footer.grid(row=6, column=0, sticky="sew", padx=32, pady=(0, 28))
+        line = tk.Frame(footer, bg="#18334F", height=1)
+        line.pack(fill="x", pady=(0, 17))
+        bottom = tk.Frame(footer, bg=NAVY)
+        bottom.pack(fill="x")
+        vcopy = tk.Frame(bottom, bg=NAVY)
+        vcopy.pack(side="left")
+        self._label(vcopy, "DESKTOP CLIENT", 7, "bold", "#6483A4", NAVY).pack(anchor="w")
+        self._label(vcopy, f"v{current_version()}", 10, "bold", "#D7E3EF", NAVY).pack(anchor="w", pady=(3, 0))
+        pill = self._label(bottom, "SECURE", 7, "bold", "#76E1B4", NAVY_2)
+        pill.pack(side="right", padx=(8, 0), pady=4, ipadx=9, ipady=5)
 
     def _build_main(self, shell):
         main = tk.Frame(shell, bg=WHITE)
         main.grid(row=0, column=1, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(6, weight=1)
+        main.grid_rowconfigure(7, weight=1)
 
-        top = tk.Frame(main, bg=WHITE)
-        top.grid(row=0, column=0, sticky="ew", padx=42, pady=(38, 0))
-        top.grid_columnconfigure(0, weight=1)
+        header = tk.Frame(main, bg=WHITE)
+        header.grid(row=0, column=0, sticky="ew", padx=44, pady=(34, 0))
+        header.grid_columnconfigure(0, weight=1)
 
-        eyebrow = tk.Frame(top, bg=WHITE)
-        eyebrow.grid(row=0, column=0, sticky="ew")
-        self._label(eyebrow, "GAMO CLOUD CLIENT", 9, "bold", BLUE, WHITE).pack(side="left")
-        right_info = tk.Frame(eyebrow, bg=WHITE)
-        right_info.pack(side="right")
-        self.last_check_label = self._label(right_info, "Posledná kontrola: —", 8, "normal", SOFT_TEXT, WHITE)
-        self.last_check_label.pack(side="left")
-        self._label(right_info, "   ·   F11  celá obrazovka", 8, "normal", SOFT_TEXT, WHITE).pack(side="left")
-
-        self._label(top, "Facility Platform", 30, "bold", TEXT, WHITE).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        head_left = tk.Frame(header, bg=WHITE)
+        head_left.grid(row=0, column=0, sticky="w")
+        badge = self._label(head_left, "GAMO CLOUD DESKTOP", 8, "bold", BLUE, BLUE_SOFT)
+        badge.pack(anchor="w", ipadx=10, ipady=5)
+        self._label(head_left, "Facility Platform", 32, "bold", TEXT, WHITE).pack(anchor="w", pady=(12, 0))
         self._label(
-            top,
-            "Rýchly a bezpečný vstup do cloudového prostredia GAMO a.s.",
-            11, "normal", MUTED, WHITE,
-        ).grid(row=2, column=0, sticky="w", pady=(5, 0))
+            head_left,
+            "Rýchly vstup do bezpečného cloudového prostredia GAMO a.s.",
+            10, "normal", MUTED, WHITE,
+        ).pack(anchor="w", pady=(6, 0))
 
-        status = tk.Frame(main, bg=CARD, highlightthickness=1, highlightbackground=LINE)
-        status.grid(row=1, column=0, sticky="ew", padx=42, pady=(28, 14))
+        head_right = tk.Frame(header, bg=WHITE)
+        head_right.grid(row=0, column=1, sticky="ne")
+        self.last_check_label = self._label(head_right, "Posledná kontrola: —", 8, "normal", SOFT_TEXT, WHITE)
+        self.last_check_label.pack(anchor="e")
+        self._label(head_right, "F11  ·  celá obrazovka", 8, "normal", SOFT_TEXT, WHITE).pack(anchor="e", pady=(5, 0))
+
+        status_wrap = tk.Frame(main, bg=WHITE)
+        status_wrap.grid(row=1, column=0, sticky="ew", padx=44, pady=(28, 12))
+        status_wrap.grid_columnconfigure(1, weight=1)
+        accent = tk.Frame(status_wrap, bg=BLUE, width=5)
+        accent.grid(row=0, column=0, sticky="ns")
+
+        status = tk.Frame(status_wrap, bg=CARD, highlightthickness=1, highlightbackground=LINE)
+        status.grid(row=0, column=1, sticky="ew")
         status.grid_columnconfigure(1, weight=1)
 
         self.status_badge = tk.Label(
             status, text="…", bg=AMBER_SOFT, fg=AMBER,
-            font=("Segoe UI", 14, "bold"), width=3, height=1
+            font=(self.ui_font, 15, "bold"), width=3, height=1
         )
-        self.status_badge.grid(row=0, column=0, rowspan=2, padx=(18, 12), pady=18)
+        self.status_badge.grid(row=0, column=0, rowspan=2, padx=(18, 13), pady=17)
 
-        self.status_title = self._label(status, "Kontrolujem systém…", 13, "bold", TEXT, CARD)
-        self.status_title.grid(row=0, column=1, sticky="sw", pady=(14, 0))
-        self.status_detail = self._label(status, "Pripájam sa ku GAMO Cloud.", 9, "normal", MUTED, CARD)
-        self.status_detail.grid(row=1, column=1, sticky="nw", pady=(3, 14))
+        self.status_title = self._label(status, "Kontrolujem GAMO Cloud…", 12, "bold", TEXT, CARD)
+        self.status_title.grid(row=0, column=1, sticky="sw", pady=(13, 0))
+        self.status_detail = self._label(status, "Overujem dostupnosť servera a aktualizácie.", 9, "normal", MUTED, CARD)
+        self.status_detail.grid(row=1, column=1, sticky="nw", pady=(3, 13))
 
-        self.refresh_btn = self._button(status, "↻  Obnoviť", self.refresh_status, small=True)
-        self.refresh_btn.grid(row=0, column=2, rowspan=2, padx=16, pady=14)
+        self.refresh_btn = self._button(status, "Obnoviť  ↻", self.refresh_status, small=True)
+        self.refresh_btn.grid(row=0, column=2, rowspan=2, padx=16, pady=13)
 
         info = tk.Frame(main, bg=WHITE)
-        info.grid(row=2, column=0, sticky="ew", padx=42)
+        info.grid(row=2, column=0, sticky="ew", padx=44)
         for i in range(3):
             info.grid_columnconfigure(i, weight=1)
 
-        self.version_info = self._info_box(info, 0, "VERZIA", f"v{current_version()}")
-        self.cloud_info = self._info_box(info, 1, "GAMO CLOUD", "Kontrola…")
-        self.security_info = self._info_box(info, 2, "PRIPOJENIE", "HTTPS")
+        self.version_info = self._info_box(info, 0, "VERZIA", f"v{current_version()}", "Aktuálny desktop build")
+        self.cloud_info = self._info_box(info, 1, "GAMO CLOUD", "Kontrola…", "Stav centrálnej platformy")
+        self.security_info = self._info_box(info, 2, "PRIPOJENIE", "HTTPS", "Šifrované spojenie")
 
-        self.update_card = tk.Frame(main, bg=BLUE_SOFT, highlightthickness=1, highlightbackground="#D6E4FF")
+        trust = tk.Frame(main, bg=WHITE)
+        trust.grid(row=3, column=0, sticky="w", padx=44, pady=(15, 0))
+        for text in ("TLS", "RLS", "MFA", "AUTO UPDATE", "PERSISTENT SESSION"):
+            chip = self._label(trust, text, 7, "bold", "#51647A", CARD_2)
+            chip.pack(side="left", padx=(0, 6), ipadx=8, ipady=4)
+
+        self.update_card = tk.Frame(main, bg=BLUE_SOFT, highlightthickness=1, highlightbackground="#D7E5FF")
         self.update_card.grid_columnconfigure(0, weight=1)
         self.update_title = self._label(self.update_card, "Je dostupná nová verzia", 10, "bold", TEXT, BLUE_SOFT)
-        self.update_title.grid(row=0, column=0, sticky="w", padx=16, pady=(12, 2))
+        self.update_title.grid(row=0, column=0, sticky="w", padx=16, pady=(11, 2))
         self.update_detail = self._label(self.update_card, "Odporúčame aktualizovať pred spustením.", 8, "normal", MUTED, BLUE_SOFT)
-        self.update_detail.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 12))
+        self.update_detail.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 11))
         self.update_btn = self._button(self.update_card, "Aktualizovať", self.install_update, primary=True, small=True)
-        self.update_btn.grid(row=0, column=1, rowspan=2, padx=14, pady=10)
-        self.update_card.grid(row=3, column=0, sticky="ew", padx=42, pady=(14, 0))
+        self.update_btn.grid(row=0, column=1, rowspan=2, padx=13, pady=9)
+        self.update_card.grid(row=4, column=0, sticky="ew", padx=44, pady=(13, 0))
         self.update_card.grid_remove()
 
         self.progress_var = tk.DoubleVar(value=0)
-        self.progress = ttk.Progressbar(
-            main, variable=self.progress_var, maximum=100, style="GAMO.Horizontal.TProgressbar"
-        )
-        self.progress.grid(row=4, column=0, sticky="ew", padx=42, pady=(11, 0))
+        self.progress = ttk.Progressbar(main, variable=self.progress_var, maximum=100, style="GAMO.Horizontal.TProgressbar")
+        self.progress.grid(row=5, column=0, sticky="ew", padx=44, pady=(9, 0))
         self.progress.grid_remove()
 
         actions = tk.Frame(main, bg=WHITE)
-        actions.grid(row=5, column=0, sticky="ew", padx=42, pady=(20, 0))
+        actions.grid(row=6, column=0, sticky="ew", padx=44, pady=(24, 0))
         actions.grid_columnconfigure(0, weight=1)
 
-        self.launch_btn = self._button(actions, "Spustiť GAMO a.s.  →", self.launch_app, primary=True)
-        self.launch_btn.grid(row=0, column=0, sticky="ew")
+        self.launch_btn = self._button(actions, "Spustiť GAMO a.s.   →", self.launch_app, primary=True)
+        self.launch_btn.grid(row=0, column=0, sticky="ew", ipady=2)
         self.launch_btn.config(state="disabled")
         self.diagnostics_btn = self._button(actions, "Diagnostika", self.open_diagnostics, small=True)
         self.diagnostics_btn.grid(row=0, column=1, padx=(12, 0))
 
         hint = tk.Frame(main, bg=WHITE)
-        hint.grid(row=6, column=0, sticky="sew", padx=42, pady=(24, 0))
+        hint.grid(row=7, column=0, sticky="sew", padx=44, pady=(24, 0))
         self._label(
             hint,
-            "Launcher kontroluje iba dostupnosť cloudu a aktualizácie.\n"
-            "Po spustení sa bezpečne zatvorí a nezaťažuje aplikáciu na pozadí.",
-            9, "normal", SOFT_TEXT, WHITE, justify="left"
+            "Prihlásenie môže zostať zapamätané na tomto zariadení.\n"
+            "Po otvorení platformy launcher skončí a nezaťažuje aplikáciu na pozadí.",
+            8, "normal", SOFT_TEXT, WHITE, justify="left"
         ).pack(anchor="sw", pady=(0, 14))
 
         bottom = tk.Frame(main, bg="#F8FAFD", highlightthickness=1, highlightbackground="#EEF2F6")
-        bottom.grid(row=7, column=0, sticky="ew")
+        bottom.grid(row=8, column=0, sticky="ew")
         self._label(
             bottom,
-            "GAMO a.s.   ·   Cloud Facility Platform   ·   HTTPS   ·   automatické aktualizácie",
+            "GAMO a.s.   ·   Cloud Facility Platform   ·   secure desktop client",
             8, "normal", "#8492A5", "#F8FAFD"
-        ).pack(pady=13)
+        ).pack(pady=12)
 
-    def _info_box(self, parent, column, label, value):
+    def _info_box(self, parent, column, label, value, subtitle=""):
         box = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=LINE)
         box.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 6, 0 if column == 2 else 6))
-        self._label(box, label, 8, "bold", "#7B899D", CARD).pack(anchor="w", padx=14, pady=(12, 0))
-        value_label = self._label(box, value, 12, "bold", TEXT, CARD)
-        value_label.pack(anchor="w", padx=14, pady=(4, 12))
+        self._label(box, label, 8, "bold", "#76869A", CARD).pack(anchor="w", padx=15, pady=(12, 0))
+        value_label = self._label(box, value, 13, "bold", TEXT, CARD)
+        value_label.pack(anchor="w", padx=15, pady=(4, 0))
+        if subtitle:
+            self._label(box, subtitle, 7, "normal", SOFT_TEXT, CARD).pack(anchor="w", padx=15, pady=(3, 12))
+        else:
+            value_label.pack_configure(pady=(4, 12))
         box.value_label = value_label
         return box
 
@@ -737,7 +811,22 @@ def open_cloud_client(url):
         )
         api.bind_window(window)
         write_log("Opening single-process GAMO Cloud client.")
-        webview.start(_show_cloud_window, window, debug=False, gui="edgechromium")
+        try:
+            webview.settings["ALLOW_DOWNLOADS"] = True
+            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+            webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
+        except Exception:
+            pass
+        storage = webview_storage_path()
+        webview.start(
+            _show_cloud_window,
+            window,
+            debug=False,
+            gui="edgechromium",
+            private_mode=False,
+            storage_path=str(storage),
+            user_agent=f"GAMO-Desktop/{current_version()} Windows",
+        )
         return True
     except Exception as exc:
         detail = str(exc)
@@ -766,6 +855,7 @@ def open_cloud_client(url):
 
 
 def main():
+    enable_high_dpi()
     mutex = single_instance_guard()
     if mutex is False:
         return

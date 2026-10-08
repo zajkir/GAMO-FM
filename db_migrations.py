@@ -1101,6 +1101,68 @@ def _migration_14(db, using_postgres):
                     USING ({predicate}) WITH CHECK ({predicate})"""
             )
 
+
+def _migration_15(db, using_postgres):
+    """Persistent remembered-device tokens and performance indexes."""
+    if using_postgres:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS remembered_devices(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT UNIQUE NOT NULL,
+                label TEXT,
+                user_agent TEXT,
+                ip_created TEXT,
+                created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                last_used TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMPTZ NOT NULL,
+                revoked_at TIMESTAMPTZ
+            )"""
+        )
+    else:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS remembered_devices(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT UNIQUE NOT NULL,
+                label TEXT,
+                user_agent TEXT,
+                ip_created TEXT,
+                created TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_used TEXT DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT NOT NULL,
+                revoked_at TEXT
+            )"""
+        )
+
+    indexes = (
+        "CREATE INDEX IF NOT EXISTS idx_remembered_devices_user ON remembered_devices(user_id,revoked_at,expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_assets_org_status ON assets(organization_id,status)",
+        "CREATE INDEX IF NOT EXISTS idx_assets_org_building ON assets(organization_id,building_id)",
+        "CREATE INDEX IF NOT EXISTS idx_buildings_org_name ON buildings(organization_id,name)",
+        "CREATE INDEX IF NOT EXISTS idx_users_org_status ON users(organization_id,status)",
+        "CREATE INDEX IF NOT EXISTS idx_workorders_asset_status_due ON workorders(asset_id,status,due)",
+        "CREATE INDEX IF NOT EXISTS idx_incidents_asset_status ON incidents(asset_id,status)",
+        "CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket_id ON ticket_messages(ticket_id,id)",
+        "CREATE INDEX IF NOT EXISTS idx_tickets_org_updated ON tickets(organization_id,updated)",
+    )
+    for sql in indexes:
+        db.execute(sql)
+
+    if using_postgres:
+        platform = "current_setting('gamo.platform_admin', true) = '1'"
+        tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+        db.execute("ALTER TABLE remembered_devices ENABLE ROW LEVEL SECURITY")
+        db.execute("ALTER TABLE remembered_devices FORCE ROW LEVEL SECURITY")
+        db.execute("DROP POLICY IF EXISTS gamo_tenant_remembered_devices ON remembered_devices")
+        db.execute(
+            f"""CREATE POLICY gamo_tenant_remembered_devices ON remembered_devices
+                USING ({platform} OR organization_id={tenant})
+                WITH CHECK ({platform} OR organization_id={tenant})"""
+        )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -1116,6 +1178,7 @@ MIGRATIONS = (
     (12, "seed_fdsfsdf_demo_data", _migration_12),
     (13, "platform_ticket_inbox", _migration_13),
     (14, "asset_documents_and_ticket_attachments", _migration_14),
+    (15, "remembered_devices_and_performance_indexes", _migration_15),
 )
 
 

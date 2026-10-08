@@ -19,19 +19,20 @@ print("Launcher Canvas options OK")
 
 assert 'self.bind("<F11>", self.toggle_fullscreen)' in source
 assert 'self.attributes("-fullscreen", self._fullscreen)' in source
-print("Launcher fullscreen binding OK")
-
-assert 'self.geometry("1180x720")' in source
-assert 'font=("Segoe UI", size, weight)' in source
-assert 'F11  celá obrazovka' in source
+assert 'self.geometry("1240x760")' in source
+assert 'self.minsize(1080, 680)' in source
+assert 'Segoe UI Variable Display' in source
+assert 'def _detect_font(self):' in source
+assert 'F11  ·  celá obrazovka' in source
 assert 'Posledná kontrola: —' in source
-print("Launcher readable layout checks OK")
+print("Launcher premium readable layout checks OK")
 
 assert 'method="HEAD"' in source
 assert 'def _post(self, delay, callback):' in source
 assert 'report_callback_exception = self._callback_error' in source
 assert 'self._cloud_target = self.server_url' in source
-print("Launcher stability and single-process cloud handoff checks OK")
+assert 'def enable_high_dpi():' in source
+print("Launcher stability and DPI checks OK")
 
 assert 'self.bind("<Return>", self._launch_from_keyboard)' in source
 assert 'def _schedule_retry(self, delay_ms=15000):' in source
@@ -43,13 +44,14 @@ print("Launcher retry and diagnostics checks OK")
 
 assert 'def open_cloud_client(url):' in source
 assert 'webview.create_window(' in source
-assert 'webview.start(_show_cloud_window, window, debug=False, gui="edgechromium")' in source
+assert 'private_mode=False' in source
+assert 'storage_path=str(storage)' in source
+assert 'user_agent=f"GAMO-Desktop/{current_version()} Windows"' in source
+assert 'webview.settings["ALLOW_DOWNLOADS"] = True' in source
 assert 'webbrowser.open(url, new=1)' in source
-assert 'self._cloud_target = self.server_url' in source
 assert 'subprocess.Popen' not in source
 assert 'GAMO_FM.exe' not in source
-print("Launcher single-process cloud client checks OK")
-
+print("Launcher persistent single-process cloud client checks OK")
 
 assert 'executable={Path(sys.executable).resolve()}' in source
 assert 'app_dir={APP_DIR}' in source

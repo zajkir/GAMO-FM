@@ -740,3 +740,17 @@ body small{font-size:10px;line-height:1.42}
  .asset-doc-list article{grid-template-columns:38px minmax(0,1fr) auto}.asset-doc-list article form{grid-column:3}
  .ticket-compose-footer{align-items:flex-start;flex-direction:column}.ticket-compose-footer>button{align-self:flex-end}
 }
+
+
+/* Desktop performance pass 9.0.0.18 */
+.desktop-client body{scroll-behavior:auto}
+.desktop-client .modal{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.desktop-client .overlaypanel,.desktop-client .modalbox,.desktop-client .card,.desktop-client .metric{box-shadow:0 8px 26px rgba(15,23,42,.08)}
+.dt2-world{will-change:transform;transform-origin:center center;backface-visibility:hidden}
+.dt2-stage.dragging .dt2-world{filter:none!important}
+.dt2-stage.dragging .dt2-floor,.dt2-stage.dragging .dt2-floor-top{transition:none!important}
+.dt2-stage{contain:layout paint}
+.ticket-thread{contain:layout paint}
+@media (prefers-reduced-motion:reduce){
+ *,*:before,*:after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+}
