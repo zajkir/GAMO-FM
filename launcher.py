@@ -5,7 +5,6 @@ import sys
 import threading
 import subprocess
 import faulthandler
-import webbrowser
 import traceback
 import urllib.request
 from datetime import datetime
@@ -433,9 +432,9 @@ class Launcher(tk.Tk):
 
         self._label(
             left,
-            "Desktop klient je iba bezpečná brána do GAMO Cloud.\n"
-            "Dáta zákazníka zostávajú centrálne, izolované\n"
-            "a synchronizované bez lokálnej databázy.",
+            "GAMO sa spúšťa ako samostatná Windows aplikácia.\n"
+            "Cloud zabezpečuje iba dáta a synchronizáciu na pozadí;\n"
+            "celé používateľské rozhranie zostáva v aplikácii.",
             9, "normal", "#A3B8CF", NAVY, justify="left",
         ).grid(row=3, column=0, sticky="w", padx=32, pady=(18, 0))
 
@@ -569,7 +568,7 @@ class Launcher(tk.Tk):
         self._label(
             hint,
             "Prihlásenie môže zostať zapamätané na tomto zariadení.\n"
-            "Po otvorení platformy launcher skončí a nezaťažuje aplikáciu na pozadí.",
+            "Po spustení sa otvorí plné GAMO desktop okno; externý prehliadač sa nepoužíva.",
             8, "normal", SOFT_TEXT, WHITE, justify="left"
         ).pack(anchor="sw", pady=(0, 14))
 
@@ -830,22 +829,6 @@ def _show_cloud_window(window):
         write_log(f"Initial maximize skipped: {exc}")
 
 
-def _show_cloud_fallback_error(url, detail):
-    try:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showwarning(
-            "GAMO a.s. — Desktop klient",
-            "Natívne okno GAMO sa na tomto počítači nepodarilo otvoriť.\n\n"
-            "Aplikáciu som preto otvoril v predvolenom webovom prehliadači.\n\n"
-            f"Detail: {detail}\n\n{url}",
-            parent=root,
-        )
-        root.destroy()
-    except Exception:
-        pass
-
-
 def launch_cloud_client_process(url):
     """Start the WebView2 client in a clean process of the same trusted launcher binary.
 
@@ -874,12 +857,18 @@ def launch_cloud_client_process(url):
     except Exception as exc:
         write_log(f"Dedicated cloud client process failed: {exc}")
         try:
-            opened = bool(webbrowser.open(url, new=1))
-        except Exception as browser_exc:
-            write_log(f"Cloud process browser fallback failed: {browser_exc}")
-            opened = False
-        if opened:
-            _show_cloud_fallback_error(url, str(exc))
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "GAMO a.s. — Desktop klient",
+                "Natívne okno GAMO sa nepodarilo spustiť.\n\n"
+                "Aplikácia sa z bezpečnostných dôvodov neotvorí v externom prehliadači.\n\n"
+                "Skús aplikáciu spustiť znova alebo otvor Diagnostiku a pošli launcher.log podpore.",
+                parent=root,
+            )
+            root.destroy()
+        except Exception:
+            pass
         return False
 
 
@@ -910,7 +899,7 @@ def open_cloud_client(url):
         write_log("Opening single-process GAMO Cloud client.")
         try:
             webview.settings["ALLOW_DOWNLOADS"] = True
-            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
             webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
         except Exception:
             pass
@@ -929,20 +918,14 @@ def open_cloud_client(url):
         detail = str(exc)
         write_log(f"Native cloud client failed: {detail}")
         try:
-            opened = bool(webbrowser.open(url, new=1))
-        except Exception as browser_exc:
-            write_log(f"Browser fallback failed: {browser_exc}")
-            opened = False
-        if opened:
-            _show_cloud_fallback_error(url, detail)
-            return False
-        try:
             root = tk.Tk()
             root.withdraw()
             messagebox.showerror(
                 "GAMO a.s. — Desktop klient",
-                "Aplikáciu sa nepodarilo otvoriť ani v natívnom okne, ani v prehliadači.\n\n"
-                "Skontroluj Microsoft Edge WebView2 Runtime alebo kontaktuj správcu.",
+                "Desktop okno GAMO sa nepodarilo spustiť.\n\n"
+                "Aplikácia sa nikdy nepresmeruje do externého prehliadača.\n\n"
+                "Skontroluj Microsoft Edge WebView2 Runtime alebo otvor Diagnostiku a pošli launcher.log podpore.\n\n"
+                f"Detail: {detail}",
                 parent=root,
             )
             root.destroy()
