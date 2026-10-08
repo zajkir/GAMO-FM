@@ -302,6 +302,22 @@ def _replace_launcher_targets(payload, targets, expected_sha256):
         raise
 
 
+def can_self_update_install_dir(install_dir=None):
+    """Return True only if the installed launcher directory is writable now."""
+    directory = Path(install_dir or APP_DIR).resolve()
+    probe = directory / f'.gamo_update_probe_{os.getpid()}'
+    try:
+        probe.write_bytes(b'GAMO')
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
 def launch_launcher_self_update(payload, process_id, install_dir=None, version='', expected_sha256=''):
     """Run a detached trusted copy of the current launcher as update helper."""
     if os.name != 'nt' or not getattr(sys, 'frozen', False):
