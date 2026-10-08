@@ -147,13 +147,43 @@ function modal(t,editData=null){
 }
 function editRecord(type,data){modal(type,data)}
 function closeM(){document.querySelector('#modal').classList.remove('show')}function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa nedá jednoducho vrátiť späť.'){
- const m=document.querySelector('#confirmModal');if(!m){console.error('GAMO confirm modal is missing; destructive action blocked.');return false;}
+ const m=document.querySelector('#confirmModal');if(!m){console.error('GAMO confirm modal is missing; destructive action blocked.');return false}
  window._gamoConfirmForm=form;
- const t=m.querySelector('#confirmTitle'),d=m.querySelector('#confirmDetail');if(t)t.textContent=title;if(d)d.textContent=detail;
- m.classList.add('show');return false;
+ const titleEl=m.querySelector('#confirmTitle'),detailEl=m.querySelector('#confirmDetail'),objectEl=m.querySelector('#confirmObject'),impactEl=m.querySelector('#confirmImpact'),extraEl=m.querySelector('#confirmExtra'),warningEl=m.querySelector('#confirmWarning'),submit=m.querySelector('#confirmDeleteButton');
+ if(titleEl)titleEl.textContent=title;if(detailEl)detailEl.textContent=detail;
+ if(objectEl)objectEl.hidden=true;if(impactEl){impactEl.innerHTML='';impactEl.hidden=true}if(extraEl){extraEl.textContent='';extraEl.hidden=true}
+ if(warningEl){warningEl.textContent='GAMO pred odstránením kontroluje väzby, oprávnenia a dopad.';warningEl.classList.remove('blocked')}
+ if(submit){submit.disabled=false;submit.textContent='Áno, odstrániť'}
+ m.classList.add('show');
+ let path='';
+ try{path=new URL(form.action,location.href).pathname}catch(e){path=form.getAttribute('action')||''}
+ const match=path.match(/^\/delete\/([^/]+)\/(\d+)$/);
+ if(match){
+  if(submit){submit.disabled=true;submit.textContent='Kontrolujem dopad…'}
+  if(impactEl){impactEl.hidden=false;impactEl.innerHTML='<div class="confirm-loading"><i></i><span>Načítavam naviazané objekty…</span></div>'}
+  fetch('/api/delete-impact/'+encodeURIComponent(match[1])+'/'+encodeURIComponent(match[2]),{cache:'no-store'})
+   .then(r=>{if(!r.ok)throw new Error('impact');return r.json()})
+   .then(data=>{
+    if(objectEl){objectEl.hidden=false;objectEl.innerHTML='<small>'+escapeHtml(data.type||'Záznam')+'</small><b>'+escapeHtml(data.name||'')+'</b>'}
+    const entries=Object.entries(data.counts||{});
+    if(impactEl){
+     impactEl.hidden=entries.length===0;
+     impactEl.innerHTML=entries.map(([name,value])=>'<div><span>'+escapeHtml(name)+'</span><b>'+escapeHtml(value)+'</b></div>').join('');
+    }
+    if(extraEl&&data.extra){extraEl.hidden=false;extraEl.textContent=data.extra}
+    if(warningEl){warningEl.textContent=data.note||detail;warningEl.classList.toggle('blocked',!!data.blocked)}
+    if(submit){submit.disabled=!!data.blocked;submit.textContent=data.blocked?'Odstránenie je zablokované':'Áno, odstrániť'}
+   })
+   .catch(()=>{
+    if(impactEl){impactEl.hidden=true;impactEl.innerHTML=''}
+    if(warningEl){warningEl.textContent='Dopad sa nepodarilo bezpečne načítať. Odstránenie bolo preventívne zablokované.';warningEl.classList.add('blocked')}
+    if(submit){submit.disabled=true;submit.textContent='Odstránenie je zablokované'}
+   });
+ }
+ return false;
 }
 function closeConfirm(){document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null}
-function executeConfirm(){const f=window._gamoConfirmForm;if(!f)return;document.querySelector('#confirmModal')?.classList.remove('show');window._gamoConfirmForm=null;f.submit()}
+function executeConfirm(){const f=window._gamoConfirmForm,btn=document.querySelector('#confirmDeleteButton');if(!f||btn?.disabled)return;btn.disabled=true;btn.textContent='Odstraňujem…';f.submit()}
 function filterOpsRows(filter,btn){
  document.querySelectorAll('.ops-filter-btn').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active');
  document.querySelectorAll('[data-ops-row]').forEach(row=>{
