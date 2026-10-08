@@ -1614,6 +1614,8 @@ def create_organization_backup_archive(oid,privileged=False):
  docs=read_all('select id,building_id,name,category,mime,size,uploaded,data from documents where building_id in (select id from buildings where organization_id=?) order by id',(oid,))
  asset_docs=read_all('select id,asset_id,name,category,mime,size,uploaded,data from asset_documents where organization_id=? order by id',(oid,))
  ticket_files=read_all('select id,ticket_id,message_id,sender_user_id,name,mime,size,uploaded,data from ticket_attachments where organization_id=? order by id',(oid,))
+ workorder_files=read_all('select id,workorder_id,uploader_user_id,name,mime,size,uploaded,data from workorder_attachments where organization_id=? order by id',(oid,))
+ incident_files=read_all('select id,incident_id,uploader_user_id,name,mime,size,uploaded,data from incident_attachments where organization_id=? order by id',(oid,))
  files={}
  for name,rows in data.items():
   files[f'data/{name}.json']=json.dumps(rows,ensure_ascii=False,indent=2,default=str).encode('utf-8')
@@ -1641,12 +1643,28 @@ def create_organization_backup_archive(oid,privileged=False):
   item['archive_path']=path; ticket_file_meta.append(item)
   files[path]=bytes(d['data']) if d['data'] is not None else b''
  files['data/ticket_attachments.json']=json.dumps(ticket_file_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+ workorder_file_meta=[]
+ for d in workorder_files:
+  item={k:d[k] for k in ['id','workorder_id','uploader_user_id','name','mime','size','uploaded']}
+  safe=os.path.basename(d['name'] or f"workorder_attachment_{d['id']}")
+  path=f"workorder_attachments/{d['id']}_{safe}"
+  item['archive_path']=path; workorder_file_meta.append(item)
+  files[path]=bytes(d['data']) if d['data'] is not None else b''
+ files['data/workorder_attachments.json']=json.dumps(workorder_file_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
+ incident_file_meta=[]
+ for d in incident_files:
+  item={k:d[k] for k in ['id','incident_id','uploader_user_id','name','mime','size','uploaded']}
+  safe=os.path.basename(d['name'] or f"incident_attachment_{d['id']}")
+  path=f"incident_attachments/{d['id']}_{safe}"
+  item['archive_path']=path; incident_file_meta.append(item)
+  files[path]=bytes(d['data']) if d['data'] is not None else b''
+ files['data/incident_attachments.json']=json.dumps(incident_file_meta,ensure_ascii=False,indent=2,default=str).encode('utf-8')
  checksums={path:hashlib.sha256(blob).hexdigest() for path,blob in files.items()}
  manifest={
   'format':'GAMO_ORGANIZATION_BACKUP_V3','generated_at':datetime.utcnow().isoformat(timespec='seconds')+'Z',
   'organization':{k:org[k] for k in ['id','code','name','status','plan','license_status','license_until','branding_name','brand_color','brand_tagline','privacy_contact','data_region','retention_days','mfa_required','created'] if k in org.keys()},
   'privacy':{'password_hashes_included':False,'mfa_secrets_included':False,'support_access_active':support_access_active(org)},
-  'counts':{name:len(rows) for name,rows in data.items()} | {'documents':len(doc_meta),'asset_documents':len(asset_doc_meta),'ticket_attachments':len(ticket_file_meta)},
+  'counts':{name:len(rows) for name,rows in data.items()} | {'documents':len(doc_meta),'asset_documents':len(asset_doc_meta),'ticket_attachments':len(ticket_file_meta),'workorder_attachments':len(workorder_file_meta),'incident_attachments':len(incident_file_meta)},
   'checksums_sha256':checksums,
   'note':'Password hashes, TOTP secrets and recovery codes are intentionally excluded.'
  }
@@ -1663,7 +1681,7 @@ def verify_organization_backup_bytes(blob):
    manifest=json.loads(z.read('manifest.json').decode('utf-8'))
    if manifest.get('format')!='GAMO_ORGANIZATION_BACKUP_V3': return False,'Neplatný formát backupu.'
    checks=manifest.get('checksums_sha256') or {}
-   required={'data/buildings.json','data/assets.json','data/users.json','data/documents.json','data/asset_documents.json','data/ticket_attachments.json'}
+   required={'data/buildings.json','data/assets.json','data/users.json','data/documents.json','data/asset_documents.json','data/ticket_attachments.json','data/workorder_attachments.json','data/incident_attachments.json'}
    if not required.issubset(set(checks)): return False,'Backup nemá všetky povinné dátové súbory.'
    for path,expected in checks.items():
     if path not in z.namelist(): return False,f'Chýba {path}.'
