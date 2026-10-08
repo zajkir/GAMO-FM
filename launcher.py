@@ -3,6 +3,8 @@ import json
 import os
 import sys
 import threading
+import subprocess
+import faulthandler
 import webbrowser
 import traceback
 import urllib.request
@@ -50,6 +52,8 @@ BG = "#EAF0F6"
 CARD = "#F7F9FC"
 CARD_2 = "#F1F5FA"
 WHITE = "#FFFFFF"
+CLOUD_CLIENT_ARG = "--gamo-cloud-client"
+_FAULT_LOG_HANDLE = None
 
 
 def load_desktop_config():
@@ -88,6 +92,22 @@ def write_log(message):
             handle.write(f"{datetime.now().isoformat(timespec='seconds')}  {message}\n")
     except Exception:
         pass
+
+
+def enable_crash_diagnostics():
+    """Persist Python/native crash traces when the desktop shell terminates unexpectedly."""
+    global _FAULT_LOG_HANDLE
+    try:
+        path = log_path().with_name("launcher-crash.log")
+        _FAULT_LOG_HANDLE = path.open("a", encoding="utf-8")
+        _FAULT_LOG_HANDLE.write(
+            f"\n{datetime.now().isoformat(timespec='seconds')}  crash diagnostics enabled · "
+            f"pid={os.getpid()} · argv={sys.argv!r}\n"
+        )
+        _FAULT_LOG_HANDLE.flush()
+        faulthandler.enable(file=_FAULT_LOG_HANDLE, all_threads=True)
+    except Exception as exc:
+        write_log(f"Crash diagnostics could not be enabled: {exc}")
 
 
 def single_instance_guard():
@@ -826,6 +846,43 @@ def _show_cloud_fallback_error(url, detail):
         pass
 
 
+def launch_cloud_client_process(url):
+    """Start the WebView2 client in a clean process of the same trusted launcher binary.
+
+    Tkinter and WinForms/WebView2 no longer share one process/message loop. This
+    removes a class of focus/keyboard crashes while keeping Windows Application
+    Control on the exact same GAMO_Launcher.exe image.
+    """
+    url = str(url or "").strip()
+    if not url.startswith(("https://", "http://")):
+        write_log(f"Cloud client process refused invalid URL: {url!r}")
+        return False
+    try:
+        if getattr(sys, "frozen", False):
+            command = [str(Path(sys.executable).resolve()), CLOUD_CLIENT_ARG, url]
+        else:
+            command = [sys.executable, str(Path(__file__).resolve()), CLOUD_CLIENT_ARG, url]
+        kwargs = {
+            "cwd": str(APP_DIR),
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen(command, **kwargs)
+        write_log(f"Dedicated cloud client process started · executable={command[0]} · pid-parent={os.getpid()}")
+        return True
+    except Exception as exc:
+        write_log(f"Dedicated cloud client process failed: {exc}")
+        try:
+            opened = bool(webbrowser.open(url, new=1))
+        except Exception as browser_exc:
+            write_log(f"Cloud process browser fallback failed: {browser_exc}")
+            opened = False
+        if opened:
+            _show_cloud_fallback_error(url, str(exc))
+        return False
+
+
 def open_cloud_client(url):
     """Open GAMO Cloud inside the launcher process.
 
@@ -895,9 +952,20 @@ def open_cloud_client(url):
 
 
 def main():
-    # Self-update helper mode must run before the single-instance mutex/UI.
+    enable_crash_diagnostics()
+
+    # Helper/update modes must run before the single-instance launcher mutex.
     if len(sys.argv) >= 3 and sys.argv[1] == "--gamo-update-helper":
         raise SystemExit(run_launcher_self_update_helper(sys.argv[2]))
+
+    # Run WebView2 in a clean process that never initialized Tkinter. Keeping
+    # the native client isolated prevents keyboard/focus crashes caused by two
+    # different GUI message loops living in one process.
+    if len(sys.argv) >= 3 and sys.argv[1] == CLOUD_CLIENT_ARG:
+        target = str(sys.argv[2]).strip()
+        write_log(f"Dedicated cloud client mode started · pid={os.getpid()} · target={target}")
+        open_cloud_client(target)
+        return
 
     cleanup_legacy_install_metadata()
     cleanup_stale_update_files()
@@ -914,7 +982,7 @@ def main():
     app.mainloop()
     target = getattr(app, "_cloud_target", None)
     if target:
-        open_cloud_client(target)
+        launch_cloud_client_process(target)
 
 
 if __name__ == "__main__":

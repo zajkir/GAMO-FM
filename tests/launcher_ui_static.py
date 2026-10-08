@@ -49,10 +49,26 @@ assert 'storage_path=str(storage)' in source
 assert 'user_agent=f"GAMO-Desktop/{current_version()} Windows"' in source
 assert 'webview.settings["ALLOW_DOWNLOADS"] = True' in source
 assert 'webbrowser.open(url, new=1)' in source
-assert 'subprocess.Popen' not in source
+assert 'def launch_cloud_client_process(url):' in source
+assert 'subprocess.Popen(command, **kwargs)' in source
+assert 'CLOUD_CLIENT_ARG = "--gamo-cloud-client"' in source
+assert 'if len(sys.argv) >= 3 and sys.argv[1] == CLOUD_CLIENT_ARG:' in source
+assert 'launch_cloud_client_process(target)' in source
 assert 'GAMO_FM.exe' not in source
-print("Launcher persistent single-process cloud client checks OK")
+print("Launcher dedicated-process WebView2 isolation checks OK")
 
 assert 'executable={Path(sys.executable).resolve()}' in source
 assert 'app_dir={APP_DIR}' in source
 print("Launcher path diagnostics checks OK")
+
+
+# Regression: the normal Tk launcher must never start WebView2 in the same
+# process after mainloop exits. The cloud client is re-executed as the same
+# trusted launcher binary in a dedicated process.
+main_segment = source[source.index("def main():"):]
+assert "open_cloud_client(target)\n        return" in main_segment
+assert "launch_cloud_client_process(target)" in main_segment
+assert main_segment.index("if len(sys.argv) >= 3 and sys.argv[1] == CLOUD_CLIENT_ARG:") < main_segment.index("mutex = single_instance_guard()")
+assert "enable_crash_diagnostics()" in main_segment
+assert "launcher-crash.log" in source
+print("Launcher keyboard/focus crash regression checks OK")
