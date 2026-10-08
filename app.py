@@ -863,9 +863,9 @@ def tickets():
     left join buildings b on b.id=t.building_id
     left join assets a on a.id=t.asset_id
     where o.code<>'GAMO'
-    order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"""
+    order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'V riešení' then 2 when 'Rieši sa' then 2 when 'Čaká na GAMO' then 3 when 'Čaká na zákazníka' then 4 when 'Vyriešený' then 5 else 6 end,t.updated desc"""
   rows=q_system(base)
-  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if int(r['platform_unread'] or 0)>0)}
+  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status'] in {'Čaká na zákazníka','Čaká na GAMO'}),'unread':sum(1 for r in rows if int(r['platform_unread'] or 0)>0)}
   return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=True,
    ticket_buildings=[],ticket_assets=[],ticket_staff_users=[],ticket_platform_inbox=True)
 
@@ -885,11 +885,11 @@ def tickets():
  params=[uid,oid]
  if not staff:
   base+=" and t.created_by=?"; params.append(uid)
- base+=" order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'Rieši sa' then 2 when 'Čaká na zákazníka' then 3 when 'Vyriešený' then 4 else 5 end,t.updated desc"
+ base+=" order by case t.status when 'Nový' then 0 when 'Otvorený' then 1 when 'V riešení' then 2 when 'Rieši sa' then 2 when 'Čaká na GAMO' then 3 when 'Čaká na zákazníka' then 4 when 'Vyriešený' then 5 else 6 end,t.updated desc"
  rows=[dict(r) for r in q(base,tuple(params))]
  for r in rows:
   r['user_unread']=int((r['staff_unread'] if staff else r['customer_unread']) or 0)
- stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if r['user_unread']>0)}
+ stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status'] in {'Čaká na zákazníka','Čaká na GAMO'}),'unread':sum(1 for r in rows if r['user_unread']>0)}
  buildings=q('select id,code,name from buildings where organization_id=? order by name',(oid,))
  assets=q('select id,asset_id,name,building_id from assets where organization_id=? order by asset_id',(oid,))
  prefill_asset_id=(request.args.get('asset_id') or '').strip()
@@ -917,7 +917,7 @@ def ticket_create():
  building_id=f.get('building_id') or None; asset_id=f.get('asset_id') or None
  if not subject or len(body)<2:
   flash('Ticket potrebuje predmet a úvodnú správu.','error'); return redirect('/tickets')
- if category not in {'Požiadavka','Porucha','Prístup','Budova','Asset','Iné'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
+ if category not in {'Technický problém','Požiadavka','Facility problém','Incident','Fakturácia','Support aplikácie','Iné','Porucha','Prístup','Budova','Asset'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
  if building_id and not owns_building(building_id): abort(404)
  if asset_id:
   asset=one('select id,building_id from assets where id=? and organization_id=?',(asset_id,oid))
@@ -1092,7 +1092,7 @@ def ticket_manage(i):
  if not t: abort(404)
  oid=t['organization_id'] if platform_view else org_id()
  status=(request.form.get('status') or '').strip(); priority=(request.form.get('priority') or '').strip(); assigned=request.form.get('assigned_to') or None
- if status not in {'Nový','Otvorený','Rieši sa','Čaká na zákazníka','Vyriešený','Uzavretý'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
+ if status not in {'Nový','Otvorený','V riešení','Rieši sa','Čaká na zákazníka','Čaká na GAMO','Vyriešený','Uzavretý'} or priority not in {'Nízka','Stredná','Vysoká','Kritická'}: abort(400)
  read_one=one_system if platform_view else one
  write=x_system if platform_view else x
  if assigned and not read_one("select id from users where id=? and organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik')",(assigned,oid)): abort(404)
