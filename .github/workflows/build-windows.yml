@@ -15,6 +15,7 @@ on:
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
+      - 'tests/update_flow_regression.py'
       - '.github/workflows/build-windows.yml'
   push:
     branches:
@@ -59,6 +60,7 @@ jobs:
           python tests/desktop_window_static.py
           python tests/installer_regression.py
           python tests/release_workflow_static.py
+          python tests/update_flow_regression.py
 
       - name: Build GAMO single-process cloud client
         run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_Launcher --distpath dist_launcher --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." launcher.py
