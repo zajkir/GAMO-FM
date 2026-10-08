@@ -129,13 +129,14 @@ def next_asset_id(profession,oid=None):
  prefix=''.join(ch for ch in (profession or 'ASSET').upper() if ch.isalnum())[:10] or 'ASSET'
  mask=(cfg['mask'] or '{PROF}-000001').replace('{PROF}',prefix)
  width=max(1,min(12,int(cfg['length'] or 6)))
- zero_match=re.search(r'0+',mask)
+ number_matches=list(re.finditer(r'\d+',mask))
+ number_match=number_matches[-1] if number_matches else None
  used={str(r['asset_id'] or '').upper() for r in q('select asset_id from assets where organization_id=?',(oid,))}
  n=max(0,int(cfg['start'] or 0))
  for _ in range(1000000):
-  if zero_match:
-   digits=max(width,len(zero_match.group(0)))
-   candidate=mask[:zero_match.start()]+str(n).zfill(digits)+mask[zero_match.end():]
+  if number_match:
+   digits=max(width,len(number_match.group(0)))
+   candidate=mask[:number_match.start()]+str(n).zfill(digits)+mask[number_match.end():]
   else:
    candidate=f'{mask}{str(n).zfill(width)}'
   candidate=candidate.upper()
@@ -2080,7 +2081,7 @@ def add(what):
    if not plan_allows('users'):
     flash('Licenčný limit používateľov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/admin#usersAdmin')
    name=(f.get('name') or '').strip(); email=(f.get('email') or '').strip().lower(); pwd=f.get('password') or ''
-   role=f.get('role') or 'Viewer'; status=f.get('status') or 'Aktívny'
+   role=f.get('role') or org_runtime_defaults()['user']['role']; status=f.get('status') or 'Aktívny'
    if not name or not email or len(pwd)<10 or role not in {'Administrator','Facility Manager','Technik','Servisný technik','Viewer'} or status not in {'Aktívny','Neaktívny'}: raise ValueError()
    if one('select id from users where lower(email)=?',(email,)): raise IntegrityError()
    x('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',(name,email,role,status,generate_password_hash(pwd),org_id(),True if USING_POSTGRES else 1))
