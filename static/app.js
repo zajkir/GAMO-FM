@@ -5,7 +5,9 @@ building:[['code','Kód budovy','A'],['name','Názov budovy',''],['address','Adr
 floor:[{name:'building_id',label:'Budova',type:'building',required:true},['code','Kód podlažia','1.NP'],['name','Názov','Prízemie']],
 room:[{name:'floor_id',label:'Podlažie',type:'floor',required:true},['code','Kód miestnosti','A101'],['name','Názov','Kancelária'],{name:'area',label:'Plocha m²',type:'number',value:'25',step:'0.01',min:'0'},['tenant','Nájomca',APP_BRAND],['zone','Zóna','']],
 asset:[
- {name:'asset_id',label:'Asset ID',type:'text',value:'',required:false,placeholder:'Automaticky podľa profesie'},['name','Názov zariadenia',''],
+ {name:'asset_id',label:'Asset ID',type:'text',value:'',required:false,placeholder:'Automaticky podľa profesie',help:'Permanentný identifikátor zariadenia. Po vytvorení ho nemeň bez dôvodu.'},
+ {name:'asset_tag',label:'Asset Tag / QR',type:'text',value:'',required:false,placeholder:'Napr. QR-HVAC-001',help:'Samostatný fyzický štítok alebo hodnota QR kódu.'},
+ ['name','Názov zariadenia',''],
  {name:'building_id',label:'Budova',type:'building',required:true},
  {name:'floor_id',label:'Podlažie',type:'floor',required:true},
  {name:'room_id',label:'Miestnosť',type:'room',required:true},
@@ -19,6 +21,8 @@ asset:[
  {name:'service_months',label:'Servis interval mes.',type:'number',value:'6',min:'0'},
  {name:'revision_months',label:'Revízia interval mes.',type:'number',value:'12',min:'0'},
  {name:'purchase_price',label:'Cena €',type:'number',value:'0',min:'0',step:'0.01'},
+ {name:'installed',label:'Dátum inštalácie',type:'date',value:'',required:false},
+ {name:'warranty',label:'Záruka do',type:'date',value:'',required:false},
  ['ip','IP adresa',''],['protocol','Protokol',''],['notes','Poznámka','']
 ],
 workorder:[
@@ -123,7 +127,7 @@ function modal(t,editData=null){
    const attrs=[a.min!==undefined?`min="${escapeHtml(a.min)}"`:'',a.max!==undefined?`max="${escapeHtml(a.max)}"`:'',a.step!==undefined?`step="${escapeHtml(a.step)}"`:'',a.placeholder?`placeholder="${escapeHtml(a.placeholder)}"`:'',a.name==='password'?'minlength="10" autocomplete="new-password"':''].filter(Boolean).join(' ');
    control=`<input type="${a.type||'text'}" name="${a.name}" value="${escapeHtml(a.value??'')}"${required} ${attrs}>`;
   }
-  h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}</div>`;
+  h+=`<div class="field ${full}"><label>${escapeHtml(a.label)}</label>${control}${a.help?`<small class="field-help">${escapeHtml(a.help)}</small>`:''}</div>`;
  });
  h+='</div>';host.innerHTML=h;wireRecordPickers(host);
  const form=document.querySelector('#mform');form.action=editing?'/edit/'+t+'/'+editData.id:'/add/'+t;form.method='post';
@@ -143,7 +147,7 @@ function modal(t,editData=null){
 }
 function editRecord(type,data){modal(type,data)}
 function closeM(){document.querySelector('#modal').classList.remove('show')}function confirmAction(form,title='Odstrániť záznam?',detail='Táto akcia sa nedá jednoducho vrátiť späť.'){
- const m=document.querySelector('#confirmModal');if(!m)return window.confirm(title);
+ const m=document.querySelector('#confirmModal');if(!m){console.error('GAMO confirm modal is missing; destructive action blocked.');return false;}
  window._gamoConfirmForm=form;
  const t=m.querySelector('#confirmTitle'),d=m.querySelector('#confirmDetail');if(t)t.textContent=title;if(d)d.textContent=detail;
  m.classList.add('show');return false;

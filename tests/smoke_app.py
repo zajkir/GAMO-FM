@@ -153,6 +153,7 @@ r = client.post(
     data={
         "_csrf": csrf(),
         "asset_id": "QA-000001",
+        "asset_tag": "QR-QA-000001",
         "name": "Smoke Asset",
         "building_id": str(building["id"]),
         "floor_id": str(floor["id"]),
@@ -165,11 +166,16 @@ r = client.post(
         "service_months": "6",
         "revision_months": "12",
         "purchase_price": "1250.50",
+        "installed": "2025-05-10",
+        "warranty": "2028-05-10",
     },
 )
 assert r.status_code in (302, 303)
 asset = app.one("select * from assets where asset_id=? and organization_id=?", ("QA-000001", gamo_org_id))
 assert asset
+assert asset["asset_tag"] == "QR-QA-000001"
+assert str(asset["installed"])[:10] == "2025-05-10"
+assert str(asset["warranty"])[:10] == "2028-05-10"
 
 # Regression: new asset may leave Asset ID empty; server must generate a tenant-safe ID.
 expected_auto_id = client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"]
@@ -200,6 +206,30 @@ auto_asset = app.one(
 )
 assert auto_asset and auto_asset["asset_id"] == expected_auto_id
 assert client.get("/api/assets/next-id?profession=HVAC").get_json()["asset_id"] != expected_auto_id
+
+# Asset Tag / QR is a separate tenant-unique identity.
+before_duplicate_tag = app.one("select count(*) n from assets where organization_id=?", (gamo_org_id,))["n"]
+r = client.post(
+    "/add/asset",
+    data={
+        "_csrf": csrf(),
+        "asset_id": "",
+        "asset_tag": "QR-QA-000001",
+        "name": "Duplicate Tag Must Not Save",
+        "building_id": str(building["id"]),
+        "floor_id": str(floor["id"]),
+        "room_id": str(room["id"]),
+        "profession": "ELE",
+        "grp": "QA",
+        "type": "TEST",
+        "status": "Prevádzka",
+        "criticality": "C",
+    },
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+assert app.one("select count(*) n from assets where organization_id=?", (gamo_org_id,))["n"] == before_duplicate_tag
+assert app.one("select id from assets where organization_id=? and name=?", (gamo_org_id, "Duplicate Tag Must Not Save")) is None
 
 # A manually duplicated ID must be rejected without creating another row.
 before_auto = app.one("select count(*) n from assets where organization_id=?", (gamo_org_id,))["n"]
@@ -328,18 +358,22 @@ room = app.one("select * from rooms where id=?", (room["id"],))
 assert room["name"] == "QA Room Edited" and float(room["area"]) == 44.5 and room["zone"] == "SECURE"
 
 asset_edit = {
-    "_csrf": csrf(), "asset_id": "QA-000001", "name": "Smoke Asset Edited",
+    "_csrf": csrf(), "asset_id": "QA-000001", "asset_tag": "QR-QA-EDITED", "name": "Smoke Asset Edited",
     "building_id": str(building["id"]), "floor_id": str(floor["id"]), "room_id": str(room["id"]),
     "profession": "ELE", "grp": "QA", "type": "TEST", "manufacturer": "GAMO QA",
     "model": "M2", "serial": "QA-SERIAL", "system_id": "QA-SYS", "parent_id": "",
     "status": "Servis", "criticality": "A", "service_months": "3", "revision_months": "6",
-    "purchase_price": "1500.25", "ip": "10.0.0.10", "protocol": "HTTPS", "notes": "Edited by smoke test"
+    "purchase_price": "1500.25", "installed": "2025-06-01", "warranty": "2029-06-01",
+    "ip": "10.0.0.10", "protocol": "HTTPS", "notes": "Edited by smoke test"
 }
 r = client.post(f"/edit/asset/{asset['id']}", data=asset_edit, follow_redirects=False)
 assert r.status_code in (302, 303)
 asset = app.one("select * from assets where id=?", (asset["id"],))
 assert asset["name"] == "Smoke Asset Edited" and asset["status"] == "Servis" and asset["criticality"] == "A"
 assert float(asset["purchase_price"]) == 1500.25
+assert asset["asset_tag"] == "QR-QA-EDITED"
+assert str(asset["installed"])[:10] == "2025-06-01"
+assert str(asset["warranty"])[:10] == "2029-06-01"
 building_after_asset_edit = client.get(f"/building/{building['id']}#twin")
 assert building_after_asset_edit.status_code == 200
 assert b'data-floor-critical="1"' in building_after_asset_edit.data
@@ -397,13 +431,24 @@ assert r.status_code in (302, 303)
 document = app.one("select * from documents where building_id=? and name=?", (building["id"], "gamo-private.txt"))
 assert document
 
+# MIME/signature validation must reject a fake image without storing it.
+before_docs = app.one("select count(*) n from documents where building_id=?", (building["id"],))["n"]
+r = client.post(
+    f"/building/{building['id']}/document",
+    data={"_csrf": csrf(), "category": "Technická", "document": (io.BytesIO(b"not-a-real-png"), "../../fake.png")},
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+assert app.one("select count(*) n from documents where building_id=?", (building["id"],))["n"] == before_docs
+
 # Real document center on an asset.
 r = client.post(
     f"/asset/{asset['id']}/document",
     data={
         "_csrf": csrf(),
         "category": "Revízia",
-        "document": (io.BytesIO(b"GAMO private asset revision"), "asset-revision.pdf"),
+        "document": (io.BytesIO(b"%PDF-1.4\nGAMO private asset revision\n%%EOF"), "asset-revision.pdf"),
     },
     content_type="multipart/form-data",
     follow_redirects=False,
@@ -415,7 +460,7 @@ asset_document = app.one(
 )
 assert asset_document and asset_document["category"] == "Revízia"
 r = client.get(f"/asset-document/{asset_document['id']}/download")
-assert r.status_code == 200 and r.data == b"GAMO private asset revision"
+assert r.status_code == 200 and r.data.startswith(b"%PDF-1.4")
 asset_page = client.get(f"/asset/{asset['id']}#docs")
 assert asset_page.status_code == 200 and b"asset-revision.pdf" in asset_page.data
 
@@ -491,10 +536,13 @@ assert app.one_system("select name from users where id=?", (gamo_admin["id"],))[
 r = client.get("/reports/export.xlsx")
 assert r.status_code == 200
 book = load_workbook(io.BytesIO(r.data), read_only=False, data_only=False)
-for sheet in ("Súhrn", "Assety", "Údržba", "Incidenty", "Po termíne"):
+for sheet in ("Súhrn", "Budovy", "Assety", "Údržba", "Incidenty", "Po termíne"):
     assert sheet in book.sheetnames
 assert book["Súhrn"]["A1"].value.startswith("GAMO FACILITY REPORT")
-assert "QA-000001" in [cell.value for row in book["Assety"].iter_rows() for cell in row]
+asset_export_values = [cell.value for row in book["Assety"].iter_rows() for cell in row]
+assert "QA-000001" in asset_export_values
+assert "QR-QA-EDITED" in asset_export_values
+assert "Smoke Building Edited" in [cell.value for row in book["Budovy"].iter_rows() for cell in row]
 assert len(book["Súhrn"]._charts) >= 1
 expected_open_incidents = app.one(
     """select count(*) n from incidents i join assets a on a.id=i.asset_id
@@ -623,7 +671,7 @@ r = client.post(
         "building_id": str(private_building["id"]),
         "asset_id": "",
         "message": "Prosím správcu o kontrolu klimatizácie v kancelárii.",
-        "attachment": (io.BytesIO(b"customer ticket photo"), "problem-photo.jpg"),
+        "attachment": (io.BytesIO(b"\xff\xd8\xff\xe0GAMO customer ticket photo\xff\xd9"), "problem-photo.jpg"),
     },
     content_type="multipart/form-data",
     follow_redirects=False,
@@ -639,7 +687,7 @@ first_ticket_attachment = app.one_system(
     "select * from ticket_attachments where organization_id=? and ticket_id=? and name=?",
     (customer["id"], ticket["id"], "problem-photo.jpg"),
 )
-assert first_ticket_attachment and first_ticket_attachment["size"] == len(b"customer ticket photo")
+assert first_ticket_attachment and first_ticket_attachment["size"] == len(b"\xff\xd8\xff\xe0GAMO customer ticket photo\xff\xd9")
 assert client.get(f"/ticket/{ticket['id']}").status_code == 200
 assert client.post(
     f"/ticket/{ticket['id']}/manage",
@@ -676,7 +724,7 @@ r = client.post(
     data={
         "_csrf": csrf(),
         "message": "Požiadavku som prevzal, prídem ju skontrolovať.",
-        "attachment": (io.BytesIO(b"service protocol"), "service-protocol.pdf"),
+        "attachment": (io.BytesIO(b"%PDF-1.4\nGAMO service protocol\n%%EOF"), "service-protocol.pdf"),
     },
     content_type="multipart/form-data",
     headers={"X-Requested-With": "GAMO-Live-Chat", "Accept": "application/json"},
@@ -718,7 +766,7 @@ assert any(m["body"].startswith("Požiadavku som prevzal") and not m["mine"] for
 reply_with_file = next(m for m in live_reply_json["messages"] if m["body"].startswith("Požiadavku som prevzal"))
 assert any(a["name"] == "service-protocol.pdf" for a in reply_with_file["attachments"])
 downloaded = client.get(f"/ticket-attachment/{manager_attachment['id']}/download")
-assert downloaded.status_code == 200 and downloaded.data == b"service protocol"
+assert downloaded.status_code == 200 and downloaded.data.startswith(b"%PDF-1.4")
 
 # No duplicate payload after the last known message.
 empty_live = client.get(f"/api/ticket/{ticket['id']}/messages?after={manager_message_id}")
@@ -918,7 +966,7 @@ assert platform_thread.status_code == 200
 assert "Prosím správcu".encode("utf-8") in platform_thread.data
 assert "Požiadavku som prevzal".encode("utf-8") in platform_thread.data
 platform_file = client.get(f"/ticket-attachment/{first_ticket_attachment['id']}/download")
-assert platform_file.status_code == 200 and platform_file.data == b"customer ticket photo"
+assert platform_file.status_code == 200 and platform_file.data.startswith(b"\xff\xd8\xff\xe0")
 assert client.get(f"/building/{private_building['id']}").status_code == 404
 
 r = client.post(

@@ -1,6 +1,6 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib
+import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, mimetypes
 try:
  import psycopg
  from psycopg.rows import dict_row
@@ -9,6 +9,7 @@ except ImportError:
 from functools import wraps
 import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from datetime import date,timedelta,datetime
 from urllib.parse import urlsplit
@@ -51,17 +52,41 @@ PLAN_LIMITS={
 
 UPLOAD_ALLOWED_EXTS={'.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.txt','.csv','.log','.zip'}
 UPLOAD_MAX_BYTES=8*1024*1024
+UPLOAD_MIME_BY_EXT={
+ '.pdf':{'application/pdf'},'.doc':{'application/msword','application/x-ole-storage'},
+ '.docx':{'application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/zip'},
+ '.xls':{'application/vnd.ms-excel','application/x-ole-storage'},
+ '.xlsx':{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/zip'},
+ '.jpg':{'image/jpeg'},'.jpeg':{'image/jpeg'},'.png':{'image/png'},
+ '.txt':{'text/plain'},'.csv':{'text/csv','application/csv','text/plain'},
+ '.log':{'text/plain'},'.zip':{'application/zip','application/x-zip-compressed'}
+}
 
 def read_safe_upload(file,max_bytes=UPLOAD_MAX_BYTES):
  if not file or not getattr(file,'filename',None): return None
- name=os.path.basename(file.filename).strip()[:180]
+ raw_name=os.path.basename(str(file.filename)).strip()
+ name=secure_filename(raw_name)[:180]
+ if not name:
+  raise ValueError('Názov súboru nie je platný.')
  ext=os.path.splitext(name)[1].lower()
- if not name or ext not in UPLOAD_ALLOWED_EXTS:
+ if ext not in UPLOAD_ALLOWED_EXTS:
   raise ValueError('Nepodporovaný typ súboru.')
+ mime=(file.mimetype or mimetypes.guess_type(name)[0] or 'application/octet-stream').lower()[:120]
+ expected=UPLOAD_MIME_BY_EXT.get(ext,set())
+ if mime!='application/octet-stream' and expected and mime not in expected:
+  raise ValueError('Typ súboru nezodpovedá jeho prípone.')
  data=file.read(max_bytes+1)
  if len(data)>max_bytes:
   raise ValueError(f'Súbor je väčší ako {max_bytes//(1024*1024)} MB.')
- return {'name':name,'mime':(file.mimetype or 'application/octet-stream')[:120],'size':len(data),'data':data}
+ if ext=='.pdf' and data[:5]!=b'%PDF-':
+  raise ValueError('PDF súbor nemá platnú hlavičku.')
+ if ext=='.png' and data[:8]!=b'\x89PNG\r\n\x1a\n':
+  raise ValueError('PNG súbor nemá platnú hlavičku.')
+ if ext in {'.jpg','.jpeg'} and data[:3]!=b'\xff\xd8\xff':
+  raise ValueError('JPEG súbor nemá platnú hlavičku.')
+ if ext in {'.zip','.docx','.xlsx'} and data[:2]!=b'PK':
+  raise ValueError('ZIP/Office súbor nemá platnú hlavičku.')
+ return {'name':name,'mime':mime,'size':len(data),'data':data}
 
 
 def can(permission):
@@ -1155,7 +1180,10 @@ def reports_export_xlsx():
   try: return datetime.strptime(str(value)[:10],'%Y-%m-%d').date()
   except Exception: return excel_safe(value)
 
- buildings=q("""select b.id,b.code,b.name,
+ buildings=q("""select b.id,b.code,b.name,b.address,b.manager,b.status,
+  (select count(*) from floors f where f.building_id=b.id) floors,
+  (select count(*) from rooms r join floors f on f.id=r.floor_id where f.building_id=b.id) rooms,
+  (select coalesce(sum(r.area),0) from rooms r join floors f on f.id=r.floor_id where f.building_id=b.id) area,
   (select count(*) from assets a where a.building_id=b.id) assets,
   (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id) maintenance_cost,
   (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id) incident_cost,
@@ -1165,7 +1193,7 @@ def reports_export_xlsx():
   coalesce(sum(a.purchase_price),0) asset_value
   from assets a join buildings b on b.id=a.building_id
   where b.organization_id=? group by a.profession order by assets desc""",(oid,))
- assets_rows=q("""select a.asset_id,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price
+ assets_rows=q("""select a.asset_id,a.asset_tag,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price,a.installed,a.warranty
   from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id
   where b.organization_id=? order by a.asset_id""",(oid,))
  wo_rows=q("""select a.asset_id,a.name asset,b.name building,w.title,w.kind,w.priority,w.status,w.due,w.supplier,w.technician,w.cost,w.description
@@ -1302,8 +1330,11 @@ def reports_export_xlsx():
   sh.row_dimensions[1].height=24; sh.page_setup.orientation='landscape'; sh.page_setup.fitToWidth=1; sh.sheet_properties.pageSetUpPr.fitToPage=True
   return sh
 
- asset_data=[[r[k] for k in ['asset_id','name','building','floor','room','profession','grp','type','manufacturer','model','serial','system_id','status','criticality','purchase_price']] for r in assets_rows]
- styled_sheet('Assety','ASSET REGISTER',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],asset_data,{15:money_fmt},13,14,'AssetsTable')
+ building_data=[[b['code'],b['name'],b['address'],b['manager'],b['status'],b['floors'],b['rooms'],float(b['area'] or 0),b['assets'],float(b['maintenance_cost'] or 0),float(b['incident_cost'] or 0),b['open_incidents'],float(b['maintenance_cost'] or 0)+float(b['incident_cost'] or 0)] for b in buildings]
+ styled_sheet('Budovy','BUDOVY & PORTFÓLIO',['Kód','Budova','Adresa','Správca','Stav','Podlažia','Miestnosti','Plocha m²','Assety','Údržba','Incidenty','Otvorené incidenty','Náklady spolu'],building_data,{8:'#,##0.00',10:money_fmt,11:money_fmt,13:money_fmt},5,None,'BuildingsTable')
+
+ asset_data=[[r['asset_id'],r['asset_tag'],r['name'],r['building'],r['floor'],r['room'],r['profession'],r['grp'],r['type'],r['manufacturer'],r['model'],r['serial'],r['system_id'],r['status'],r['criticality'],excel_date(r['installed']),excel_date(r['warranty']),r['purchase_price']] for r in assets_rows]
+ styled_sheet('Assety','ASSET REGISTER',['Asset ID','Asset Tag / QR','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Inštalácia','Záruka do','Cena'],asset_data,{16:date_fmt,17:date_fmt,18:money_fmt},14,15,'AssetsTable')
 
  work_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['kind'],r['priority'],r['status'],excel_date(r['due']),r['supplier'],r['technician'],r['cost'],r['description']] for r in wo_rows]
  work=styled_sheet('Údržba','ÚDRŽBA & REVÍZIE',['Asset ID','Asset','Budova','Pracovný príkaz','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],work_data,{8:date_fmt,11:money_fmt},7,None,'MaintenanceTable')
@@ -1342,15 +1373,14 @@ def building(i):
 def upload_building_document(i):
  if not can('documents_write'): abort(403)
  if not owns_building(i): abort(404)
- f=request.files.get('document'); category=(request.form.get('category') or 'Technická').strip()
- if not f or not f.filename:
-  flash('Vyber dokument na nahratie.','error'); return redirect(f'/building/{i}#documents')
- allowed={'.pdf','.doc','.docx','.xls','.xlsx','.jpg','.jpeg','.png','.txt'}; ext=os.path.splitext(f.filename)[1].lower()
- if ext not in allowed:
-  flash('Nepodporovaný typ súboru.','error'); return redirect(f'/building/{i}#documents')
- data=f.read()
- x('insert into documents(building_id,name,category,mime,size,data) values(?,?,?,?,?,?)',(i,os.path.basename(f.filename),category,f.mimetype or 'application/octet-stream',len(data),data))
- audit('DOCUMENT_UPLOAD',f.filename); flash('Dokument bol nahratý.','success'); return redirect(f'/building/{i}#documents')
+ category=(request.form.get('category') or 'Technická').strip()[:80]
+ try:
+  upload=read_safe_upload(request.files.get('document'))
+  if not upload: raise ValueError('Vyber dokument na nahratie.')
+ except ValueError as exc:
+  flash(str(exc),'error'); return redirect(f'/building/{i}#documents')
+ x('insert into documents(building_id,name,category,mime,size,data) values(?,?,?,?,?,?)',(i,upload['name'],category,upload['mime'],upload['size'],upload['data']))
+ audit('DOCUMENT_UPLOAD',upload['name']); flash('Dokument bol nahratý.','success'); return redirect(f'/building/{i}#documents')
 
 @app.get('/document/<int:i>/download')
 def download_document(i):
@@ -1998,12 +2028,20 @@ def add(what):
    try:
     service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
    except (TypeError,ValueError): raise ValueError('Servisný interval, revízia a cena musia byť platné čísla.')
+   installed=(f.get('installed') or '').strip() or None; warranty=(f.get('warranty') or '').strip() or None
+   for raw,label in ((installed,'Dátum inštalácie'),(warranty,'Záruka')):
+    if raw:
+     try: datetime.strptime(raw[:10],'%Y-%m-%d')
+     except ValueError: raise ValueError(f'{label} nemá platný dátum.')
+   asset_tag=(f.get('asset_tag') or '').strip()[:120] or None
+   if asset_tag and one('select id from assets where organization_id=? and lower(asset_tag)=lower(?)',(org_id(),asset_tag)):
+    raise ValueError(f'Asset Tag {asset_tag} už v tvojej organizácii existuje.')
    manual_aid=(f.get('asset_id') or '').strip().upper(); aid=manual_aid or next_asset_id(profession)
    if one('select id from assets where organization_id=? and upper(asset_id)=?',(org_id(),aid)):
     if manual_aid: raise ValueError(f'Asset ID {aid} už v tvojej organizácii existuje. Zmeň ho alebo nechaj pole prázdne pre automatické ID.')
     aid=next_asset_id(profession)
-   values=(aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip() or None,(f.get('model') or '').strip() or None,(f.get('serial') or '').strip() or None,(f.get('system_id') or '').strip() or None,parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip() or None,(f.get('protocol') or '').strip() or None,(f.get('notes') or '').strip() or None,org_id())
-   new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values)
+   values=(aid,asset_tag,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip() or None,(f.get('model') or '').strip() or None,(f.get('serial') or '').strip() or None,(f.get('system_id') or '').strip() or None,parent_id,status,criticality,service,revision,price,installed,warranty,(f.get('ip') or '').strip() or None,(f.get('protocol') or '').strip() or None,(f.get('notes') or '').strip() or None,org_id())
+   new_asset=x('insert into assets(asset_id,asset_tag,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,installed,warranty,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values)
    asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {name}"); audit('ASSET_CREATE',f'{aid} · {name}')
    flash(f'Asset {aid} bol vytvorený.','success')
   elif what=='workorder':
@@ -2127,10 +2165,15 @@ def edit_record(what,i):
    if not one('select r.id from rooms r join floors fl on fl.id=r.floor_id join buildings b on b.id=fl.building_id where r.id=? and r.floor_id=? and b.id=? and b.organization_id=?',(room_id,floor_id,building_id,org_id())): raise ValueError()
    if parent_id and (not owns_asset(parent_id) or not asset_parent_allowed(i,parent_id)): raise ValueError()
    if one('select id from assets where organization_id=? and upper(asset_id)=? and id<>?',(org_id(),aid,i)): raise IntegrityError()
+   asset_tag=(f.get('asset_tag') or '').strip()[:120] or None
+   if asset_tag and one('select id from assets where organization_id=? and lower(asset_tag)=lower(?) and id<>?',(org_id(),asset_tag,i)): raise IntegrityError()
    service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+   installed=(f.get('installed') or '').strip() or None; warranty=(f.get('warranty') or '').strip() or None
+   for raw in (installed,warranty):
+    if raw: datetime.strptime(raw[:10],'%Y-%m-%d')
    old=one('select asset_id,status from assets where id=?',(i,))
-   x('''update assets set asset_id=?,name=?,building_id=?,floor_id=?,room_id=?,profession=?,grp=?,type=?,manufacturer=?,model=?,serial=?,system_id=?,parent_id=?,status=?,criticality=?,service_months=?,revision_months=?,purchase_price=?,ip=?,protocol=?,notes=? where id=? and organization_id=?''',
-    (aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip(),(f.get('model') or '').strip(),(f.get('serial') or '').strip(),(f.get('system_id') or '').strip(),parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip(),(f.get('protocol') or '').strip(),(f.get('notes') or '').strip(),i,org_id()))
+   x('''update assets set asset_id=?,asset_tag=?,name=?,building_id=?,floor_id=?,room_id=?,profession=?,grp=?,type=?,manufacturer=?,model=?,serial=?,system_id=?,parent_id=?,status=?,criticality=?,service_months=?,revision_months=?,purchase_price=?,installed=?,warranty=?,ip=?,protocol=?,notes=? where id=? and organization_id=?''',
+    (aid,asset_tag,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip(),(f.get('model') or '').strip(),(f.get('serial') or '').strip(),(f.get('system_id') or '').strip(),parent_id,status,criticality,service,revision,price,installed,warranty,(f.get('ip') or '').strip(),(f.get('protocol') or '').strip(),(f.get('notes') or '').strip(),i,org_id()))
    detail=f"{old['asset_id']} → {aid} · {old['status']} → {status}" if old else f'{aid} · {status}'
    asset_event(i,'ASSET_UPDATE','Asset upravený',detail); audit('ASSET_UPDATE',detail); flash('Asset bol upravený.','success')
    return redirect(f'/asset/{i}')
