@@ -40,6 +40,8 @@ jobs:
         run: python -m py_compile app.py db_migrations.py desktop.py updater.py
       - name: Check JavaScript syntax
         run: node --check static/app.js
+      - name: Check web UI contracts
+        run: python tests/web_contracts.py
       - name: Check installer regression
         run: python tests/installer_regression.py
       - name: Check desktop login regression
