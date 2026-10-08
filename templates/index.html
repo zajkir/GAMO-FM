@@ -56,6 +56,7 @@
  </header>
  <div class="dt2-layout">
   <div class="dt2-stage" id="dt2Stage" tabindex="0" aria-label="Interaktívny 3D model budovy">
+   <div class="dt2-help"><b>OVLÁDANIE 3D</b><span>ťahaj myšou = rotácia</span><span>koliesko = zoom</span><span>dvojklik = reset</span></div>
    <div class="dt2-skyline" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
    <div class="dt2-ground-grid" aria-hidden="true"></div>
    <div class="dt2-campus" aria-hidden="true"><span class="road r1"></span><span class="road r2"></span><i class="tree t1"></i><i class="tree t2"></i><i class="tree t3"></i><i class="tree t4"></i></div>
@@ -288,7 +289,7 @@
 
 <div class="privacy-grid">
  <section class="privacy-card">
-  <div class="privacy-card-head"><div><span class="admin-kicker">SECURITY POLICY</span><h3>MFA, retencia a privacy kontakt</h3><p>Bezpečnostná politika platná pre celú organizáciu.</p></div><a class="privacy-mfa-link" href="/account/mfa">⌾ Spravovať moje MFA</a></div>
+  <div class="privacy-card-head"><div><span class="admin-kicker">SECURITY POLICY</span><h3>MFA, retencia a privacy kontakt</h3><p>Bezpečnostná politika platná pre celú organizáciu.</p></div><a class="privacy-mfa-link" href="/account/mfa"><span>⌾</span><b>Spravovať MFA</b><small>2FA a recovery kódy</small></a></div>
   <form method="post" action="/privacy/settings" class="privacy-settings-form">
    <input type="hidden" name="_csrf" value="{{csrf_token}}">
    <div class="field"><label>Kontakt pre súkromie / DPO</label><input name="privacy_contact" value="{{privacy_org.privacy_contact or ''}}" placeholder="privacy@firma.sk"></div>
@@ -429,7 +430,7 @@
 <section class="customer-detail-card customer-data-locked"><span>◈</span><div><h3>Detailné zákaznícke dáta nie sú sprístupnené</h3><p>Administrátor zákazníka môže dočasný prístup udeliť v časti <b>Súkromie & dáta</b>. Bez súhlasu nie sú v Customer 360 zobrazené mená používateľov, budovy, incidenty, servisná história ani interný audit.</p></div></section>
 {% endif %}
 {% else %}<div class="admin-v2-top"><div><span class="admin-kicker">{{brand_name}} / ADMINISTRATION</span><h2>Riadiace centrum systému</h2><p>Kompletná správa používateľov, dátového modelu, automatizácie a bezpečnosti.</p></div><div class="admin-version"><small>DESKTOP BUILD</small><b>{{app_version}}</b><span>● ONLINE</span></div></div>
-<div class="admin-v2-nav"><button class="active">Prehľad</button>{% if is_gamo_admin %}<button onclick="document.querySelector('#customersAdmin').scrollIntoView({behavior:'smooth'})">Zákazníci</button>{% endif %}<button onclick="document.querySelector('#usersAdmin').scrollIntoView({behavior:'smooth'})">Používatelia</button><button onclick="document.querySelector('#systemAdmin').scrollIntoView({behavior:'smooth'})">Konfigurácia</button><button onclick="document.querySelector('#securityAdmin').scrollIntoView({behavior:'smooth'})">Bezpečnosť</button><button onclick="document.querySelector('#systemTools').scrollIntoView({behavior:'smooth'})">Systém</button></div>
+<div class="admin-v2-nav"><button class="active"><i>01</i><span>Prehľad</span></button>{% if is_gamo_admin %}<button onclick="document.querySelector('#customersAdmin').scrollIntoView({behavior:'smooth'})"><i>02</i><span>Zákazníci</span></button>{% endif %}<button onclick="document.querySelector('#usersAdmin').scrollIntoView({behavior:'smooth'})"><i>{{'03' if is_gamo_admin else '02'}}</i><span>Používatelia</span></button><button onclick="document.querySelector('#systemAdmin').scrollIntoView({behavior:'smooth'})"><i>{{'04' if is_gamo_admin else '03'}}</i><span>Konfigurácia</span></button><button onclick="document.querySelector('#securityAdmin').scrollIntoView({behavior:'smooth'})"><i>{{'05' if is_gamo_admin else '04'}}</i><span>Bezpečnosť</span></button><button onclick="document.querySelector('#systemTools').scrollIntoView({behavior:'smooth'})"><i>{{'06' if is_gamo_admin else '05'}}</i><span>Systém</span></button></div>
 <div class="admin-v2-metrics">
 {% if is_gamo_admin %}
 <div class="adm-metric"><span class="adm-icon violet">◈</span><div><small>ZÁKAZNÍCI</small><b>{{customer_stats.total}}</b><em>externých organizácií</em></div></div>

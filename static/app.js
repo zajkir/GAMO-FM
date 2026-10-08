@@ -292,12 +292,12 @@ function initLiveTicket(){
   form.querySelector('textarea')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();form.requestSubmit()}});
  }
  let running=false;
- const schedule=(delay=2500)=>{clearTimeout(window.GAMO_TICKET_TIMER);window.GAMO_TICKET_TIMER=setTimeout(async()=>{
+ const schedule=(delay=1200)=>{clearTimeout(window.GAMO_TICKET_TIMER);window.GAMO_TICKET_TIMER=setTimeout(async()=>{
   if(!document.hidden&&!running){running=true;try{await refreshTicketMessages(false)}finally{running=false}}
-  schedule(document.hidden?20000:2500)
+  schedule(document.hidden?15000:1200)
  },delay)};
  refreshTicketMessages(false).finally(()=>schedule());
- document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTicketMessages(false);schedule(1800)}});
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTicketMessages(false);schedule(500)}});
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_TIMER));
 }
 function setTicketNavCount(value){
@@ -340,7 +340,7 @@ function initTicketInboxWatch(){
  const tick=()=>{clearTimeout(window.GAMO_TICKET_INBOX_TIMER);window.GAMO_TICKET_INBOX_TIMER=setTimeout(async()=>{
   if(!running){running=true;try{await refreshTicketInboxState(false)}finally{running=false}}
   tick()
- },document.hidden?45000:5000)};
+ },document.hidden?30000:2500)};
  tick();document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTicketInboxState(false)});
  window.addEventListener('beforeunload',()=>clearTimeout(window.GAMO_TICKET_INBOX_TIMER));
 }
