@@ -22,7 +22,7 @@ assert 'self.attributes("-fullscreen", self._fullscreen)' in source
 print("Launcher fullscreen binding OK")
 
 assert 'self.geometry("1180x720")' in source
-assert 'font=("Segoe UI", 10, "bold")' in source
+assert 'font=("Segoe UI", size, weight)' in source
 assert 'F11  ·  celá obrazovka' in source
 print("Launcher readable layout checks OK")
 
