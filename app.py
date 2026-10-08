@@ -89,18 +89,6 @@ def read_safe_upload(file,max_bytes=UPLOAD_MAX_BYTES):
  return {'name':name,'mime':mime,'size':len(data),'data':data}
 
 
-def read_safe_upload(file,max_bytes=UPLOAD_MAX_BYTES):
- if not file or not getattr(file,'filename',None): return None
- name=os.path.basename(file.filename).strip()[:180]
- ext=os.path.splitext(name)[1].lower()
- if not name or ext not in UPLOAD_ALLOWED_EXTS:
-  raise ValueError('Nepodporovaný typ súboru.')
- data=file.read(max_bytes+1)
- if len(data)>max_bytes:
-  raise ValueError(f'Súbor je väčší ako {max_bytes//(1024*1024)} MB.')
- return {'name':name,'mime':(file.mimetype or 'application/octet-stream')[:120],'size':len(data),'data':data}
-
-
 def can(permission):
  return permission in ROLE_PERMISSIONS.get(session.get('user_role','Viewer'),{'view'})
 
