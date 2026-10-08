@@ -266,7 +266,7 @@ assert "const FORM_SECTIONS=" in js_source
 assert "form-section-title full" in js_source
 assert "required-mark" in js_source
 assert "GAMO_TICKET_AUTO_RELOAD" in js_source
-assert "document.hidden?45000:5000" in js_source
+assert "document.hidden?30000:2500" in js_source
 assert "angle=((angle+540)%360)-180" in js_source
 
 assert "/* Application Max polish */" in css_source
