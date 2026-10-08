@@ -1,11 +1,11 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
-from sqlite3 import IntegrityError
 import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, re, mimetypes, calendar
 try:
  import psycopg
  from psycopg.rows import dict_row
 except ImportError:
  psycopg=None; dict_row=None
+DB_INTEGRITY_ERRORS=(sqlite3.IntegrityError,)+( (psycopg.IntegrityError,) if psycopg else () )
 from functools import wraps
 import pyotp, qrcode
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -31,7 +31,7 @@ if os.environ.get('GAMO_DESKTOP') == '1':
 else:
     DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
 app=Flask(__name__)
-app.secret_key=os.environ.get('GAMO_SECRET_KEY') or secrets.token_hex(32)
+app.secret_key=(os.environ.get('GAMO_SECRET_KEY') or '').strip() or None
 app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','1' if os.environ.get('DATABASE_URL') else '0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(days=30),MAX_CONTENT_LENGTH=16*1024*1024)
 DB=os.path.join(DATA_DIR,'gamo.db')
 LOGIN_WINDOW=300
@@ -265,7 +265,7 @@ def generate_maintenance_plan():
     values(?,?,?,?,?,?,?,?,?,?,?,?)""",(row['asset_db_id'],title,row['kind'],priority,'Plánované',row['due'],'','',0,description,'AUTO',generated_key))
    asset_event(row['asset_db_id'],'WORKORDER_AUTO','Automaticky vytvorený pracovný príkaz',f"{row['kind']} · termín {row['due']}")
    created+=1
-  except IntegrityError:
+  except DB_INTEGRITY_ERRORS:
    skipped+=1
  audit('MAINTENANCE_PLAN_SYNC',f'Vytvorených {created} · preskočených {skipped} · horizont {warning_days} dní')
  return created,skipped
@@ -566,24 +566,31 @@ def one_system(sql,a=()):
  with con(system=True) as c:return c.execute(_sql(sql),a).fetchone()
 def q_system(sql,a=()):
  with con(system=True) as c:return c.execute(_sql(sql),a).fetchall()
+def _write_on(db,sql,a=()):
+ statement=_sql(sql)
+ lower=statement.lstrip().lower()
+ no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
+ if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
+  statement+=' RETURNING id'
+  r=db.execute(statement,a); row=r.fetchone(); return row['id'] if row else None
+ r=db.execute(statement,a)
+ return r.lastrowid if not USING_POSTGRES else r.rowcount
+
 def x(sql,a=()):
  with con() as c:
-  statement=_sql(sql)
-  lower=statement.lstrip().lower()
-  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
-  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
-   statement+=' RETURNING id'
-   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
-  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+  result=_write_on(c,sql,a); c.commit(); return result
+
 def x_system(sql,a=()):
  with con(system=True) as c:
-  statement=_sql(sql)
-  lower=statement.lstrip().lower()
-  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
-  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
-   statement+=' RETURNING id'
-   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
-  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+  result=_write_on(c,sql,a); c.commit(); return result
+
+def _bootstrap_admin_password():
+ value=(os.environ.get('GAMO_ADMIN_PASSWORD') or '').strip()
+ if value: return value
+ if USING_POSTGRES:
+  raise RuntimeError('GAMO_ADMIN_PASSWORD must be set before bootstrapping a new production database.')
+ return 'GamoFM2026!'
+
 def init_postgres():
  schema=[
   """CREATE TABLE IF NOT EXISTS buildings(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE,name TEXT,address TEXT,manager TEXT,customer TEXT DEFAULT 'GAMO a.s.',status TEXT DEFAULT 'Aktívna')""",
@@ -613,7 +620,8 @@ def init_postgres():
   db.commit()
  run_migrations(lambda: con(system=True), True)
  if not one_system('select count(*) n from users')['n']:
-  x_system('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
+  password=_bootstrap_admin_password()
+  x_system('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(password),gamo_org,True if USING_POSTGRES else 1))
 def init():
  os.makedirs(DATA_DIR,exist_ok=True)
  if USING_POSTGRES:
@@ -652,8 +660,39 @@ def init():
    c.execute("insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)",('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
  run_migrations(con, False)
 init()
-with con() as c:
- c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
+
+def configure_persistent_secret():
+ configured=(os.environ.get('GAMO_SECRET_KEY') or '').strip()
+ if configured:
+  app.secret_key=configured
+  return
+ key='flask_secret_key_v1'
+ with con(system=True) as db:
+  row=db.execute(_sql('select v from platform_meta where k=?'),(key,)).fetchone()
+  if not row:
+   candidate=secrets.token_hex(32)
+   if USING_POSTGRES:
+    db.execute('insert into platform_meta(k,v) values(%s,%s) on conflict (k) do nothing',(key,candidate))
+   else:
+    db.execute('insert or ignore into platform_meta(k,v) values(?,?)',(key,candidate))
+   db.commit()
+   row=db.execute(_sql('select v from platform_meta where k=?'),(key,)).fetchone()
+  if not row or not row['v']:
+   raise RuntimeError('Unable to initialize persistent Flask session secret.')
+  app.secret_key=str(row['v'])
+
+configure_persistent_secret()
+
+_admin_password=(os.environ.get('GAMO_ADMIN_PASSWORD') or '').strip()
+if not USING_POSTGRES and not _admin_password:
+ _admin_password='GamoFM2026!'
+if USING_POSTGRES and not _admin_password:
+ missing=one_system("select count(*) n from users where lower(email)=? and (password_hash is null or password_hash='')",('admin@gamo.sk',))
+ if missing and int(missing['n'] or 0):
+  raise RuntimeError('GAMO_ADMIN_PASSWORD is required because the production administrator has no password hash.')
+if _admin_password:
+ with con(system=USING_POSTGRES) as c:
+  c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(_admin_password),'admin@gamo.sk')); c.commit()
 
 @app.after_request
 def security_headers(response):
@@ -672,9 +711,19 @@ def security_headers(response):
   response.headers['Cache-Control']='private, no-cache'
  return response
 
+@app.get('/healthz')
+def healthz():
+ try:
+  row=one_system('select 1 as ok')
+  if row and row['ok']==1:
+   return jsonify({'status':'ok','version':APP_VERSION}),200
+ except Exception:
+  pass
+ return jsonify({'status':'degraded','version':APP_VERSION}),503
+
 @app.before_request
 def require_login():
- if request.endpoint in ('login','login_mfa','static') or request.path.startswith('/static/'): return
+ if request.endpoint in ('login','login_mfa','static','healthz') or request.path.startswith('/static/'): return
  if not session.get('user_id'):
   if not restore_remembered_device(): return redirect(url_for('login',next=request.path))
  current=one_system('select id,status,role,organization_id,must_change_password,mfa_enabled from users where id=?',(session.get('user_id'),))
@@ -972,10 +1021,12 @@ def onboarding():
   elif one('select id from buildings where organization_id=? and upper(code)=?',(org_id(),code)):
    flash('Budova s týmto kódom už existuje.','error')
   else:
-   bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,address,manager,org['name'],org_id()))
-   for n in range(1,floors+1):
-    x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
-   x('update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
+   with con() as db:
+    bid=_write_on(db,'insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,address,manager,org['name'],org_id()))
+    for n in range(1,floors+1):
+     _write_on(db,'insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    _write_on(db,'update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
+    db.commit()
    audit('ONBOARDING_COMPLETE',f'{name} · {floors} podlaží')
    flash('Firemné prostredie je pripravené. Teraz môžeš doplniť miestnosti a assety.','success')
    return redirect(f'/building/{bid}')
@@ -1099,16 +1150,23 @@ def ticket_create():
  if not assigned:
   manager=one("select id from users where organization_id=? and status='Aktívny' and id<>? and role in ('Facility Manager','Administrator') order by case role when 'Facility Manager' then 0 else 1 end,id limit 1",(oid,uid))
   assigned=manager['id'] if manager else None
- no=next_ticket_no(); now=datetime.utcnow().isoformat(timespec='seconds')+'Z'
- try:
-  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- except IntegrityError:
+ now=datetime.utcnow().isoformat(timespec='seconds')+'Z'; tid=None; mid=None; no=None
+ for _attempt in range(3):
   no=next_ticket_no()
-  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
- if attachment:
-  x('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
- x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
+  try:
+   with con() as db:
+    tid=_write_on(db,'insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
+    mid=_write_on(db,'insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+    if attachment:
+     _write_on(db,'insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+    _write_on(db,'update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
+    db.commit()
+   break
+  except DB_INTEGRITY_ERRORS:
+   tid=None; mid=None
+ if tid is None or mid is None:
+  flash('Ticket sa nepodarilo vytvoriť pre súbežný konflikt. Skús to prosím znova.','error')
+  return redirect('/tickets')
  audit('TICKET_CREATE',f'{no} · {subject}'); flash(f'Ticket {no} bol vytvorený.','success')
  return redirect(f'/ticket/{tid}')
 
@@ -1220,23 +1278,28 @@ def ticket_message(i):
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
  uid=session.get('user_id'); platform_view=platform_ticket_mode()
  oid=t['organization_id'] if platform_view else org_id()
- write=x_system if platform_view else x
- mid=write('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
- if attachment:
-  write('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+ is_creator=(t['created_by']==uid)
  if platform_view:
   new_status='Otvorený' if t['status'] in {'Nový','Uzavretý'} else t['status']
-  write('update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+ elif is_creator:
+  new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
+ else:
+  new_status='Otvorený' if t['status']=='Nový' else t['status']
+ with con(system=platform_view) as db:
+  mid=_write_on(db,'insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
+  if attachment:
+   _write_on(db,'insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+  if platform_view:
+   _write_on(db,'update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  elif is_creator:
+   _write_on(db,'update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  else:
+   _write_on(db,'update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  db.commit()
+ if platform_view:
   customer_access(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
   audit_for_org(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
  else:
-  is_creator=t['created_by']==uid
-  if is_creator:
-   new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
-   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
-  else:
-   new_status='Otvorený' if t['status']=='Nový' else t['status']
-   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
   audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
  if request.headers.get('X-Requested-With')=='GAMO-Live-Chat':
   return jsonify({'ok':True,'message_id':mid,'status':new_status})
@@ -2239,8 +2302,11 @@ def add(what):
    else:
     owner=one('select name from organizations where id=?',(org_id(),))
     customer_name=(owner['name'] if owner else 'GAMO a.s.')
-    bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
-    for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    with con() as db:
+     bid=_write_on(db,'insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
+     for n in range(1,floor_count+1):
+      _write_on(db,'insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+     db.commit()
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
   elif what=='floor':
    building_id=f.get('building_id'); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
@@ -2328,7 +2394,7 @@ def add(what):
    audit('USER_CREATE',f'{name} · {role}'); flash('Používateľ bol vytvorený.','success')
  except HTTPException:
   raise
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Záznam sa nepodarilo uložiť pre konflikt v databáze. Skontroluj unikátne kódy a identifikátory.','error')
  except ValueError as exc:
   flash(str(exc) or 'Záznam sa nepodarilo uložiť. Skontroluj zadané hodnoty.','error')
@@ -2365,7 +2431,7 @@ def update_user(i):
    session['user_name']=name; session['user_role']=role
   audit('USER_UPDATE',f'{name} · {role} · {status}')
   flash('Používateľ bol úspešne upravený.','success')
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Tento e-mail už používa iný účet.','error')
  return redirect('/admin#usersAdmin')
 
@@ -2456,7 +2522,7 @@ def edit_record(what,i):
   abort(404)
  except HTTPException:
   raise
- except IntegrityError:
+ except DB_INTEGRITY_ERRORS:
   flash('Záznam s rovnakým kódom alebo identifikátorom už existuje.','error')
  except (ValueError,TypeError):
   flash('Záznam sa nepodarilo upraviť. Skontroluj povinné polia a zadané hodnoty.','error')

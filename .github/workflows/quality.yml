@@ -46,6 +46,8 @@ jobs:
         run: python tests/login_desktop_regression.py
       - name: Check direct updater regression
         run: python tests/update_flow_regression.py
+      - name: Run final production static audit
+        run: python tests/final_release_audit.py
       - name: Run SQLite smoke tests
         run: python tests/smoke_app.py
       - name: Run SQLite application polish tests

@@ -9,12 +9,14 @@ on:
       - 'desktop_config.json'
       - 'update_config.json'
       - 'version.json'
+      - 'version_info.txt'
       - 'installer/**'
       - 'tests/desktop_window_static.py'
       - 'tests/login_desktop_regression.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
       - 'tests/update_flow_regression.py'
+      - 'tests/final_release_audit.py'
       - '.github/workflows/build-windows.yml'
   push:
     branches:
@@ -25,11 +27,13 @@ on:
       - 'desktop_config.json'
       - 'update_config.json'
       - 'version.json'
+      - 'version_info.txt'
       - 'installer/**'
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
       - 'tests/update_flow_regression.py'
+      - 'tests/final_release_audit.py'
       - '.github/workflows/build-windows.yml'
 
 permissions:
@@ -60,9 +64,33 @@ jobs:
           python tests/installer_regression.py
           python tests/release_workflow_static.py
           python tests/update_flow_regression.py
+          python tests/final_release_audit.py
 
       - name: Build GAMO direct Windows application
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_FM --distpath dist_app --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_FM --distpath dist_app --version-file version_info.txt --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
+
+      - name: Sign application when certificate is configured
+        shell: pwsh
+        env:
+          GAMO_SIGNING_PFX_BASE64: ${{ secrets.GAMO_SIGNING_PFX_BASE64 }}
+          GAMO_SIGNING_PFX_PASSWORD: ${{ secrets.GAMO_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GAMO_SIGNING_PFX_BASE64)) {
+            Write-Host "Authenticode signing is not configured; build remains unsigned."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "gamo-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:GAMO_SIGNING_PFX_BASE64))
+          $kitRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = (Get-ChildItem $kitRoot -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName.ToLower().EndsWith('\x64\signtool.exe') } |
+            Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /f $pfx /p $env:GAMO_SIGNING_PFX_PASSWORD "dist_app\GAMO_FM.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Application signing failed." }
+          & $signtool verify /pa /v "dist_app\GAMO_FM.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Application signature verification failed." }
+          Remove-Item $pfx -Force
 
       - name: Prepare versioned portable application
         shell: pwsh
@@ -74,13 +102,39 @@ jobs:
         run: choco install innosetup -y
 
       - name: Build installer
-        shell: powershell
+        shell: pwsh
         run: |
           $version = (Get-Content version.json | ConvertFrom-Json).version
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\GAMO_FM.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed." }
+
+      - name: Sign installer when certificate is configured
+        shell: pwsh
+        env:
+          GAMO_SIGNING_PFX_BASE64: ${{ secrets.GAMO_SIGNING_PFX_BASE64 }}
+          GAMO_SIGNING_PFX_PASSWORD: ${{ secrets.GAMO_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GAMO_SIGNING_PFX_BASE64)) {
+            Write-Host "Authenticode signing is not configured; installer remains unsigned."
+            exit 0
+          }
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $installer = "dist_installer\GAMO_FM_Setup_$version.exe"
+          $pfx = Join-Path $env:RUNNER_TEMP "gamo-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:GAMO_SIGNING_PFX_BASE64))
+          $kitRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = (Get-ChildItem $kitRoot -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName.ToLower().EndsWith('\x64\signtool.exe') } |
+            Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /f $pfx /p $env:GAMO_SIGNING_PFX_PASSWORD $installer
+          if ($LASTEXITCODE -ne 0) { throw "Installer signing failed." }
+          & $signtool verify /pa /v $installer
+          if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed." }
+          Remove-Item $pfx -Force
 
       - name: Validate installer output
-        shell: powershell
+        shell: pwsh
         run: |
           $version = (Get-Content version.json | ConvertFrom-Json).version
           $expected = "dist_installer\GAMO_FM_Setup_$version.exe"
@@ -126,9 +180,11 @@ jobs:
 
           - Direct Windows application: no launcher
           - One click opens the GAMO Facility Platform immediately
-          - Stable Microsoft Edge application renderer prevents embedded WebView2 keyboard/input freezes
+          - Stable Microsoft Edge application renderer
           - Dedicated persistent application profile keeps remembered login
           - Verified installer updates with SHA-256
+          - Optional Authenticode signing when the GAMO signing certificate is configured
+          - Final production hardening: persistent sessions, atomic ticket writes and deployment health checks
           - Tenant-isolated cloud application with MFA, Privacy Center and ticket messaging
           "@
 
@@ -150,7 +206,7 @@ jobs:
             sha256 = $installerSha
             portable_url = $portableDownload
             portable_sha256 = $portableSha
-            notes = "GAMO a.s. $version - stable Windows renderer and login input crash fix"
+            notes = "GAMO a.s. $version - final production hardening, deployment health and verified Windows release"
             published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json
 
@@ -168,7 +224,7 @@ jobs:
           }
 
       - name: Release summary
-        shell: powershell
+        shell: pwsh
         run: |
           $version = (Get-Content version.json | ConvertFrom-Json).version
           "### GAMO a.s. Windows $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
@@ -178,3 +234,4 @@ jobs:
           "- Primary renderer: Microsoft Edge application mode (no browser address bar)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "- Embedded WebView is emergency fallback only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "- No launcher process or launcher screen." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Authenticode: signed automatically when GAMO_SIGNING_PFX_BASE64/PASSWORD secrets are configured." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append

@@ -10,11 +10,15 @@ assert "Build GAMO direct Windows application" in workflow
 assert "--name GAMO_FM" in workflow
 assert "--onefile" in workflow
 assert "--collect-all webview" in workflow
+assert "--version-file version_info.txt" in workflow
 assert "dist_app\\GAMO_FM.exe" in workflow
 assert "GAMO_FM_Setup_$version.exe" in workflow
 assert "GAMO_FM_$version.exe" in workflow
 assert "Publish versioned GitHub Release" in workflow
 assert "Get-FileHash" in workflow and "SHA256" in workflow
+assert "GAMO_SIGNING_PFX_BASE64" in workflow
+assert "signtool sign /fd SHA256" in workflow
+assert "signtool verify /pa /v" in workflow
 assert 'update_mode = "installer"' in workflow
 assert "installer_url" in workflow
 assert "portable_url" in workflow

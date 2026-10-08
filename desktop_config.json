@@ -2,5 +2,7 @@
   "server_url": "https://gamo-fm.onrender.com",
   "start_maximized": true,
   "renderer": "edge_app",
-  "embedded_fallback": true
+  "embedded_fallback": true,
+  "health_path": "/healthz",
+  "health_timeout_seconds": 6
 }
