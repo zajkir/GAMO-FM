@@ -20,6 +20,17 @@ os.environ["GAMO_HTTPS"] = "0"
 import app
 from db_migrations import _migration_12
 
+# Fresh production bootstrap creates a forced-rotation GAMO administrator.
+# The customer password-rotation flow is tested later in this suite; clear the
+# flag here so the remaining platform smoke scenarios can start at dashboard.
+if app.USING_POSTGRES:
+    boot_admin = app.one_system("select must_change_password from users where lower(email)=?", ("admin@gamo.sk",))
+    assert boot_admin and bool(boot_admin["must_change_password"])
+    app.x_system(
+        "update users set must_change_password=? where lower(email)=?",
+        (False, "admin@gamo.sk"),
+    )
+
 client = app.app.test_client()
 
 # Deployment health is intentionally public but returns no customer data.
