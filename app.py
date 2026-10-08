@@ -1,5 +1,4 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
-from sqlite3 import IntegrityError
 import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, re, mimetypes, calendar
 try:
  import psycopg
@@ -32,7 +31,7 @@ if os.environ.get('GAMO_DESKTOP') == '1':
 else:
     DATA_DIR=os.environ.get('GAMO_DATA_DIR', os.path.join(BASE,'data'))
 app=Flask(__name__)
-app.secret_key=os.environ.get('GAMO_SECRET_KEY') or secrets.token_hex(32)
+app.secret_key=(os.environ.get('GAMO_SECRET_KEY') or '').strip() or None
 app.config.update(SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('GAMO_HTTPS','1' if os.environ.get('DATABASE_URL') else '0')=='1',PERMANENT_SESSION_LIFETIME=timedelta(days=30),MAX_CONTENT_LENGTH=16*1024*1024)
 DB=os.path.join(DATA_DIR,'gamo.db')
 LOGIN_WINDOW=300
