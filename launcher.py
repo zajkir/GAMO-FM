@@ -737,7 +737,7 @@ def open_cloud_client(url):
         )
         api.bind_window(window)
         write_log("Opening single-process GAMO Cloud client.")
-        webview.start(_show_cloud_window, window, debug=False)
+        webview.start(_show_cloud_window, window, debug=False, gui="edgechromium")
         return True
     except Exception as exc:
         detail = str(exc)
@@ -769,7 +769,10 @@ def main():
     mutex = single_instance_guard()
     if mutex is False:
         return
-    write_log(f"Launcher started · v{current_version()}")
+    write_log(
+        f"Launcher started · v{current_version()} · executable={Path(sys.executable).resolve()} "
+        f"· app_dir={APP_DIR} · frozen={bool(getattr(sys, 'frozen', False))}"
+    )
     app = Launcher()
     app._mutex = mutex
     app.mainloop()

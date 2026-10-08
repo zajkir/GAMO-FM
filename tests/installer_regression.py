@@ -17,6 +17,10 @@ assert 'function PrepareToInstall(var NeedsRestart: Boolean): String;' in iss
 assert 'ForceCloseLauncher();' in iss
 assert 'Source: "..\\dist\\GAMO_FM\\*"' not in iss
 assert 'Type: files; Name: "{app}\\{#MyAppExeName}"' in iss
+assert 'DestName: "{#MyAppExeName}"' in iss
+assert 'Source: "..\\dist_launcher\\GAMO_Launcher.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"' in iss
+assert 'Type: files; Name: "{autodesktop}\\GAMO a.s..lnk"' in iss
+assert 'Type: files; Name: "{autoprograms}\\GAMO a.s..lnk"' in iss
 assert 'Type: filesandordirs; Name: "{app}\\_internal"' in iss
 assert f'#define MyAppVersion "{version}"' in iss
 

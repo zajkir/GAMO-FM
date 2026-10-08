@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.16"
+#define MyAppVersion "9.0.0.17"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -31,12 +31,17 @@ VersionInfoVersion={#MyAppVersion}
 ; Installer ich pri upgrade ani odinštalovaní nemaže ani neprepisuje.
 
 [InstallDelete]
-; Remove files from legacy two-process desktop builds. Customer data are outside {app}.
+; Remove obsolete legacy payload and recreate managed shortcuts on every repair/upgrade.
+; A fresh GAMO_FM.exe compatibility alias is installed below so old pinned/manual
+; shortcuts never fail with "The system cannot find the path specified."
 Type: files; Name: "{app}\{#MyAppExeName}"
 Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{autodesktop}\GAMO a.s..lnk"
+Type: files; Name: "{autoprograms}\GAMO a.s..lnk"
 
 [Files]
 Source: "..\dist_launcher\GAMO_Launcher.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "..\dist_launcher\GAMO_Launcher.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion restartreplace
 
 [Icons]
 Name: "{autoprograms}\GAMO a.s."; Filename: "{app}\{#MyLauncherExeName}"
