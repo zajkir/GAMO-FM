@@ -1,4 +1,4 @@
-from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context
+from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
 from sqlite3 import IntegrityError
 import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib
 try:
@@ -210,6 +210,91 @@ def auth_event(organization_id,user_id,event,success,detail=''):
  except Exception:
   pass
 
+REMEMBER_COOKIE='gamo_remember_device'
+REMEMBER_DAYS=30
+
+def _remember_hash(token):
+ return hashlib.sha256((token or '').encode('utf-8')).hexdigest()
+
+def _remember_expired(value):
+ if not value: return True
+ try:
+  if isinstance(value,datetime):
+   expiry=value
+  else:
+   expiry=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+  now=datetime.now(expiry.tzinfo) if getattr(expiry,'tzinfo',None) else datetime.utcnow()
+  return expiry<=now
+ except Exception:
+  return True
+
+def revoke_user_devices(user_id):
+ try:
+  x_system('update remembered_devices set revoked_at=CURRENT_TIMESTAMP where user_id=? and revoked_at is null',(user_id,))
+ except Exception:
+  pass
+
+def revoke_remember_token(raw_token):
+ if not raw_token: return
+ try:
+  x_system('update remembered_devices set revoked_at=CURRENT_TIMESTAMP where token_hash=? and revoked_at is null',(_remember_hash(raw_token),))
+ except Exception:
+  pass
+
+def issue_remembered_device(user):
+ raw=secrets.token_urlsafe(48)
+ expires=datetime.utcnow()+timedelta(days=REMEMBER_DAYS)
+ ua=(request.headers.get('User-Agent') or '')[:500]
+ label='GAMO Desktop klient' if ('GAMO-Desktop/' in ua or 'pywebview' in ua.lower()) else 'Webové zariadenie'
+ ip=(request.headers.get('X-Forwarded-For',request.remote_addr or '') or '').split(',')[0].strip()[:120]
+ x_system('insert into remembered_devices(organization_id,user_id,token_hash,label,user_agent,ip_created,expires_at) values(?,?,?,?,?,?,?)',
+  (user['organization_id'],user['id'],_remember_hash(raw),label,ua,ip,expires.isoformat(timespec='seconds')+'Z'))
+ # Keep the table bounded per account and remove dead tokens.
+ try:
+  if USING_POSTGRES:
+   x_system("""delete from remembered_devices where user_id=? and
+    (revoked_at is not null or expires_at<CURRENT_TIMESTAMP or id not in
+      (select id from remembered_devices where user_id=? and revoked_at is null and expires_at>=CURRENT_TIMESTAMP order by last_used desc,id desc limit 8))""",(user['id'],user['id']))
+  else:
+   x_system("""delete from remembered_devices where user_id=? and
+    (revoked_at is not null or expires_at<CURRENT_TIMESTAMP or id not in
+      (select id from remembered_devices where user_id=? and revoked_at is null and expires_at>=CURRENT_TIMESTAMP order by last_used desc,id desc limit 8))""",(user['id'],user['id']))
+ except Exception:
+  pass
+ return raw
+
+def login_response(target,user,remember=False):
+ response=make_response(redirect(safe_next_url(target)))
+ previous=request.cookies.get(REMEMBER_COOKIE)
+ if remember:
+  if previous: revoke_remember_token(previous)
+  raw=issue_remembered_device(user)
+  response.set_cookie(REMEMBER_COOKIE,raw,max_age=REMEMBER_DAYS*86400,httponly=True,
+   secure=bool(app.config.get('SESSION_COOKIE_SECURE')),samesite='Strict',path='/')
+ else:
+  if previous: revoke_remember_token(previous)
+  response.delete_cookie(REMEMBER_COOKIE,path='/',samesite='Strict')
+ return response
+
+def restore_remembered_device():
+ raw=request.cookies.get(REMEMBER_COOKIE)
+ if not raw: return False
+ device=one_system('select * from remembered_devices where token_hash=? and revoked_at is null',(_remember_hash(raw),))
+ if not device or _remember_expired(device['expires_at']):
+  revoke_remember_token(raw); return False
+ user=one_system('select * from users where id=?',(device['user_id'],))
+ org=one_system('select * from organizations where id=?',(device['organization_id'],))
+ license_ok=bool(user and org and user['status']=='Aktívny' and user['organization_id']==org['id'] and
+  org['status']=='Aktívny' and org['license_status']=='Aktívna' and
+  (not org['license_until'] or str(org['license_until'])[:10]>=date.today().isoformat()))
+ if not license_ok:
+  revoke_remember_token(raw); return False
+ establish_user_session(user,org,True,request.path)
+ try: x_system('update remembered_devices set last_used=CURRENT_TIMESTAMP where id=?',(device['id'],))
+ except Exception: pass
+ auth_event(org['id'],user['id'],'REMEMBER_DEVICE_RESTORE',True,'Relácia obnovená z dôveryhodného zariadenia.')
+ return True
+
 def _normalize_mfa_code(code):
  return ''.join(ch for ch in (code or '').upper() if ch.isalnum())
 
@@ -403,7 +488,8 @@ def security_headers(response):
 @app.before_request
 def require_login():
  if request.endpoint in ('login','login_mfa','static') or request.path.startswith('/static/'): return
- if not session.get('user_id'): return redirect(url_for('login',next=request.path))
+ if not session.get('user_id'):
+  if not restore_remembered_device(): return redirect(url_for('login',next=request.path))
  current=one_system('select id,status,role,organization_id,must_change_password,mfa_enabled from users where id=?',(session.get('user_id'),))
  if not current or current['status']!='Aktívny' or current['organization_id']!=actor_org_id():
   session.clear(); return redirect(url_for('login'))
@@ -475,7 +561,7 @@ def login():
    else:
     _login_attempts.pop(key,None)
     target=establish_user_session(u,org,remember,request.args.get('next'))
-    return redirect(target)
+    return login_response(target,u,remember)
   else:
    attempts.append(now); _login_attempts[key]=attempts
    if u: auth_event(u['organization_id'],u['id'],'LOGIN_PASSWORD_FAILURE',False,'Nesprávne heslo.')
@@ -502,7 +588,7 @@ def login_mfa():
    remember=bool(session.get('mfa_pending_remember')); next_url=session.get('mfa_pending_next') or '/'
    auth_event(u['organization_id'],u['id'],'MFA_SUCCESS',True,'Druhý faktor overený.')
    target=establish_user_session(u,org,remember,next_url)
-   return redirect(target)
+   return login_response(target,u,remember)
   failures=int(session.get('mfa_failures') or 0)+1; session['mfa_failures']=failures
   auth_event(u['organization_id'],u['id'],'MFA_FAILURE',False,f'Neúspešný MFA pokus #{failures}.')
   if failures>=6:
@@ -513,7 +599,12 @@ def login_mfa():
 
 @app.get('/logout')
 def logout():
- session.clear(); return redirect('/login')
+ raw=request.cookies.get(REMEMBER_COOKIE)
+ if raw: revoke_remember_token(raw)
+ session.clear()
+ response=make_response(redirect('/login'))
+ response.delete_cookie(REMEMBER_COOKIE,path='/',samesite='Strict')
+ return response
 
 @app.route('/account/password',methods=['GET','POST'])
 def account_password():
@@ -535,6 +626,7 @@ def account_password():
    flash('Nové heslo musí byť odlišné od aktuálneho.','error')
   else:
    x('update users set password_hash=?,must_change_password=? where id=?',(generate_password_hash(new_password),False if USING_POSTGRES else 0,u['id']))
+   revoke_user_devices(u['id'])
    session['must_change_password']=False
    audit('PASSWORD_CHANGE','Používateľ zmenil svoje heslo.')
    flash('Heslo bolo bezpečne zmenené.','success')
@@ -560,6 +652,7 @@ def account_mfa():
     new_codes=[secrets.token_hex(6).upper() for _ in range(10)]
     hashes=[_recovery_hash(x) for x in new_codes]
     x('update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=CURRENT_TIMESTAMP where id=?' if USING_POSTGRES else "update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=datetime('now') where id=?",(secret,json.dumps(hashes),True if USING_POSTGRES else 1,u['id']))
+    revoke_user_devices(u['id'])
     session.pop('mfa_setup_secret',None)
     audit('MFA_ENABLED','Používateľ zapol dvojfaktorové overenie.')
     auth_event(actor_org_id(),u['id'],'MFA_ENABLED',True,'TOTP MFA aktivované.')
@@ -583,6 +676,7 @@ def account_mfa():
      flash('Heslo alebo MFA kód nie je správny.','error')
     else:
      x('update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=? where id=?',(None,None,False if USING_POSTGRES else 0,None,u['id']))
+     revoke_user_devices(u['id'])
      audit('MFA_DISABLED','Používateľ vypol dvojfaktorové overenie.')
      auth_event(actor_org_id(),u['id'],'MFA_DISABLED',True,'TOTP MFA vypnuté.')
      u=one('select * from users where id=?',(u['id'],))
@@ -1685,6 +1779,7 @@ def platform_customer_reset_admin_password(i):
  if not admin_user:
   flash('Zákazník nemá administrátorský účet.','error'); return redirect(f'/platform/customer/{i}#customerUsers')
  x_system('update users set password_hash=?,status=?,must_change_password=? where id=?',(generate_password_hash(password),'Aktívny',True if USING_POSTGRES else 1,admin_user['id']))
+ revoke_user_devices(admin_user['id'])
  customer_access(i,'GAMO_ADMIN_PASSWORD_RESET',f"Reset hesla administrátora {admin_user['email']}.")
  audit('CUSTOMER_ADMIN_PASSWORD_RESET',f"{customer['code']} · {admin_user['email']}")
  flash('Dočasné heslo zákazníckeho administrátora bolo zmenené.','success')
@@ -1701,6 +1796,7 @@ def platform_customer_reset_admin_mfa(i):
  admin_user=one_system("select id,email from users where organization_id=? and role='Administrator' order by id limit 1",(i,))
  if not admin_user: abort(404)
  x_system('update users set mfa_secret=?,mfa_recovery_codes=?,mfa_enabled=?,mfa_enabled_at=? where id=?',(None,None,False if USING_POSTGRES else 0,None,admin_user['id']))
+ revoke_user_devices(admin_user['id'])
  customer_access(i,'GAMO_ADMIN_MFA_RESET',f"Reset MFA administrátora {admin_user['email']}.")
  audit_for_org(i,'CUSTOMER_ADMIN_MFA_RESET',f"Reset MFA {admin_user['email']}")
  flash('MFA administrátora bolo resetované. Ak organizácia vyžaduje MFA, pri ďalšom prihlásení ho musí nastaviť znova.','success')
