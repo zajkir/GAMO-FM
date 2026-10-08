@@ -444,7 +444,7 @@ def launch_installer(path):
     return subprocess.Popen([str(path), *flags], close_fds=True)
 
 
-def launch_installer_after_process_exit(path, process_id=None, relaunch_path=None, version=''):
+def launch_installer_after_process_exit(path, process_id=None, relaunch_path=None, version='', expected_launcher_sha256=''):
     """Install a verified update after the current launcher exits, then relaunch.
 
     A detached PowerShell helper owns the handoff because Windows cannot replace
@@ -464,6 +464,8 @@ def launch_installer_after_process_exit(path, process_id=None, relaunch_path=Non
     state_dir = update_state_dir()
     result_file = str(update_result_path())
     log_file = str(state_dir / 'update_helper.log')
+    install_dir = str(APP_DIR.resolve())
+    expected_launcher_sha256 = str(expected_launcher_sha256 or '').strip().lower()
     helper = state_dir / f'update_helper_{datetime.now().strftime("%Y%m%d_%H%M%S")}.ps1'
 
     script = r'''param(
@@ -472,7 +474,9 @@ def launch_installer_after_process_exit(path, process_id=None, relaunch_path=Non
   [string]$Relaunch,
   [string]$ResultFile,
   [string]$LogFile,
-  [string]$TargetVersion
+  [string]$TargetVersion,
+  [string]$ExpectedLauncherSha,
+  [string]$InstallDir
 )
 $ErrorActionPreference = 'Stop'
 
@@ -505,23 +509,36 @@ try {
     throw "Verified installer file is missing: $Installer"
   }
 
-  Write-UpdateLog "Starting installer: $Installer"
-  $setup = Start-Process -FilePath $Installer -ArgumentList @(
+  Write-UpdateLog "Starting elevated installer: $Installer"
+  $dirArg = '/DIR="' + $InstallDir + '"'
+  $setup = Start-Process -FilePath $Installer -Verb RunAs -ArgumentList @(
     '/VERYSILENT',
     '/SUPPRESSMSGBOXES',
     '/CLOSEAPPLICATIONS',
     '/NORESTART',
-    '/NOLAUNCH=1'
+    '/NOLAUNCH=1',
+    $dirArg
   ) -Wait -PassThru
 
   $code = [int]$setup.ExitCode
   Write-UpdateLog "Installer exited with code $code."
-
-  if ($code -eq 0) {
-    Save-Result 'success' "Aktualizácia $TargetVersion bola úspešne nainštalovaná." $code
-  } else {
-    Save-Result 'failed' "Inštalátor skončil s kódom $code." $code
+  if ($code -ne 0) {
+    throw "Inštalátor skončil s kódom $code."
   }
+
+  if (-not (Test-Path -LiteralPath $Relaunch)) {
+    throw "Po aktualizácii sa nenašiel launcher: $Relaunch"
+  }
+
+  if ($ExpectedLauncherSha) {
+    $installedSha = (Get-FileHash -LiteralPath $Relaunch -Algorithm SHA256).Hash.ToLower()
+    Write-UpdateLog "Installed launcher SHA256: $installedSha"
+    if ($installedSha -ne $ExpectedLauncherSha.ToLower()) {
+      throw "Nainštalovaný launcher neprešiel SHA-256 kontrolou."
+    }
+  }
+
+  Save-Result 'success' "Aktualizácia $TargetVersion bola úspešne nainštalovaná a overená." $code
 } catch {
   $message = $_.Exception.Message
   Write-UpdateLog "Update helper failed: $message"
@@ -563,6 +580,8 @@ try {
             result_file,
             log_file,
             str(version or ''),
+            expected_launcher_sha256,
+            install_dir,
         ],
         close_fds=True,
         creationflags=creationflags,
