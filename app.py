@@ -1155,25 +1155,28 @@ def reports_export_xlsx():
   try: return datetime.strptime(str(value)[:10],'%Y-%m-%d').date()
   except Exception: return excel_safe(value)
 
- buildings=q("""select b.id,b.code,b.name,
-  (select count(*) from assets a where a.building_id=b.id) assets,
-  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id) maintenance_cost,
-  (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id) incident_cost,
-  (select count(*) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.status not in ('Ukončená','Vyriešená')) open_incidents
+ buildings=q("""select b.id,b.code,b.name,b.address,b.manager,b.status,
+  (select count(*) from floors f where f.building_id=b.id and f.organization_id=b.organization_id) floors,
+  (select count(*) from rooms r where r.organization_id=b.organization_id and r.floor_id in (select f.id from floors f where f.building_id=b.id)) rooms,
+  (select coalesce(sum(r.area),0) from rooms r where r.organization_id=b.organization_id and r.floor_id in (select f.id from floors f where f.building_id=b.id)) area,
+  (select count(*) from assets a where a.building_id=b.id and a.organization_id=b.organization_id) assets,
+  (select coalesce(sum(w.cost),0) from workorders w join assets a on a.id=w.asset_id where a.building_id=b.id and w.organization_id=b.organization_id) maintenance_cost,
+  (select coalesce(sum(i.cost),0) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.organization_id=b.organization_id) incident_cost,
+  (select count(*) from incidents i join assets a on a.id=i.asset_id where a.building_id=b.id and i.organization_id=b.organization_id and i.status not in ('Ukončená','Vyriešená')) open_incidents
   from buildings b where b.organization_id=? order by b.name""",(oid,))
  professions=q("""select coalesce(a.profession,'Iné') profession,count(*) assets,
   coalesce(sum(a.purchase_price),0) asset_value
   from assets a join buildings b on b.id=a.building_id
   where b.organization_id=? group by a.profession order by assets desc""",(oid,))
- assets_rows=q("""select a.asset_id,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price
+ assets_rows=q("""select a.asset_id,a.asset_tag,a.name,b.name building,f.code floor,r.code room,a.profession,a.grp,a.type,a.manufacturer,a.model,a.serial,a.system_id,a.status,a.criticality,a.purchase_price,a.installed,a.warranty
   from assets a join buildings b on b.id=a.building_id left join floors f on f.id=a.floor_id left join rooms r on r.id=a.room_id
-  where b.organization_id=? order by a.asset_id""",(oid,))
+  where a.organization_id=? and b.organization_id=? order by a.asset_id""",(oid,oid,))
  wo_rows=q("""select a.asset_id,a.name asset,b.name building,w.title,w.kind,w.priority,w.status,w.due,w.supplier,w.technician,w.cost,w.description
   from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id
-  where b.organization_id=? order by w.id desc""",(oid,))
- inc_rows=q("""select a.asset_id,a.name asset,b.name building,i.title,i.severity,i.status,i.reported,i.impact,i.cause,i.cost
+  where w.organization_id=? and a.organization_id=? and b.organization_id=? order by w.id desc""",(oid,oid,oid,))
+ inc_rows=q("""select a.asset_id,a.name asset,b.name building,i.title,i.severity,i.status,i.reported,i.impact,i.cause,i.solution,i.cost
   from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id
-  where b.organization_id=? order by i.id desc""",(oid,))
+  where i.organization_id=? and a.organization_id=? and b.organization_id=? order by i.id desc""",(oid,oid,oid,))
  overdue_rows=[r for r in wo_rows if r['status'] not in {'Ukončené','Zrušené'} and r['due'] and str(r['due'])[:10]<date.today().isoformat()]
 
  maintenance_cost=float(sum(float(r['cost'] or 0) for r in wo_rows))
@@ -1302,8 +1305,11 @@ def reports_export_xlsx():
   sh.row_dimensions[1].height=24; sh.page_setup.orientation='landscape'; sh.page_setup.fitToWidth=1; sh.sheet_properties.pageSetUpPr.fitToPage=True
   return sh
 
- asset_data=[[r[k] for k in ['asset_id','name','building','floor','room','profession','grp','type','manufacturer','model','serial','system_id','status','criticality','purchase_price']] for r in assets_rows]
- styled_sheet('Assety','ASSET REGISTER',['Asset ID','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena'],asset_data,{15:money_fmt},13,14,'AssetsTable')
+ building_data=[[b['code'],b['name'],b['address'],b['manager'],b['status'],b['floors'],b['rooms'],b['area'],b['assets'],b['open_incidents'],float(b['maintenance_cost'] or 0),float(b['incident_cost'] or 0),float(b['maintenance_cost'] or 0)+float(b['incident_cost'] or 0)] for b in buildings]
+ styled_sheet('Budovy','PORTFÓLIO BUDOV',['Kód','Budova','Adresa','Správca','Stav','Podlažia','Miestnosti','Plocha m²','Assety','Otvorené incidenty','Údržba','Incidenty','Spolu'],building_data,{8:'#,##0.00',11:money_fmt,12:money_fmt,13:money_fmt},5,None,'BuildingsTable')
+
+ asset_data=[[r['asset_id'],r['asset_tag'],r['name'],r['building'],r['floor'],r['room'],r['profession'],r['grp'],r['type'],r['manufacturer'],r['model'],r['serial'],r['system_id'],r['status'],r['criticality'],r['purchase_price'],excel_date(r['installed']),excel_date(r['warranty'])] for r in assets_rows]
+ styled_sheet('Assety','ASSET REGISTER',['Asset ID','Asset Tag / QR','Názov','Budova','Podlažie','Miestnosť','Profesia','Skupina','Typ','Výrobca','Model','Sériové číslo','System ID','Stav','Kritickosť','Cena','Inštalácia','Záruka do'],asset_data,{16:money_fmt,17:date_fmt,18:date_fmt},14,15,'AssetsTable')
 
  work_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['kind'],r['priority'],r['status'],excel_date(r['due']),r['supplier'],r['technician'],r['cost'],r['description']] for r in wo_rows]
  work=styled_sheet('Údržba','ÚDRŽBA & REVÍZIE',['Asset ID','Asset','Budova','Pracovný príkaz','Typ','Priorita','Stav','Termín','Dodávateľ','Technik','Náklad','Popis'],work_data,{8:date_fmt,11:money_fmt},7,None,'MaintenanceTable')
@@ -1312,8 +1318,8 @@ def reports_export_xlsx():
   if due and str(due)[:10]<date.today().isoformat() and str(work.cell(ridx,7).value)!='Ukončené':
    work.cell(ridx,8).fill=PatternFill('solid',fgColor=red); work.cell(ridx,8).font=Font(color='A61B2B',bold=True)
 
- incident_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['severity'],r['status'],excel_date(r['reported']),r['impact'],r['cause'],r['cost']] for r in inc_rows]
- incidents_sh=styled_sheet('Incidenty','PORUCHY & HAVÁRIE',['Asset ID','Asset','Budova','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Náklad'],incident_data,{7:date_fmt,10:money_fmt},6,None,'IncidentsTable')
+ incident_data=[[r['asset_id'],r['asset'],r['building'],r['title'],r['severity'],r['status'],excel_date(r['reported']),r['impact'],r['cause'],r['solution'],r['cost']] for r in inc_rows]
+ incidents_sh=styled_sheet('Incidenty','PORUCHY & HAVÁRIE',['Asset ID','Asset','Budova','Incident','Závažnosť','Stav','Nahlásené','Dopad','Príčina','Riešenie','Náklad'],incident_data,{7:date_fmt,11:money_fmt},6,None,'IncidentsTable')
  for ridx in range(6,6+len(incident_data)):
   sev=str(incidents_sh.cell(ridx,5).value or '')
   incidents_sh.cell(ridx,5).fill=PatternFill('solid',fgColor=red if sev in {'Kritická','Havária','Vysoká'} else amber)
