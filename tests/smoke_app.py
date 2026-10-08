@@ -683,6 +683,8 @@ r = client.post(
     follow_redirects=False,
 )
 assert r.status_code == 200 and r.get_json()["ok"] is True
+assert r.get_json()["message"]["body"].startswith("Požiadavku som prevzal")
+assert r.get_json()["message"]["attachments"][0]["name"] == "service-protocol.pdf"
 manager_message_id = r.get_json()["message_id"]
 manager_attachment = app.one_system(
     "select * from ticket_attachments where organization_id=? and message_id=? and name=?",
