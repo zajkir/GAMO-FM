@@ -1022,10 +1022,12 @@ def onboarding():
   elif one('select id from buildings where organization_id=? and upper(code)=?',(org_id(),code)):
    flash('Budova s týmto kódom už existuje.','error')
   else:
-   bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,address,manager,org['name'],org_id()))
-   for n in range(1,floors+1):
-    x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
-   x('update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
+   with con() as db:
+    bid=_write_on(db,'insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,address,manager,org['name'],org_id()))
+    for n in range(1,floors+1):
+     _write_on(db,'insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    _write_on(db,'update organizations set onboarding_complete=? where id=?',(True if USING_POSTGRES else 1,org_id()))
+    db.commit()
    audit('ONBOARDING_COMPLETE',f'{name} · {floors} podlaží')
    flash('Firemné prostredie je pripravené. Teraz môžeš doplniť miestnosti a assety.','success')
    return redirect(f'/building/{bid}')
@@ -2289,8 +2291,11 @@ def add(what):
    else:
     owner=one('select name from organizations where id=?',(org_id(),))
     customer_name=(owner['name'] if owner else 'GAMO a.s.')
-    bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
-    for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    with con() as db:
+     bid=_write_on(db,'insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
+     for n in range(1,floor_count+1):
+      _write_on(db,'insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+     db.commit()
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
   elif what=='floor':
    building_id=f.get('building_id'); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
