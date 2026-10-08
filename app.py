@@ -1,6 +1,6 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, re, mimetypes
+import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, re, mimetypes, calendar
 try:
  import psycopg
  from psycopg.rows import dict_row
@@ -183,6 +183,91 @@ def next_asset_id(profession,oid=None):
   if candidate not in used: return candidate
   n+=1
  raise RuntimeError('Nie je možné nájsť voľné Asset ID podľa zvolenej masky.')
+
+def _as_date(value):
+ if not value: return None
+ if isinstance(value,datetime): return value.date()
+ if isinstance(value,date): return value
+ try: return datetime.strptime(str(value)[:10],'%Y-%m-%d').date()
+ except Exception: return None
+
+def _add_months(value,months):
+ base=_as_date(value)
+ if not base or not months: return None
+ total=(base.year*12+(base.month-1))+int(months)
+ year,month=divmod(total,12); month+=1
+ day=min(base.day,calendar.monthrange(year,month)[1])
+ return date(year,month,day)
+
+def _last_completed_cycle(asset_id,kind):
+ row=one("""select completed_at,due from workorders
+  where asset_id=? and kind=? and status='Ukončené'
+  order by case when completed_at is null or completed_at='' then 1 else 0 end,completed_at desc,id desc limit 1""",(asset_id,kind))
+ if not row: return None
+ return _as_date(row['completed_at']) or _as_date(row['due'])
+
+def maintenance_plan_rows(limit=None):
+ warning_days=org_runtime_defaults()['notifications']['due_warning_days']
+ today=date.today()
+ assets=q("""select a.id,a.asset_id,a.name,a.status,a.criticality,a.service_months,a.revision_months,a.installed,
+  b.code building,b.name building_name,r.code room
+  from assets a join buildings b on b.id=a.building_id left join rooms r on r.id=a.room_id
+  where a.organization_id=? and a.status<>'Vyradené' order by b.name,a.asset_id""",(org_id(),))
+ rows=[]
+ for a in assets:
+  for kind,interval,label in (
+   ('PM',int(a['service_months'] or 0),'Preventívna údržba'),
+   ('REV',int(a['revision_months'] or 0),'Pravidelná revízia'),
+  ):
+   if interval<=0: continue
+   last_done=_last_completed_cycle(a['id'],kind)
+   anchor=last_done or _as_date(a['installed'])
+   due=_add_months(anchor,interval) if anchor else None
+   active=one("""select id,status,due,source from workorders
+    where asset_id=? and kind=? and status not in ('Ukončené','Zrušené')
+    order by case when due is null or due='' then 1 else 0 end,due asc,id desc limit 1""",(a['id'],kind))
+   days=(due-today).days if due else None
+   if not due: state='missing'
+   elif days<0: state='overdue'
+   elif days<=warning_days: state='soon'
+   else: state='future'
+   rows.append({
+    'asset_db_id':a['id'],'asset_id':a['asset_id'],'asset':a['name'],'building':a['building'],
+    'building_name':a['building_name'],'room':a['room'],'criticality':a['criticality'],'kind':kind,
+    'label':label,'interval_months':interval,'anchor':anchor.isoformat() if anchor else None,
+    'last_done':last_done.isoformat() if last_done else None,'due':due.isoformat() if due else None,
+    'days':days,'state':state,'active_workorder_id':active['id'] if active else None,
+    'active_workorder_status':active['status'] if active else None,'active_workorder_due':active['due'] if active else None
+   })
+ order={'overdue':0,'soon':1,'missing':2,'future':3}
+ rows.sort(key=lambda r:(order.get(r['state'],9),r['due'] or '9999-12-31',r['asset_id'],r['kind']))
+ return rows[:limit] if limit else rows
+
+def generate_maintenance_plan():
+ if support_mode(): abort(403)
+ if not can('maintenance_write'): abort(403)
+ warning_days=org_runtime_defaults()['notifications']['due_warning_days']
+ horizon=date.today()+timedelta(days=warning_days)
+ created=0; skipped=0
+ for row in maintenance_plan_rows():
+  due=_as_date(row['due'])
+  if not due or due>horizon or row['active_workorder_id']:
+   skipped+=1; continue
+  generated_key=f"AUTO:{org_id()}:{row['asset_db_id']}:{row['kind']}:{row['due']}"
+  if one('select id from workorders where generated_key=?',(generated_key,)):
+   skipped+=1; continue
+  priority='Vysoká' if row['criticality']=='A' else ('Nízka' if row['criticality']=='C' else org_runtime_defaults()['workorder']['priority'])
+  title=f"{row['label']} · {row['asset_id']}"
+  description=f"Automaticky vytvorené z intervalu {row['interval_months']} mes. Základ termínu: {row['anchor'] or '—'}."
+  try:
+   wid=x("""insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description,source,generated_key)
+    values(?,?,?,?,?,?,?,?,?,?,?,?)""",(row['asset_db_id'],title,row['kind'],priority,'Plánované',row['due'],'','',0,description,'AUTO',generated_key))
+   asset_event(row['asset_db_id'],'WORKORDER_AUTO','Automaticky vytvorený pracovný príkaz',f"{row['kind']} · termín {row['due']}")
+   created+=1
+  except IntegrityError:
+   skipped+=1
+ audit('MAINTENANCE_PLAN_SYNC',f'Vytvorených {created} · preskočených {skipped} · horizont {warning_days} dní')
+ return created,skipped
 
 def ticket_staff():
  return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
@@ -1473,7 +1558,8 @@ def asset(i):
  events=q('select * from asset_events where asset_id=? and organization_id=? order by id desc limit 100',(i,org_id()))
  active_incidents=sum(1 for row in incidents if row['status'] not in {'Ukončená','Vyriešená'})
  asset_documents=q('select id,name,category,mime,size,uploaded from asset_documents where asset_id=? and organization_id=? order by id desc',(i,org_id()))
- return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events,active_incidents=active_incidents,asset_documents=asset_documents)
+ asset_plan=[r for r in maintenance_plan_rows() if r['asset_db_id']==i]
+ return render_template('index.html',page='asset',a=a,parent=parent,children=children,impact_rooms=impact_rooms,impact_area=impact_area,orders=orders,incidents=incidents,events=events,active_incidents=active_incidents,asset_documents=asset_documents,asset_plan=asset_plan)
 @app.post('/asset/<int:i>/document')
 def upload_asset_document(i):
  if not can('documents_write'): abort(403)
@@ -1514,7 +1600,16 @@ def maintenance():
  orders=q('select w.*,w.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from workorders w join assets a on a.id=w.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by w.id desc',(org_id(),))
  today=date.today().isoformat()
  stats={'total':len(orders),'active':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'}),'overdue':sum(1 for r in orders if r['status'] not in {'Ukončené','Zrušené'} and r['due'] and str(r['due'])[:10]<today),'critical':sum(1 for r in orders if r['priority']=='Kritická' and r['status'] not in {'Ukončené','Zrušené'}),'completed':sum(1 for r in orders if r['status']=='Ukončené')}
- return render_template('index.html',page='maintenance',orders=orders,maintenance_stats=stats,today_iso=today)
+ plan=maintenance_plan_rows()
+ plan_stats={'rules':len(plan),'overdue':sum(1 for r in plan if r['state']=='overdue'),'soon':sum(1 for r in plan if r['state']=='soon'),'missing':sum(1 for r in plan if r['state']=='missing'),'covered':sum(1 for r in plan if r['active_workorder_id'])}
+ return render_template('index.html',page='maintenance',orders=orders,maintenance_stats=stats,today_iso=today,maintenance_plan=plan,maintenance_plan_stats=plan_stats)
+
+@app.post('/maintenance/generate')
+def maintenance_generate():
+ created,skipped=generate_maintenance_plan()
+ if created: flash(f'Plán údržby vytvoril {created} pracovných príkazov.','success')
+ else: flash('Plán je synchronizovaný. Nebolo potrebné vytvoriť nový pracovný príkaz.','success')
+ return redirect('/maintenance#planner')
 
 @app.route('/incidents')
 def incidents():
@@ -2249,6 +2344,8 @@ def edit_record(what,i):
    cost=max(0,float(f.get('cost') or 0))
    old=one('select status from workorders where id=?',(i,))
    x('update workorders set asset_id=?,title=?,kind=?,priority=?,status=?,due=?,supplier=?,technician=?,cost=?,description=? where id=?',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip(),i))
+   if f.get('status')=='Ukončené': x('update workorders set completed_at=CURRENT_TIMESTAMP where id=?',(i,))
+   else: x('update workorders set completed_at=? where id=?',(None,i))
    asset_event(asset_id,'WORKORDER_UPDATE','Pracovný príkaz upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
    audit('WORKORDER_UPDATE',f'{i} · {title}'); flash('Pracovný príkaz bol upravený.','success')
    return redirect(safe_referrer_url('/maintenance'))
@@ -2337,8 +2434,12 @@ def status(what,i):
  if what=='asset':
   x('update assets set status=? where id=?',(new_status,i)); asset_event(i,'STATUS_CHANGE','Zmena stavu assetu',new_status)
  elif what=='workorder':
-  row=one('select asset_id,title from workorders where id=?',(i,)); x('update workorders set status=? where id=?',(new_status,i))
-  if row: asset_event(row['asset_id'],'WORKORDER_STATUS','Zmena stavu pracovného príkazu',f"{row['title']} → {new_status}")
+  row=one('select asset_id,title,status from workorders where id=?',(i,))
+  if new_status=='Ukončené':
+   x('update workorders set status=?,completed_at=CURRENT_TIMESTAMP where id=?',(new_status,i))
+  else:
+   x('update workorders set status=?,completed_at=? where id=?',(new_status,None,i))
+  if row: asset_event(row['asset_id'],'WORKORDER_STATUS','Zmena stavu pracovného príkazu',f"{row['title']} · {row['status']} → {new_status}")
  else:
   row=one('select asset_id,title from incidents where id=?',(i,)); x('update incidents set status=? where id=?',(new_status,i))
   if row: asset_event(row['asset_id'],'INCIDENT_STATUS','Zmena stavu incidentu',f"{row['title']} → {new_status}")
