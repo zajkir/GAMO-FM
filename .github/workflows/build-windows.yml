@@ -11,6 +11,7 @@ on:
       - 'version.json'
       - 'installer/**'
       - 'tests/desktop_window_static.py'
+      - 'tests/login_desktop_regression.py'
       - 'tests/installer_regression.py'
       - 'tests/release_workflow_static.py'
       - 'tests/update_flow_regression.py'
@@ -55,6 +56,7 @@ jobs:
         run: |
           python -m py_compile updater.py desktop.py
           python tests/desktop_window_static.py
+          python tests/login_desktop_regression.py
           python tests/installer_regression.py
           python tests/release_workflow_static.py
           python tests/update_flow_regression.py
@@ -124,7 +126,8 @@ jobs:
 
           - Direct Windows application: no launcher
           - One click opens the GAMO Facility Platform immediately
-          - Persistent WebView2 session for remembered login
+          - Stable Microsoft Edge application renderer prevents embedded WebView2 keyboard/input freezes
+          - Dedicated persistent application profile keeps remembered login
           - Verified installer updates with SHA-256
           - Tenant-isolated cloud application with MFA, Privacy Center and ticket messaging
           "@
@@ -147,7 +150,7 @@ jobs:
             sha256 = $installerSha
             portable_url = $portableDownload
             portable_sha256 = $portableSha
-            notes = "GAMO a.s. $version - direct application release without launcher"
+            notes = "GAMO a.s. $version - stable Windows renderer and login input crash fix"
             published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json
 
@@ -172,4 +175,6 @@ jobs:
           "- Installed app: GAMO_FM.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "- Installer: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "- Portable app: GAMO_FM_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Primary renderer: Microsoft Edge application mode (no browser address bar)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Embedded WebView is emergency fallback only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "- No launcher process or launcher screen." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
