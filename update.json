@@ -1,10 +1,10 @@
 {
-  "version": "9.0.0.25",
+  "version": "9.0.0.26",
   "update_mode": "installer",
-  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.25/GAMO_FM_Setup_9.0.0.25.exe",
-  "sha256": "1e49f7efdbdcc6bf0dc5d4d90733c0fe5b797611c1e0a10e2d7abe9f13f21cdb",
-  "portable_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.25/GAMO_FM_9.0.0.25.exe",
-  "portable_sha256": "c390715f12c09e559456e57838c3ac69036a7955449199ba2891ec957e4e326a",
-  "notes": "GAMO a.s. 9.0.0.25 - stable Windows renderer and login input crash fix",
-  "published_at": "2026-10-08T17:48:58Z"
+  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.26/GAMO_FM_Setup_9.0.0.26.exe",
+  "sha256": "2a8f701eb2f15131a07f93e40e1c63bb50d5883d658a65f73f400293af53aed9",
+  "portable_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.26/GAMO_FM_9.0.0.26.exe",
+  "portable_sha256": "e6eae9ae2163c98cc28dded08bc65646365eede086edc744c9ada46328bdb69a",
+  "notes": "GAMO a.s. 9.0.0.26 - stable Windows renderer and login input crash fix",
+  "published_at": "2026-10-08T20:39:37Z"
 }
