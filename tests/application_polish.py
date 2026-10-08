@@ -192,3 +192,29 @@ assert r.status_code == 404
 assert app.one_system("select revoked_at from remembered_devices where id=?", (device_id,))["revoked_at"] is None
 
 print("GAMO application polish test OK")
+
+
+# Application Max source-level UX regression.
+repo_root = Path(__file__).resolve().parents[1]
+js_source = (repo_root / "static" / "app.js").read_text(encoding="utf-8")
+css_source = (repo_root / "static" / "app.css").read_text(encoding="utf-8")
+template_source = (repo_root / "templates" / "index.html").read_text(encoding="utf-8")
+
+assert "const FORM_SECTIONS=" in js_source
+assert "form-section-title full" in js_source
+assert "required-mark" in js_source
+assert "GAMO_TICKET_AUTO_RELOAD" in js_source
+assert "document.hidden?45000:5000" in js_source
+assert "angle=((angle+540)%360)-180" in js_source
+
+assert "/* Application Max polish */" in css_source
+assert ".form-section-title" in css_source
+assert ".required-mark" in css_source
+assert ".dt2-floor-top:before" in css_source
+assert "@keyframes windowSweep" in css_source
+assert "@keyframes techBeacon" in css_source
+assert "@media(prefers-reduced-motion:reduce)" in css_source
+
+assert 'id="confirmModal"' in template_source
+assert 'id="digitalTwinV2"' in template_source
+assert 'id="ticketInboxRefreshHint"' in template_source
