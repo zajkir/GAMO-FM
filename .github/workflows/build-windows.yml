@@ -99,7 +99,7 @@ jobs:
 
       - name: Publish versioned GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: powershell
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -115,9 +115,9 @@ jobs:
           GAMO a.s. $version
 
           - Windows Launcher with cloud health check
-          - verified automatic updates
+          - Verified automatic updates
           - SHA-256 installer validation
-          - tenant-isolated cloud application
+          - Tenant-isolated cloud application
           - MFA, Privacy Center, ticket messaging and Digital Twin workspace
           "@
 
@@ -134,7 +134,7 @@ jobs:
             version = $version
             installer_url = $download
             sha256 = $sha
-            notes = "GAMO a.s. $version – automatická aktualizácia cez GAMO Launcher"
+            notes = "GAMO a.s. $version - automatic update via GAMO Launcher"
             published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json
 
