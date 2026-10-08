@@ -1,4 +1,4 @@
-from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
+from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response,g
 from sqlite3 import IntegrityError
 import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib
 try:
@@ -360,47 +360,104 @@ def audit(action,detail=''):
   pass
 DATABASE_URL=os.environ.get('DATABASE_URL','').strip()
 USING_POSTGRES=bool(DATABASE_URL)
+DB_CONNECT_TIMEOUT=max(2,min(20,int(os.environ.get('GAMO_DB_CONNECT_TIMEOUT','8'))))
+
 def _sql(sql):
  return sql.replace('datetime(\'now\')','CURRENT_TIMESTAMP').replace("date('now')",'CURRENT_DATE').replace('?','%s') if USING_POSTGRES else sql
-def con(system=False):
+
+def _open_db(system=False,autocommit=False):
  if USING_POSTGRES:
   if not psycopg: raise RuntimeError('DATABASE_URL is set but psycopg is not installed')
-  db=psycopg.connect(DATABASE_URL,row_factory=dict_row)
+  db=psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=DB_CONNECT_TIMEOUT,autocommit=autocommit)
   if system or not has_request_context():
    oid=''; platform_admin='1'
   else:
-   oid=str(org_id() or '')
-   platform_admin='0'
+   oid=str(org_id() or ''); platform_admin='0'
   db.execute("select set_config('gamo.organization_id',%s,false)",(oid,))
   db.execute("select set_config('gamo.platform_admin',%s,false)",(platform_admin,))
   return db
- c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
-def q(sql,a=()):
- with con() as c:return c.execute(_sql(sql),a).fetchall()
-def one(sql,a=()):
- with con() as c:return c.execute(_sql(sql),a).fetchone()
-def one_system(sql,a=()):
- with con(system=True) as c:return c.execute(_sql(sql),a).fetchone()
-def q_system(sql,a=()):
- with con(system=True) as c:return c.execute(_sql(sql),a).fetchall()
-def x(sql,a=()):
- with con() as c:
-  statement=_sql(sql)
-  lower=statement.lstrip().lower()
-  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
-  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
-   statement+=' RETURNING id'
-   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
-  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
-def x_system(sql,a=()):
- with con(system=True) as c:
-  statement=_sql(sql)
-  lower=statement.lstrip().lower()
-  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
-  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
-   statement+=' RETURNING id'
-   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
-  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+ db=sqlite3.connect(DB,timeout=10.0)
+ db.row_factory=sqlite3.Row
+ db.execute('PRAGMA foreign_keys=ON')
+ db.execute('PRAGMA busy_timeout=10000')
+ return db
+
+def con(system=False):
+ return _open_db(system=system,autocommit=False)
+
+def _request_db(system=False):
+ if not has_request_context(): return None
+ key='_gamo_system_db' if system else '_gamo_tenant_db'
+ ctx_key=key+'_context'
+ desired=('SYSTEM' if system else str(org_id() or ''))
+ db=getattr(g,key,None)
+ previous=getattr(g,ctx_key,None)
+ closed=bool(getattr(db,'closed',False)) if db is not None else True
+ if db is None or closed or previous!=desired:
+  if db is not None:
+   try: db.close()
+   except Exception: pass
+  db=_open_db(system=system,autocommit=USING_POSTGRES)
+  setattr(g,key,db); setattr(g,ctx_key,desired)
+ return db
+
+@app.teardown_appcontext
+def _close_request_databases(_exc=None):
+ for key in ('_gamo_tenant_db','_gamo_system_db'):
+  db=getattr(g,key,None)
+  if db is not None:
+   try: db.close()
+   except Exception: pass
+
+def _read(sql,a=(),system=False,single=False):
+ db=_request_db(system)
+ if db is not None:
+  try:
+   cur=db.execute(_sql(sql),a)
+   return cur.fetchone() if single else cur.fetchall()
+  except Exception:
+   if not USING_POSTGRES:
+    try: db.rollback()
+    except Exception: pass
+   raise
+ with con(system=system) as db:
+  cur=db.execute(_sql(sql),a)
+  return cur.fetchone() if single else cur.fetchall()
+
+def q(sql,a=()): return _read(sql,a,False,False)
+def one(sql,a=()): return _read(sql,a,False,True)
+def q_system(sql,a=()): return _read(sql,a,True,False)
+def one_system(sql,a=()): return _read(sql,a,True,True)
+
+_NO_ID_INSERTS=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
+def _write(sql,a=(),system=False):
+ statement=_sql(sql); lower=statement.lstrip().lower()
+ returning=USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(_NO_ID_INSERTS) and ' returning ' not in lower
+ if returning: statement+=' RETURNING id'
+ db=_request_db(system)
+ if db is not None:
+  try:
+   cur=db.execute(statement,a)
+   if returning:
+    row=cur.fetchone(); result=row['id'] if row else None
+   else:
+    result=cur.lastrowid if not USING_POSTGRES else cur.rowcount
+   if not USING_POSTGRES: db.commit()
+   return result
+  except Exception:
+   if not USING_POSTGRES:
+    try: db.rollback()
+    except Exception: pass
+   raise
+ with con(system=system) as db:
+  cur=db.execute(statement,a)
+  if returning:
+   row=cur.fetchone(); db.commit(); return row['id'] if row else None
+  db.commit(); return cur.lastrowid if not USING_POSTGRES else cur.rowcount
+
+def x(sql,a=()): return _write(sql,a,False)
+def x_system(sql,a=()): return _write(sql,a,True)
+
 def init_postgres():
  schema=[
   """CREATE TABLE IF NOT EXISTS buildings(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE,name TEXT,address TEXT,manager TEXT,customer TEXT DEFAULT 'GAMO a.s.',status TEXT DEFAULT 'Aktívna')""",
