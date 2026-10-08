@@ -27,11 +27,11 @@ assert 'F11  celá obrazovka' in source
 assert 'Posledná kontrola: —' in source
 print("Launcher readable layout checks OK")
 
-assert 'GAMO_CLOUD_VERIFIED' in source
 assert 'method="HEAD"' in source
 assert 'def _post(self, delay, callback):' in source
 assert 'report_callback_exception = self._callback_error' in source
-print("Launcher stability and fast cloud handoff checks OK")
+assert 'self._cloud_target = self.server_url' in source
+print("Launcher stability and single-process cloud handoff checks OK")
 
 assert 'self.bind("<Return>", self._launch_from_keyboard)' in source
 assert 'def _schedule_retry(self, delay_ms=15000):' in source
