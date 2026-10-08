@@ -23,7 +23,8 @@ print("Launcher fullscreen binding OK")
 
 assert 'self.geometry("1180x720")' in source
 assert 'font=("Segoe UI", size, weight)' in source
-assert 'F11  ·  celá obrazovka' in source
+assert 'F11  celá obrazovka' in source
+assert 'Posledná kontrola: —' in source
 print("Launcher readable layout checks OK")
 
 assert 'GAMO_CLOUD_VERIFIED' in source
