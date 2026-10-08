@@ -660,8 +660,39 @@ def init():
    c.execute("insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)",('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
  run_migrations(con, False)
 init()
-with con() as c:
- c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),'admin@gamo.sk')); c.commit()
+
+def configure_persistent_secret():
+ configured=(os.environ.get('GAMO_SECRET_KEY') or '').strip()
+ if configured:
+  app.secret_key=configured
+  return
+ key='flask_secret_key_v1'
+ with con(system=True) as db:
+  row=db.execute(_sql('select v from platform_meta where k=?'),(key,)).fetchone()
+  if not row:
+   candidate=secrets.token_hex(32)
+   if USING_POSTGRES:
+    db.execute('insert into platform_meta(k,v) values(%s,%s) on conflict (k) do nothing',(key,candidate))
+   else:
+    db.execute('insert or ignore into platform_meta(k,v) values(?,?)',(key,candidate))
+   db.commit()
+   row=db.execute(_sql('select v from platform_meta where k=?'),(key,)).fetchone()
+  if not row or not row['v']:
+   raise RuntimeError('Unable to initialize persistent Flask session secret.')
+  app.secret_key=str(row['v'])
+
+configure_persistent_secret()
+
+_admin_password=(os.environ.get('GAMO_ADMIN_PASSWORD') or '').strip()
+if not USING_POSTGRES and not _admin_password:
+ _admin_password='GamoFM2026!'
+if USING_POSTGRES and not _admin_password:
+ missing=one_system("select count(*) n from users where lower(email)=? and (password_hash is null or password_hash='')",('admin@gamo.sk',))
+ if missing and int(missing['n'] or 0):
+  raise RuntimeError('GAMO_ADMIN_PASSWORD is required because the production administrator has no password hash.')
+if _admin_password:
+ with con(system=USING_POSTGRES) as c:
+  c.execute(_sql("update users set password_hash=? where (password_hash is null or password_hash='') and lower(email)=?"),(generate_password_hash(_admin_password),'admin@gamo.sk')); c.commit()
 
 @app.after_request
 def security_headers(response):
@@ -680,9 +711,19 @@ def security_headers(response):
   response.headers['Cache-Control']='private, no-cache'
  return response
 
+@app.get('/healthz')
+def healthz():
+ try:
+  row=one_system('select 1 as ok')
+  if row and row['ok']==1:
+   return jsonify({'status':'ok','version':APP_VERSION}),200
+ except Exception:
+  pass
+ return jsonify({'status':'degraded','version':APP_VERSION}),503
+
 @app.before_request
 def require_login():
- if request.endpoint in ('login','login_mfa','static') or request.path.startswith('/static/'): return
+ if request.endpoint in ('login','login_mfa','static','healthz') or request.path.startswith('/static/'): return
  if not session.get('user_id'):
   if not restore_remembered_device(): return redirect(url_for('login',next=request.path))
  current=one_system('select id,status,role,organization_id,must_change_password,mfa_enabled from users where id=?',(session.get('user_id'),))
