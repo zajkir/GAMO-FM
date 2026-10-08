@@ -28,4 +28,12 @@ assert 'Type: files; Name: "{app}\\update_config.json"' in iss
 assert "Pos('/NOLAUNCH=1', Uppercase(GetCmdTail)) = 0" in iss
 assert f'#define MyAppVersion "{version}"' in iss
 
+assert 'DefaultDirName={code:GetDefaultInstallDir}' in iss
+assert 'function GetDefaultInstallDir(Param: String): String;' in iss
+assert 'LoadStringsFromFile(LogPath, Lines)' in iss
+assert "Pos('app_dir=', Line)" in iss
+assert "ExpandConstant('{userprofile}')" in iss
+assert "FileExists(AddBackslash(Candidate) + '{#MyLauncherExeName}')" in iss
+assert "Legacy GAMO launcher detected at:" in iss
+
 print("Installer fallback regression checks OK")
