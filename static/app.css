@@ -777,3 +777,10 @@ body small{font-size:10px;line-height:1.42}
 /* Rendering isolation for long operational pages */
 .tablecard{contain:layout paint}
 .ticket-list-card,.asset-document-center{contain:layout paint}
+
+
+/* Graceful error surface */
+.error-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 15%,#edf4ff,transparent 28%),#f2f5f9;color:#17283e}
+.error-card{width:min(520px,100%);padding:30px;border:1px solid #dce4ee;border-radius:20px;background:#fff;box-shadow:0 24px 70px rgba(18,35,58,.12)}
+.error-brand{display:flex;align-items:center;gap:10px}.error-brand>span{width:39px;height:39px;border-radius:10px;background:#e31b23;color:#fff;display:grid;place-items:center;font-weight:950}.error-brand div{display:flex;flex-direction:column}.error-brand small{color:#8390a2;font-size:7px;letter-spacing:.12em}
+.error-code{margin-top:30px;color:#b8c4d2;font-size:12px;font-weight:950;letter-spacing:.14em}.error-card h1{margin:5px 0 9px;font-size:29px}.error-card>p{margin:0;color:#64748a;font-size:11px;line-height:1.6}.error-actions{display:flex;gap:8px;margin:22px 0 14px}.error-actions button,.error-actions a{min-height:40px;display:inline-flex;align-items:center;padding:0 13px;border:1px solid #d8e3ef;border-radius:9px;background:#fff;color:#274e7b;font-size:9px;font-weight:850}.error-actions button{background:#17365d;border-color:#17365d;color:#fff}.error-card>small{color:#8a96a8;font-size:8px;line-height:1.5}

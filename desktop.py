@@ -23,7 +23,7 @@ def _load_desktop_config():
     defaults = {
         'mode': 'cloud',
         'server_url': 'https://gamo-fm.onrender.com',
-        'connect_timeout_seconds': 8,
+        'connect_timeout_seconds': 6,
         'allow_local_fallback': False,
     }
     for base in (APP_DIR, BASE_DIR):

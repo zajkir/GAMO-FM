@@ -55,7 +55,7 @@ WHITE = "#FFFFFF"
 def load_desktop_config():
     defaults = {
         "server_url": "https://gamo-fm.onrender.com",
-        "connect_timeout_seconds": 8,
+        "connect_timeout_seconds": 6,
     }
     for base in (APP_DIR, BASE_DIR):
         path = base / "desktop_config.json"
@@ -135,7 +135,7 @@ class Launcher(tk.Tk):
         super().__init__()
         self.config_data = load_desktop_config()
         self.server_url = str(self.config_data.get("server_url", "")).strip().rstrip("/")
-        self.timeout = max(3, min(15, int(self.config_data.get("connect_timeout_seconds", 8))))
+        self.timeout = max(3, min(15, int(self.config_data.get("connect_timeout_seconds", 6))))
         self.online = False
         self.update_manifest = None
         self.busy = False
