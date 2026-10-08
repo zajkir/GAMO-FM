@@ -1,10 +1,10 @@
 {
-  "version": "9.0.0.21",
+  "version": "9.0.0.22",
   "update_mode": "launcher",
-  "launcher_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.21/GAMO_Launcher_9.0.0.21.exe",
-  "launcher_sha256": "12acc66ddb26165746174cc96b253d9044892fa523e9802da444e5ad4b256d6f",
-  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.21/GAMO_FM_Setup_9.0.0.21.exe",
-  "sha256": "0b3f645fe633f6083d1794f870d53c69ea544420096a7c05aeba1048dde89d44",
-  "notes": "GAMO a.s. 9.0.0.21 - legacy updater bridge + verified direct self-update",
-  "published_at": "2026-10-08T15:57:01Z"
+  "launcher_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.22/GAMO_Launcher_9.0.0.22.exe",
+  "launcher_sha256": "b9287c7df74087631c3891b13a7a09f6f8498fdcb24f66042347fa764b245fb1",
+  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.22/GAMO_FM_Setup_9.0.0.22.exe",
+  "sha256": "b21737684a0ee1056c974d2b926be146acbce590ce5162d98822b0eddb870e08",
+  "notes": "GAMO a.s. 9.0.0.22 - legacy updater bridge + verified direct self-update",
+  "published_at": "2026-10-08T16:51:57Z"
 }
