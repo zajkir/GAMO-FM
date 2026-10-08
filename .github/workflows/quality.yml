@@ -42,6 +42,8 @@ jobs:
         run: node --check static/app.js
       - name: Check installer regression
         run: python tests/installer_regression.py
+      - name: Check desktop login regression
+        run: python tests/login_desktop_regression.py
       - name: Check direct updater regression
         run: python tests/update_flow_regression.py
       - name: Run SQLite smoke tests
