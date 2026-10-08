@@ -202,7 +202,7 @@ def _add_months(value,months):
 def _last_completed_cycle(asset_id,kind):
  row=one("""select completed_at,due from workorders
   where asset_id=? and kind=? and status='Ukončené'
-  order by case when completed_at is null or completed_at='' then 1 else 0 end,completed_at desc,id desc limit 1""",(asset_id,kind))
+  order by case when completed_at is null then 1 else 0 end,completed_at desc,id desc limit 1""",(asset_id,kind))
  if not row: return None
  return _as_date(row['completed_at']) or _as_date(row['due'])
 
