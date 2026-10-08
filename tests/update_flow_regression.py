@@ -66,12 +66,12 @@ with tempfile.TemporaryDirectory() as tmp:
             assert args[0].lower().endswith("powershell.exe")
             assert "-ExecutionPolicy" in args and "Bypass" in args
             helper = Path(args[args.index("-File") + 1])
-            helper_text = helper.read_text(encoding="utf-8")
+            helper_text = helper.read_text(encoding="utf-8-sig")
             assert "Wait-Process -Id $LauncherPid" in helper_text
             assert "$setup = Start-Process -FilePath $Installer" in helper_text
             assert "-Wait -PassThru" in helper_text
             assert "Start-Process -FilePath $Relaunch" in helper_text
-            assert str(relaunch) in args
+            assert str(relaunch.resolve()) in args
             assert "9.0.0.15" in args
     finally:
         if old is None:
