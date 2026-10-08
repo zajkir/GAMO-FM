@@ -22,6 +22,23 @@ from db_migrations import _migration_12
 
 client = app.app.test_client()
 
+# Deployment health is intentionally public but returns no customer data.
+health = client.get("/healthz")
+assert health.status_code == 200
+assert health.get_json()["status"] == "ok"
+assert health.get_json()["version"] == app.APP_VERSION
+assert set(health.get_json()) == {"status", "version"}
+
+# The Flask session secret must be stable across reconfiguration/restarts rather
+# than changing randomly every time a web worker starts.
+secret_before = app.app.secret_key
+secret_row = app.one_system("select v from platform_meta where k=?", ("flask_secret_key_v1",))
+assert secret_row and secret_row["v"]
+app.configure_persistent_secret()
+assert app.app.secret_key == secret_before == secret_row["v"]
+if app.USING_POSTGRES:
+    assert any(getattr(cls, "__module__", "").startswith("psycopg") for cls in app.DB_INTEGRITY_ERRORS)
+
 
 def csrf():
     with client.session_transaction() as sess:
@@ -113,6 +130,32 @@ r = client.post(
 assert r.status_code in (302, 303)
 after_buildings = app.one("select count(*) n from buildings where organization_id=?", (gamo_org_id,))["n"]
 assert before_buildings == after_buildings
+
+# Atomic building creation regression: a failure while creating generated
+# floors must not leave a half-created building behind.
+_original_write_on = app._write_on
+def _fail_generated_floor(db, sql, args=()):
+    if str(sql).lstrip().lower().startswith("insert into floors"):
+        raise RuntimeError("forced floor failure")
+    return _original_write_on(db, sql, args)
+app._write_on = _fail_generated_floor
+try:
+    atomic_build = client.post(
+        "/add/building",
+        data={
+            "_csrf": csrf(),
+            "code": "ATOMIC",
+            "name": "Must Roll Back",
+            "address": "",
+            "manager": "QA",
+            "floors_count": "2",
+        },
+        follow_redirects=False,
+    )
+    assert atomic_build.status_code in (302, 303, 500)
+finally:
+    app._write_on = _original_write_on
+assert app.one("select id from buildings where organization_id=? and code=?", (gamo_org_id, "ATOMIC")) is None
 
 # Full facility hierarchy.
 r = client.post(
@@ -760,6 +803,37 @@ def force_user_session(user, org_code="SMOKE"):
 
 force_user_session(requester)
 assert client.get("/tickets").status_code == 200
+
+# Atomic ticket regression: if the first message cannot be inserted, the ticket
+# itself must roll back instead of appearing as an empty conversation.
+_original_write_on = app._write_on
+def _fail_ticket_message(db, sql, args=()):
+    if str(sql).lstrip().lower().startswith("insert into ticket_messages"):
+        raise RuntimeError("forced ticket message failure")
+    return _original_write_on(db, sql, args)
+app._write_on = _fail_ticket_message
+try:
+    failed_ticket = client.post(
+        "/tickets/create",
+        data={
+            "_csrf": csrf(),
+            "subject": "Atomic ticket must roll back",
+            "category": "Požiadavka",
+            "priority": "Stredná",
+            "building_id": str(private_building["id"]),
+            "asset_id": "",
+            "message": "This message insert is forced to fail.",
+        },
+        follow_redirects=False,
+    )
+    assert failed_ticket.status_code == 500
+finally:
+    app._write_on = _original_write_on
+assert app.one_system(
+    "select id from tickets where organization_id=? and subject=?",
+    (customer["id"], "Atomic ticket must roll back"),
+) is None
+
 r = client.post(
     "/tickets/create",
     data={
