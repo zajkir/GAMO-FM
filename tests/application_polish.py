@@ -34,6 +34,14 @@ def login(c=client, remember=False):
     return r
 
 
+def planner_rows():
+    with client.session_transaction() as sess:
+        snapshot = dict(sess)
+    with app.app.test_request_context("/maintenance"):
+        app.session.update(snapshot)
+        return planner_rows()
+
+
 login()
 
 # Branded error handling instead of raw Flask pages.
