@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.20"
+#define MyAppVersion "9.0.0.21"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -11,7 +11,7 @@ AppId={{A11D09C2-7E52-4FA7-9CF1-11F74231E35C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\GAMO a.s.
+DefaultDirName={code:GetDefaultInstallDir}
 DefaultGroupName=GAMO a.s.
 OutputDir=..\dist_installer
 OutputBaseFilename=GAMO_FM_Setup_{#MyAppVersion}
@@ -58,6 +58,65 @@ Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launche
 
 
 [Code]
+function IsSafeLegacyLauncherDir(const Candidate: String): Boolean;
+var
+  UserRoot, NormalizedCandidate, NormalizedRoot: String;
+begin
+  Result := False;
+  if Candidate = '' then
+    Exit;
+
+  UserRoot := ExpandConstant('{userprofile}');
+  NormalizedCandidate := Lowercase(AddBackslash(Candidate));
+  NormalizedRoot := Lowercase(AddBackslash(UserRoot));
+
+  { Legacy portable launchers are only trusted when they live inside the
+    current user's profile and the expected launcher file is present there.
+    Normal installed copies continue to use Inno Setup's previous AppDir. }
+  if Pos(NormalizedRoot, NormalizedCandidate) <> 1 then
+    Exit;
+
+  if not FileExists(AddBackslash(Candidate) + '{#MyLauncherExeName}') then
+    Exit;
+
+  Result := True;
+end;
+
+function GetDefaultInstallDir(Param: String): String;
+var
+  Lines: TArrayOfString;
+  LogPath, Line, Candidate, Delimiter: String;
+  I, P, P2: Integer;
+begin
+  Result := ExpandConstant('{autopf}\GAMO a.s.');
+  LogPath := ExpandConstant('{localappdata}\GAMO_FM\logs\launcher.log');
+
+  if not LoadStringsFromFile(LogPath, Lines) then
+    Exit;
+
+  Delimiter := ' ' + Chr(183) + ' frozen=';
+  for I := GetArrayLength(Lines) - 1 downto 0 do
+  begin
+    Line := Lines[I];
+    P := Pos('app_dir=', Line);
+    if P > 0 then
+    begin
+      Candidate := Copy(Line, P + Length('app_dir='), Length(Line));
+      P2 := Pos(Delimiter, Candidate);
+      if P2 > 0 then
+        Candidate := Copy(Candidate, 1, P2 - 1);
+      Candidate := Trim(Candidate);
+
+      if IsSafeLegacyLauncherDir(Candidate) then
+      begin
+        Log('Legacy GAMO launcher detected at: ' + Candidate);
+        Result := Candidate;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
 function ShouldLaunchAfterInstall(): Boolean;
 begin
   { The detached updater owns relaunch during /NOLAUNCH=1 upgrades. Avoid
