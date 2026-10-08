@@ -724,7 +724,7 @@ r = client.post(
     data={
         "_csrf": csrf(),
         "message": "Požiadavku som prevzal, prídem ju skontrolovať.",
-        "attachment": (io.BytesIO(b"service protocol"), "service-protocol.pdf"),
+        "attachment": (io.BytesIO(b"%PDF-1.4\nGAMO service protocol\n%%EOF"), "service-protocol.pdf"),
     },
     content_type="multipart/form-data",
     headers={"X-Requested-With": "GAMO-Live-Chat", "Accept": "application/json"},
