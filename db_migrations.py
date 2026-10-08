@@ -699,6 +699,14 @@ def _migration_11(db, using_postgres):
 def _migration_12(db, using_postgres):
     """Populate the customer's fdsfsdf building with rich, tenant-isolated demo data."""
     ph = "%s" if using_postgres else "?"
+    # Migration 12 can be re-run by regression tests after later tenant-hardening
+    # migrations. Detect the newer ownership columns instead of assuming the
+    # historical schema that existed when this migration was first introduced.
+    floors_owned = "organization_id" in _columns(db, "floors", using_postgres)
+    rooms_owned = "organization_id" in _columns(db, "rooms", using_postgres)
+    workorders_owned = "organization_id" in _columns(db, "workorders", using_postgres)
+    incidents_owned = "organization_id" in _columns(db, "incidents", using_postgres)
+    documents_owned = "organization_id" in _columns(db, "documents", using_postgres)
 
     targets = db.execute(
         f"""select b.id building_id,b.organization_id,o.name organization_name
@@ -761,6 +769,12 @@ def _migration_12(db, using_postgres):
             ).fetchone()
             if row:
                 return value(row, "id")
+            if floors_owned:
+                return insert_id(
+                    "insert into floors(building_id,code,name,organization_id) values(%s,%s,%s,%s) returning id",
+                    "insert into floors(building_id,code,name,organization_id) values(?,?,?,?)",
+                    (building_id, code, name, organization_id),
+                )
             return insert_id(
                 "insert into floors(building_id,code,name) values(%s,%s,%s) returning id",
                 "insert into floors(building_id,code,name) values(?,?,?)",
@@ -778,6 +792,12 @@ def _migration_12(db, using_postgres):
             ).fetchone()
             if row:
                 return value(row, "id")
+            if rooms_owned:
+                return insert_id(
+                    "insert into rooms(floor_id,code,name,area,tenant,zone,organization_id) values(%s,%s,%s,%s,%s,%s,%s) returning id",
+                    "insert into rooms(floor_id,code,name,area,tenant,zone,organization_id) values(?,?,?,?,?,?,?)",
+                    (floor_id, code, name, area, tenant, zone, organization_id),
+                )
             return insert_id(
                 "insert into rooms(floor_id,code,name,area,tenant,zone) values(%s,%s,%s,%s,%s,%s) returning id",
                 "insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)",
@@ -848,6 +868,12 @@ def _migration_12(db, using_postgres):
             if row:
                 return value(row, "id")
             due = (today + timedelta(days=due_days)).isoformat()
+            if workorders_owned:
+                return insert_id(
+                    "insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description,organization_id) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id",
+                    "insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description,organization_id) values(?,?,?,?,?,?,?,?,?,?,?)",
+                    (aid, title, kind, priority, status, due, supplier, technician, cost, description, organization_id),
+                )
             return insert_id(
                 "insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id",
                 "insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)",
@@ -871,6 +897,12 @@ def _migration_12(db, using_postgres):
             if row:
                 return value(row, "id")
             reported = (today + timedelta(days=reported_days)).isoformat()
+            if incidents_owned:
+                return insert_id(
+                    "insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost,organization_id) values(%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id",
+                    "insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost,organization_id) values(?,?,?,?,?,?,?,?,?)",
+                    (aid, title, severity, status, reported, impact, cause, cost, organization_id),
+                )
             return insert_id(
                 "insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(%s,%s,%s,%s,%s,%s,%s,%s) returning id",
                 "insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)",
@@ -914,10 +946,16 @@ def _migration_12(db, using_postgres):
             ).fetchone()
             if not exists:
                 blob = text.encode("utf-8")
-                db.execute(
-                    f"insert into documents(building_id,name,category,mime,size,data) values({ph},{ph},{ph},{ph},{ph},{ph})",
-                    (building_id, name, category, "text/plain; charset=utf-8", len(blob), blob),
-                )
+                if documents_owned:
+                    db.execute(
+                        f"insert into documents(building_id,name,category,mime,size,data,organization_id) values({ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+                        (building_id, name, category, "text/plain; charset=utf-8", len(blob), blob, organization_id),
+                    )
+                else:
+                    db.execute(
+                        f"insert into documents(building_id,name,category,mime,size,data) values({ph},{ph},{ph},{ph},{ph},{ph})",
+                        (building_id, name, category, "text/plain; charset=utf-8", len(blob), blob),
+                    )
 
         staff = db.execute(
             f"""select id,name from users
