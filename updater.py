@@ -294,11 +294,13 @@ def _replace_launcher_targets(payload, targets, expected_sha256):
     except Exception:
         for target in reversed(replaced):
             backup = backups.get(target)
-            if backup and backup.exists():
-                try:
+            try:
+                if backup and backup.exists():
                     shutil.copy2(backup, target)
-                except OSError:
-                    pass
+                else:
+                    target.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
 
 
