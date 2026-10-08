@@ -22,5 +22,20 @@
    <section class="mfa-action-card danger-zone"><span class="mfa-action-icon danger">!</span><h3>Vypnúť MFA</h3><p>{% if org.mfa_required %}Organizácia vyžaduje MFA. Vypnutie je zablokované bezpečnostnou politikou.{% else %}Vyžaduje heslo aj aktuálny druhý faktor.{% endif %}</p>{% if not org.mfa_required %}<form method="post"><input type="hidden" name="_csrf" value="{{csrf_token}}"><input type="hidden" name="action" value="disable"><input type="password" name="current_password" required placeholder="Aktuálne heslo"><input name="code" required placeholder="MFA / recovery kód"><button class="danger">Vypnúť MFA</button></form>{% endif %}</section>
   </div>
   {% endif %}
+  <section class="trusted-devices" id="devices">
+   <div class="trusted-devices-head"><div><span class="admin-kicker">REMEMBERED DEVICES</span><h2>Zapamätané zariadenia</h2><p>Prehľad zariadení, ktoré môžu obnoviť prihlásenie bez opätovného zadávania hesla. Kedykoľvek ich môžeš odvolať.</p></div>{% if remembered_devices|length>1 %}<form method="post" action="/account/devices/revoke-others"><input type="hidden" name="_csrf" value="{{csrf_token}}"><button type="submit">Odhlásiť ostatné zariadenia</button></form>{% endif %}</div>
+   <div class="trusted-device-list">
+    {% for d in remembered_devices %}
+    <article class="trusted-device {{'current' if d.is_current else ''}}">
+     <span class="trusted-device-icon">{{'●' if d.is_current else '◉'}}</span>
+     <div class="trusted-device-main"><div><b>{{d.label or 'Zapamätané zariadenie'}}</b>{% if d.is_current %}<em>AKTUÁLNE</em>{% endif %}</div><small>{{d.ip_created or 'IP nezaznamenaná'}} · vytvorené {{d.created}}</small><p>{{d.user_agent or 'Bez informácie o prehliadači'}}</p></div>
+     <div class="trusted-device-meta"><small>POSLEDNÉ POUŽITIE</small><b>{{d.last_used or '—'}}</b><small>EXPIRÁCIA</small><span>{{d.expires_at}}</span></div>
+     <form method="post" action="/account/device/{{d.id}}/revoke"><input type="hidden" name="_csrf" value="{{csrf_token}}"><button class="{{'danger' if not d.is_current else ''}}" type="submit">{{'Zrušiť zapamätanie' if d.is_current else 'Odvolať'}}</button></form>
+    </article>
+    {% else %}
+    <div class="trusted-device-empty"><span>⌁</span><div><b>Žiadne zapamätané zariadenia</b><p>Pri prihlásení môžeš označiť „Zapamätať zariadenie“. Tokeny sa ukladajú iba ako bezpečné hashe.</p></div></div>
+    {% endfor %}
+   </div>
+  </section>
  </main>
 </body></html>
