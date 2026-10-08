@@ -666,9 +666,10 @@ function filterCustomers(){
  const plan=document.querySelector('#customerPlanFilter')?.value||'';
  const status=document.querySelector('#customerStatusFilter')?.value||'';
  document.querySelectorAll('.customer-row').forEach(row=>{
-  const text=row.dataset.search||'', rowPlan=row.dataset.plan||'', license=row.dataset.license||'', org=row.dataset.orgstatus||'', expired=row.dataset.expired==='1';
+  const text=row.dataset.search||'', rowPlan=row.dataset.plan||'', license=row.dataset.license||'', org=row.dataset.orgstatus||'', expired=row.dataset.expired==='1', attention=row.dataset.attention==='1';
   const active=license==='Aktívna'&&org==='Aktívny'&&!expired;
-  const matchText=!q||text.includes(q), matchPlan=!plan||rowPlan===plan, matchStatus=!status||(status==='active'?active:!active);
+  const matchText=!q||text.includes(q), matchPlan=!plan||rowPlan===plan;
+  const matchStatus=!status||(status==='active'&&active)||(status==='paused'&&!active)||(status==='attention'&&attention);
   row.style.display=(matchText&&matchPlan&&matchStatus)?'grid':'none';
  });
 }
