@@ -101,7 +101,7 @@ begin
     P := Pos('app_dir=', Line);
     if P > 0 then
     begin
-      Candidate := Copy(Line, P + Length('app_dir='), MaxInt);
+      Candidate := Copy(Line, P + Length('app_dir='), Length(Line));
       P2 := Pos(Delimiter, Candidate);
       if P2 > 0 then
         Candidate := Copy(Candidate, 1, P2 - 1);
