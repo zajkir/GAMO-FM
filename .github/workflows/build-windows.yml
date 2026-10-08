@@ -115,11 +115,12 @@ jobs:
           $notes = @"
           GAMO a.s. $version
 
-          - Single-process Windows cloud client (no child GAMO_FM.exe)
-          - Cloud health check and native WebView window
-          - Safe browser fallback when WebView2 is unavailable
+          - Premium redesigned GAMO Launcher with high-DPI Windows rendering
+          - Persistent WebView2 profile so Remember device works across restarts
+          - Faster client rendering with versioned static caching and reduced background polling
+          - Database indexes for assets, maintenance, incidents and ticket messaging
           - Verified automatic updates with SHA-256 validation
-          - Reliable silent self-update with installer result logging and automatic launcher relaunch
+          - Safe browser fallback when WebView2 is unavailable
           - Tenant-isolated cloud application with MFA, Privacy Center, ticket messaging and Digital Twin
           "@
 
