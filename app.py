@@ -716,8 +716,15 @@ def tickets():
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Vyriešený','Uzavretý'}),'critical':sum(1 for r in rows if r['priority']=='Kritická' and r['status'] not in {'Vyriešený','Uzavretý'}),'waiting':sum(1 for r in rows if r['status']=='Čaká na zákazníka'),'unread':sum(1 for r in rows if r['user_unread']>0)}
  buildings=q('select id,code,name from buildings where organization_id=? order by name',(oid,))
  assets=q('select id,asset_id,name,building_id from assets where organization_id=? order by asset_id',(oid,))
+ prefill_asset_id=(request.args.get('asset_id') or '').strip()
+ prefill_building_id=(request.args.get('building_id') or '').strip()
+ if prefill_asset_id:
+  prefill_asset=one('select id,building_id from assets where id=? and organization_id=?',(prefill_asset_id,oid))
+  if prefill_asset: prefill_building_id=str(prefill_asset['building_id'])
+  else: prefill_asset_id=''
+ if prefill_building_id and not owns_building(prefill_building_id): prefill_building_id=''
  staff_users=q("select id,name,role from users where organization_id=? and status='Aktívny' and role in ('Administrator','Facility Manager','Technik','Servisný technik') order by case role when 'Facility Manager' then 0 when 'Administrator' then 1 else 2 end,name",(oid,))
- return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users,ticket_platform_inbox=False)
+ return render_template('index.html',page='tickets',tickets=rows,ticket_stats=stats,ticket_is_staff=staff,ticket_buildings=buildings,ticket_assets=assets,ticket_staff_users=staff_users,ticket_platform_inbox=False,ticket_prefill_asset=prefill_asset_id,ticket_prefill_building=prefill_building_id,ticket_auto_open=bool(prefill_asset_id or prefill_building_id))
 
 @app.get('/api/tickets/inbox-state')
 def api_ticket_inbox_state():
