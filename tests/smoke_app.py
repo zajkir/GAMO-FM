@@ -71,6 +71,36 @@ with client.session_transaction() as sess:
 gamo_admin = app.one_system("select * from users where lower(email)=?", ("admin@gamo.sk",))
 assert gamo_admin
 
+# Remember-device regression: token survives a destroyed Flask session, restores
+# the account on the next request, and is revoked on explicit logout.
+remember_client = app.app.test_client()
+remember_login = remember_client.post(
+    "/login",
+    data={"email": "admin@gamo.sk", "password": "TestGamo2026!", "remember": "1"},
+    follow_redirects=False,
+)
+assert remember_login.status_code in (302, 303)
+assert "gamo_remember_device=" in (remember_login.headers.get("Set-Cookie") or "")
+with remember_client.session_transaction() as sess:
+    sess.clear()
+restored = remember_client.get("/", follow_redirects=False)
+assert restored.status_code == 200, restored.status_code
+assert app.one_system(
+    "select count(*) n from remembered_devices where user_id=? and revoked_at is null",
+    (gamo_admin["id"],),
+)["n"] >= 1
+logged_out = remember_client.get("/logout", follow_redirects=False)
+assert logged_out.status_code in (302, 303)
+with remember_client.session_transaction() as sess:
+    sess.clear()
+after_logout = remember_client.get("/", follow_redirects=False)
+assert after_logout.status_code in (302, 303)
+assert "/login" in after_logout.headers["Location"]
+assert app.one_system(
+    "select count(*) n from remembered_devices where user_id=? and revoked_at is null",
+    (gamo_admin["id"],),
+)["n"] == 0
+
 r = client.get("/api/assets/options")
 assert r.status_code == 200 and isinstance(r.get_json(), list)
 
