@@ -429,14 +429,16 @@
 {% else %}
 <section class="customer-detail-card customer-data-locked"><span>◈</span><div><h3>Detailné zákaznícke dáta nie sú sprístupnené</h3><p>Administrátor zákazníka môže dočasný prístup udeliť v časti <b>Súkromie & dáta</b>. Bez súhlasu nie sú v Customer 360 zobrazené mená používateľov, budovy, incidenty, servisná história ani interný audit.</p></div></section>
 {% endif %}
-{% else %}<div class="admin-v2-top"><div><span class="admin-kicker">{{brand_name}} / ADMINISTRATION</span><h2>Riadiace centrum systému</h2><p>Kompletná správa používateľov, dátového modelu, automatizácie a bezpečnosti.</p></div><div class="admin-version"><small>DESKTOP BUILD</small><b>{{app_version}}</b><span>● ONLINE</span></div></div>
+{% else %}<div class="admin-v2-top"><div><span class="admin-kicker">{% if is_gamo_admin %}GAMO PLATFORM / SUPER ADMIN{% else %}{{brand_name}} / ADMINISTRATION{% endif %}</span><h2>{% if is_gamo_admin %}Super Admin Control Center{% else %}Riadiace centrum systému{% endif %}</h2><p>{% if is_gamo_admin %}Licencie, bezpečnosť, support a prevádzkový stav všetkých zákazníckych organizácií z jedného miesta.{% else %}Kompletná správa používateľov, dátového modelu, automatizácie a bezpečnosti.{% endif %}</p></div><div class="admin-version"><small>PLATFORM BUILD</small><b>{{app_version}}</b><span>● ONLINE</span></div></div>
 <div class="admin-v2-nav"><button class="active"><i>01</i><span>Prehľad</span></button>{% if is_gamo_admin %}<button onclick="document.querySelector('#customersAdmin').scrollIntoView({behavior:'smooth'})"><i>02</i><span>Zákazníci</span></button>{% endif %}<button onclick="document.querySelector('#usersAdmin').scrollIntoView({behavior:'smooth'})"><i>{{'03' if is_gamo_admin else '02'}}</i><span>Používatelia</span></button><button onclick="document.querySelector('#systemAdmin').scrollIntoView({behavior:'smooth'})"><i>{{'04' if is_gamo_admin else '03'}}</i><span>Konfigurácia</span></button><button onclick="document.querySelector('#securityAdmin').scrollIntoView({behavior:'smooth'})"><i>{{'05' if is_gamo_admin else '04'}}</i><span>Bezpečnosť</span></button><button onclick="document.querySelector('#systemTools').scrollIntoView({behavior:'smooth'})"><i>{{'06' if is_gamo_admin else '05'}}</i><span>Systém</span></button></div>
 <div class="admin-v2-metrics">
 {% if is_gamo_admin %}
-<div class="adm-metric"><span class="adm-icon violet">◈</span><div><small>ZÁKAZNÍCI</small><b>{{customer_stats.total}}</b><em>externých organizácií</em></div></div>
-<div class="adm-metric"><span class="adm-icon green">✓</span><div><small>AKTÍVNE LICENCIE</small><b>{{customer_stats.active}}</b><em>{{customer_stats.paused}} pozastavených / neaktívnych</em></div></div>
-<div class="adm-metric"><span class="adm-icon cyan">♙</span><div><small>ÚČTY ZÁKAZNÍKOV</small><b>{{customer_stats.users}}</b><em>používateľov mimo GAMO</em></div></div>
-<div class="adm-metric"><span class="adm-icon orange">▦</span><div><small>OBJEKTY ZÁKAZNÍKOV</small><b>{{customer_stats.buildings}}</b><em>budov mimo interného GAMO</em></div></div>
+<div class="adm-metric"><span class="adm-icon violet">◈</span><div><small>ZÁKAZNÍCI</small><b>{{customer_stats.total}}</b><em>{{customer_stats.active}} aktívnych · {{customer_stats.paused}} mimo prevádzky</em></div></div>
+<div class="adm-metric"><span class="adm-icon orange">◷</span><div><small>LICENCIE ≤ 30 DNÍ</small><b>{{customer_stats.expiring}}</b><em>vyžadujú obchodnú pozornosť</em></div></div>
+<div class="adm-metric"><span class="adm-icon red">✉</span><div><small>NEPREČÍTANÉ TICKETY</small><b>{{customer_stats.unread_tickets}}</b><em>{{customer_stats.open_tickets}} otvorených požiadaviek</em></div></div>
+<div class="adm-metric"><span class="adm-icon cyan">⌾</span><div><small>SECURITY &lt; 70</small><b>{{customer_stats.security_attention}}</b><em>organizácií s odporúčaniami</em></div></div>
+<div class="adm-metric"><span class="adm-icon green">◇</span><div><small>ASSETY ZÁKAZNÍKOV</small><b>{{customer_stats.assets}}</b><em>{{customer_stats.buildings}} budov · {{customer_stats.users}} účtov</em></div></div>
+<div class="adm-metric"><span class="adm-icon blue">↗</span><div><small>AKTÍVNY SUPPORT</small><b>{{customer_stats.support_open}}</b><em>časovo povolených support okien</em></div></div>
 {% else %}
 <div class="adm-metric"><span class="adm-icon violet">♙</span><div><small>POUŽÍVATELIA</small><b>{{users|length}}</b><em>{{users|selectattr('status','equalto','Aktívny')|list|length}} aktívnych účtov</em></div></div>
 <div class="adm-metric"><span class="adm-icon cyan">▦</span><div><small>SPRAVOVANÉ OBJEKTY</small><b>{{buildings|length}}</b><em>budovy v systéme</em></div></div>
@@ -445,10 +447,33 @@
 {% endif %}
 </div>
 {% if is_gamo_admin %}
+<section class="super-admin-command">
+ <div class="super-admin-command-copy"><span class="admin-kicker">PLATFORM OPERATIONS</span><h3>Čo potrebuje pozornosť dnes?</h3><p>Platformové metadáta bez automatického otvárania citlivého zákazníckeho obsahu.</p></div>
+ <div class="super-admin-command-actions">
+  <a href="/tickets" class="{{'attention' if customer_stats.unread_tickets else ''}}"><span>✉</span><div><b>Support inbox</b><small>{{customer_stats.unread_tickets}} neprečítaných</small></div></a>
+  <a href="/platform/customers/export.xlsx"><span>⇩</span><div><b>Export portfólia</b><small>XLSX · licencie & security</small></div></a>
+  <button onclick="document.querySelector('#customersAdmin').scrollIntoView({behavior:'smooth'})"><span>◈</span><div><b>Zákazníci</b><small>{{customer_stats.total}} organizácií</small></div></button>
+ </div>
+</section>
+<div class="super-admin-grid">
+ <section class="admin-v2-panel platform-attention">
+  <div class="adm-head"><div><span class="admin-kicker">ATTENTION QUEUE</span><h3>Vyžaduje zásah</h3><p>Licencie, bezpečnosť, backup, support a nové požiadavky.</p></div><span class="attention-total">{{platform_attention|length}}</span></div>
+  <div class="platform-attention-list">{% for a in platform_attention %}<a href="/platform/customer/{{a.organization_id}}"><span class="platform-attention-icon">!</span><div><b>{{a.name}}</b><small>{{a.code}} · {{a.issue}}</small></div><label>{{a.score}}/100</label></a>{% else %}<div class="platform-empty-good"><span>✓</span><div><b>Bez kritických upozornení</b><small>Portfólio momentálne nevyžaduje zásah.</small></div></div>{% endfor %}</div>
+ </section>
+ <section class="admin-v2-panel platform-support-inbox">
+  <div class="adm-head"><div><span class="admin-kicker">SUPPORT INBOX</span><h3>Najnovšie tickety</h3><p>Zákaznícke požiadavky smerované na GAMO support.</p></div><a class="adm-head-link" href="/tickets">Otvoriť inbox →</a></div>
+  <div class="platform-ticket-list">{% for t in recent_platform_tickets %}<a href="/ticket/{{t.id}}" class="{{'unread' if t.platform_unread else ''}}"><span class="ticket-priority-dot {{t.priority|lower}}"></span><div><b>{{t.ticket_no}} · {{t.subject}}</b><small>{{t.organization_code}} · {{t.status}} · {{t.updated}}</small></div>{% if t.platform_unread %}<label>{{t.platform_unread}}</label>{% endif %}</a>{% else %}<div class="platform-empty-good"><span>✓</span><div><b>Inbox je prázdny</b><small>Žiadne zákaznícke tickety.</small></div></div>{% endfor %}</div>
+ </section>
+</div>
+<section class="admin-v2-panel platform-access-strip">
+ <div class="adm-head"><div><span class="admin-kicker">PRIVACY TRANSPARENCY</span><h3>Posledné support prístupy</h3><p>Auditované platformové zásahy mimo bežného zákazníckeho workspace.</p></div></div>
+ <div class="platform-access-list">{% for e in recent_platform_access %}<div><span>{{e.organization_code}}</span><p><b>{{e.action}}</b><small>{{e.actor_name or 'Systém'}} · {{e.reason or 'bez poznámky'}}</small></p><time>{{e.created}}</time></div>{% else %}<div class="platform-empty-good compact"><span>✓</span><div><b>Bez support zásahov</b><small>V auditnom logu nie sú nové support udalosti.</small></div></div>{% endfor %}</div>
+</section>
+
 <section class="admin-v2-panel customer-center" id="customersAdmin">
  <div class="customer-center-head">
-  <div><span class="admin-kicker">GAMO CONTROL CENTER</span><h3>Zákazníci</h3><p>Prehľad všetkých firiem, licencií, účtov a objektov spravovaných cez GAMO platformu.</p></div>
-  <details class="customer-add">
+  <div><span class="admin-kicker">GAMO CONTROL CENTER</span><h3>Zákaznícke organizácie</h3><p>Licencie, využitie, bezpečnosť a prevádzkový stav všetkých firemných prostredí.</p></div>
+  <div class="customer-center-actions"><a href="/platform/customers/export.xlsx" class="customer-export-btn">⇩ Export XLSX</a><details class="customer-add">
    <summary>＋ Nový zákazník</summary>
    <div class="customer-add-popover">
     <div class="customer-add-title"><div><span class="admin-kicker">NEW CUSTOMER</span><h4>Vytvoriť firemné prostredie</h4></div><small>Organizácia + prvý administrátor</small></div>
@@ -467,7 +492,7 @@
      <div class="customer-add-actions"><span>Heslo musí mať aspoň 10 znakov.</span><button class="admin-primary">Vytvoriť zákazníka</button></div>
     </form>
    </div>
-  </details>
+  </details></div>
  </div>
  <div class="customer-summary-strip">
   <div><small>CELKOM</small><b>{{customer_stats.total}}</b><span>zákazníkov</span></div>
@@ -479,19 +504,20 @@
  <div class="customer-filterbar">
   <div class="customer-searchbox"><span>⌕</span><input id="customerSearch" placeholder="Hľadať firmu, kód alebo administrátora..." oninput="filterCustomers()"></div>
   <select id="customerPlanFilter" onchange="filterCustomers()"><option value="">Všetky plány</option><option>BASIC</option><option>BUSINESS</option><option>ENTERPRISE</option></select>
-  <select id="customerStatusFilter" onchange="filterCustomers()"><option value="">Všetky stavy</option><option value="active">Aktívne</option><option value="paused">Pozastavené / expirované</option></select>
+  <select id="customerStatusFilter" onchange="filterCustomers()"><option value="">Všetky stavy</option><option value="active">Aktívne</option><option value="paused">Pozastavené / expirované</option><option value="attention">Vyžaduje pozornosť</option></select>
  </div>
  <div class="customer-table">
-  <div class="customer-table-head"><span>FIRMA</span><span>ADMINISTRÁTOR</span><span>PLÁN</span><span>VYUŽITIE</span><span>LICENCIA</span><span>STAV</span><span></span></div>
+  <div class="customer-table-head"><span>FIRMA</span><span>ADMINISTRÁTOR</span><span>PLÁN</span><span>BEZPEČNOSŤ</span><span>PREVÁDZKA</span><span>LICENCIA</span><span>STAV</span><span></span></div>
   {% for o in organizations %}
   {% set expired = o.license_until and (o.license_until|string) < today.isoformat() %}
-  <div class="customer-row" data-search="{{(o.name ~ ' ' ~ o.code ~ ' ' ~ (o.admin_name or '') ~ ' ' ~ (o.admin_email or ''))|lower}}" data-plan="{{o.plan}}" data-license="{{o.license_status}}" data-orgstatus="{{o.status}}" data-expired="{{'1' if expired else '0'}}">
-   <a class="customer-company customer-company-link" href="/platform/customer/{{o.id}}"><div class="customer-logo" style="background:linear-gradient(145deg,{{o.brand_color or '#163a72'}},#17345d)">{{o.code[:2]|upper}}</div><div><b>{{o.name}}</b><small>{{o.code}} · otvoriť detail →</small></div></a>
+  <div class="customer-row" data-search="{{(o.name ~ ' ' ~ o.code ~ ' ' ~ (o.admin_name or '') ~ ' ' ~ (o.admin_email or ''))|lower}}" data-plan="{{o.plan}}" data-license="{{o.license_status}}" data-orgstatus="{{o.status}}" data-expired="{{'1' if expired else '0'}}" data-attention="{{'1' if o.attention_count else '0'}}">
+   <a class="customer-company customer-company-link" href="/platform/customer/{{o.id}}"><div class="customer-logo" style="background:linear-gradient(145deg,{{o.brand_color or '#163a72'}},#17345d)">{{o.code[:2]|upper}}</div><div><b>{{o.name}}</b><small>{{o.code}} · Customer 360 →</small></div></a>
    <div class="customer-admin"><b>{{o.admin_name or '—'}}</b><small>{{o.admin_email or 'Bez administrátora'}}</small></div>
    <div><span class="plan-pill plan-{{o.plan|lower}}">{{o.plan}}</span></div>
-   <div class="customer-usage"><b>{{o.users_count}}</b><small>účty</small><i></i><b>{{o.buildings_count}}</b><small>budovy</small></div>
-   <div class="customer-license"><b>{{o.license_until or 'Bez expirácie'}}</b><small>{% if expired %}Licencia vypršala{% elif o.license_until %}platnosť licencie{% else %}bez časového limitu{% endif %}</small></div>
-   <div><span class="customer-status {{'bad' if expired or o.license_status!='Aktívna' or o.status!='Aktívny' else 'ok'}}">● {% if expired %}Expirovaná{% elif o.status!='Aktívny' %}Neaktívna firma{% else %}{{o.license_status}}{% endif %}</span></div>
+   <div class="customer-security-cell"><span class="security-mini {{'good' if o.security_score>=80 else ('warn' if o.security_score>=60 else 'bad')}}">{{o.security_score}}</span><div><b>{{o.mfa_coverage}} % MFA</b><small>{{'Backup OK' if o.backup_ok else 'Backup neoverený'}}</small></div></div>
+   <div class="customer-usage"><b>{{o.users_count}}</b><small>účty</small><i></i><b>{{o.buildings_count}}</b><small>budovy</small><i></i><b>{{o.assets_count}}</b><small>assety</small></div>
+   <div class="customer-license"><b>{{o.license_until or 'Bez expirácie'}}</b><small>{% if o.license_expired %}Licencia vypršala{% elif o.license_expiring %}zostáva {{o.license_days}} dní{% elif o.license_until %}platnosť licencie{% else %}bez časového limitu{% endif %}</small></div>
+   <div class="customer-state-stack"><span class="customer-status {{'bad' if not o.commercial_active else 'ok'}}">● {{'Aktívna' if o.commercial_active else ('Expirovaná' if o.license_expired else o.license_status)}}</span>{% if o.unread_tickets_count %}<small class="customer-unread">✉ {{o.unread_tickets_count}} unread</small>{% endif %}{% if o.support_active %}<small class="customer-support-open">SUPPORT OPEN</small>{% endif %}</div>
    <div class="customer-actions">
     <details class="customer-manage">
      <summary>Spravovať</summary>

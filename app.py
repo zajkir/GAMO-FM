@@ -1616,31 +1616,122 @@ def incidents():
  rows=q('select i.*,i.asset_id asset_db_id,a.asset_id asset_code,a.name asset,b.code building from incidents i join assets a on a.id=i.asset_id join buildings b on b.id=a.building_id where b.organization_id=? order by i.id desc',(org_id(),))
  stats={'total':len(rows),'open':sum(1 for r in rows if r['status'] not in {'Ukončená','Vyriešená'}),'critical':sum(1 for r in rows if r['severity'] in {'Kritická','Havária'} and r['status'] not in {'Ukončená','Vyriešená'}),'resolved':sum(1 for r in rows if r['status'] in {'Ukončená','Vyriešená'}),'cost':sum(float(r['cost'] or 0) for r in rows)}
  return render_template('index.html',page='incidents',incidents=rows,incident_stats=stats)
+def platform_customer_portfolio():
+ if not is_gamo_admin(): return []
+ rows=q_system("""select o.*,
+  (select count(*) from users u where u.organization_id=o.id) users_count,
+  (select count(*) from users u where u.organization_id=o.id and u.status='Aktívny') active_users_count,
+  (select count(*) from buildings b where b.organization_id=o.id) buildings_count,
+  (select count(*) from assets a where a.organization_id=o.id) assets_count,
+  (select count(*) from incidents x join assets a on a.id=x.asset_id where a.organization_id=o.id and x.status not in ('Ukončená','Vyriešená')) open_incidents_count,
+  (select count(*) from workorders w join assets a on a.id=w.asset_id where a.organization_id=o.id and w.status not in ('Ukončené','Zrušené')) open_orders_count,
+  (select count(*) from tickets t where t.organization_id=o.id and t.status not in ('Vyriešený','Uzavretý')) open_tickets_count,
+  (select count(*) from tickets t where t.organization_id=o.id and exists(
+    select 1 from ticket_messages m left join users su on su.id=m.sender_user_id
+    where m.ticket_id=t.id and m.id>coalesce(t.platform_last_read_message_id,0)
+      and (m.sender_user_id is null or su.organization_id=t.organization_id)
+  )) unread_tickets_count,
+  (select u.name from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_name,
+  (select u.email from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_email,
+  (select u.last_login from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_last_login
+  from organizations o where o.code<>'GAMO' order by o.name""")
+ out=[]; today_value=date.today()
+ for raw in rows:
+  item=dict(raw); security=security_snapshot(item['id'],True)
+  item['security_score']=security['score']; item['mfa_coverage']=security['mfa_coverage']; item['backup_ok']=security['backup_ok']; item['support_active']=security['support_active']; item['security_warnings']=security['warnings']
+  item['license_days']=None; item['license_expired']=False; item['license_expiring']=False
+  if item.get('license_until'):
+   try:
+    days=(datetime.strptime(str(item['license_until'])[:10],'%Y-%m-%d').date()-today_value).days
+    item['license_days']=days; item['license_expired']=days<0; item['license_expiring']=0<=days<=30
+   except Exception: pass
+  active=bool(item.get('status')=='Aktívny' and item.get('license_status')=='Aktívna' and not item['license_expired'])
+  item['commercial_active']=active
+  attention=[]
+  if not active: attention.append('Licencia / organizácia')
+  elif item['license_expiring']: attention.append('Licencia čoskoro expiruje')
+  if item['security_score']<70: attention.append('Security')
+  if not item['backup_ok']: attention.append('Backup')
+  if item['support_active']: attention.append('Support otvorený')
+  if int(item.get('unread_tickets_count') or 0)>0: attention.append('Nové tickety')
+  item['attention']=attention; item['attention_count']=len(attention); out.append(item)
+ return out
+
 @app.route('/admin')
 def admin():
  org=one('select * from organizations where id=?',(org_id(),))
- organizations=[]; customer_stats={'total':0,'active':0,'paused':0,'users':0,'buildings':0}
+ organizations=[]; platform_attention=[]; recent_platform_tickets=[]; recent_platform_access=[]
+ customer_stats={'total':0,'active':0,'paused':0,'users':0,'buildings':0,'assets':0,'open_incidents':0,'open_orders':0,'open_tickets':0,'unread_tickets':0,'expiring':0,'support_open':0,'security_attention':0}
  if is_gamo_admin():
-  organizations=q_system("""select o.*,
-   (select count(*) from users u where u.organization_id=o.id) users_count,
-   (select count(*) from buildings b where b.organization_id=o.id) buildings_count,
-   (select u.name from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_name,
-   (select u.email from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_email,
-   (select u.last_login from users u where u.organization_id=o.id and u.role='Administrator' order by u.id limit 1) admin_last_login
-   from organizations o where o.code<>'GAMO' order by o.name""")
-  active_customers=sum(1 for o in organizations if o['status']=='Aktívny' and o['license_status']=='Aktívna' and (not o['license_until'] or str(o['license_until'])[:10]>=date.today().isoformat()))
+  organizations=platform_customer_portfolio()
   customer_stats={
-   'total':len(organizations),
-   'active':active_customers,
-   'paused':len(organizations)-active_customers,
-   'users':sum(int(o['users_count'] or 0) for o in organizations),
-   'buildings':sum(int(o['buildings_count'] or 0) for o in organizations)
+   'total':len(organizations),'active':sum(1 for o in organizations if o['commercial_active']),'paused':sum(1 for o in organizations if not o['commercial_active']),
+   'users':sum(int(o.get('users_count') or 0) for o in organizations),'buildings':sum(int(o.get('buildings_count') or 0) for o in organizations),'assets':sum(int(o.get('assets_count') or 0) for o in organizations),
+   'open_incidents':sum(int(o.get('open_incidents_count') or 0) for o in organizations),'open_orders':sum(int(o.get('open_orders_count') or 0) for o in organizations),
+   'open_tickets':sum(int(o.get('open_tickets_count') or 0) for o in organizations),'unread_tickets':sum(int(o.get('unread_tickets_count') or 0) for o in organizations),
+   'expiring':sum(1 for o in organizations if o['license_expiring']),'support_open':sum(1 for o in organizations if o['support_active']),'security_attention':sum(1 for o in organizations if o['security_score']<70)
   }
+  for o in organizations:
+   for issue in o['attention'][:3]: platform_attention.append({'organization_id':o['id'],'code':o['code'],'name':o['name'],'issue':issue,'score':o['security_score']})
+  platform_attention=platform_attention[:12]
+  recent_platform_tickets=[dict(r) for r in q_system("""select t.id,t.ticket_no,t.subject,t.priority,t.status,t.updated,o.code organization_code,o.name organization_name,
+   (select count(*) from ticket_messages m left join users su on su.id=m.sender_user_id
+    where m.ticket_id=t.id and m.id>coalesce(t.platform_last_read_message_id,0)
+      and (m.sender_user_id is null or su.organization_id=t.organization_id)) platform_unread
+   from tickets t join organizations o on o.id=t.organization_id
+   where o.code<>'GAMO'
+   order by case when t.status='Nový' then 0 when t.status='Otvorený' then 1 else 2 end,t.updated desc limit 7""")]
+  recent_platform_access=[dict(r) for r in q_system("""select l.created,l.action,l.actor_name,l.reason,o.code organization_code,o.name organization_name
+   from customer_access_log l join organizations o on o.id=l.target_organization_id
+   where o.code<>'GAMO' and l.action<>'GAMO_METADATA_VIEW'
+   order by l.id desc limit 7""")]
  audit_rows=q('select * from audit_log where organization_id=? order by id desc limit 20',(org_id(),))
  return render_template('index.html',page='admin',
   users=q('select * from users where organization_id=? order by name',(org_id(),)),
   buildings=q('select * from buildings where organization_id=? order by name',(org_id(),)),
-  audit_rows=audit_rows,organizations=organizations,customer_stats=customer_stats,current_admin_org=org)
+  audit_rows=audit_rows,organizations=organizations,customer_stats=customer_stats,current_admin_org=org,
+  platform_attention=platform_attention,recent_platform_tickets=recent_platform_tickets,recent_platform_access=recent_platform_access)
+
+@app.get('/platform/customers/export.xlsx')
+def platform_customers_export():
+ if not is_gamo_admin(): abort(403)
+ organizations=platform_customer_portfolio()
+ wb=Workbook(); ws=wb.active; ws.title='Zákazníci'
+ brand='17365D'; white='FFFFFF'; gray='667085'; green='E4F5EC'; red='FBE9ED'; amber='FFF4D9'
+ ws.sheet_view.showGridLines=False
+ ws.merge_cells('A1:P2'); ws['A1']='GAMO SUPER ADMIN · CUSTOMER PORTFOLIO'
+ ws['A1'].font=Font(color=white,bold=True,size=18); ws['A1'].fill=PatternFill('solid',fgColor=brand); ws['A1'].alignment=Alignment(vertical='center')
+ for row in ws['A1:P2']:
+  for cell in row: cell.fill=PatternFill('solid',fgColor=brand)
+ ws.merge_cells('A3:P3'); ws['A3']=f"Generované {datetime.now().strftime('%d.%m.%Y %H:%M')} · iba platformové metadáta"; ws['A3'].font=Font(color=gray,size=9)
+ headers=['Kód','Zákazník','Plán','Organizácia','Licencia','Platnosť do','Dní','Používatelia','Budovy','Assety','Otvorené incidenty','Otvorené úlohy','Tickety','Unread','Security Score','MFA %']
+ row0=5
+ for col,h in enumerate(headers,1):
+  cell=ws.cell(row0,col,h); cell.fill=PatternFill('solid',fgColor=brand); cell.font=Font(color=white,bold=True,size=9)
+ for ridx,o in enumerate(organizations,row0+1):
+  values=[o['code'],o['name'],o['plan'],o['status'],o['license_status'],o['license_until'] or '',o['license_days'] if o['license_days'] is not None else '',o['users_count'],o['buildings_count'],o['assets_count'],o['open_incidents_count'],o['open_orders_count'],o['open_tickets_count'],o['unread_tickets_count'],o['security_score'],o['mfa_coverage']]
+  for cidx,val in enumerate(values,1): ws.cell(ridx,cidx,val).alignment=Alignment(vertical='top')
+  for cidx,val in enumerate(values,1): ws.cell(ridx,cidx).value=val
+  ws.cell(ridx,15).fill=PatternFill('solid',fgColor=green if o['security_score']>=80 else (amber if o['security_score']>=60 else red))
+  if not o['commercial_active']: ws.cell(ridx,5).fill=PatternFill('solid',fgColor=red)
+  elif o['license_expiring']: ws.cell(ridx,6).fill=PatternFill('solid',fgColor=amber)
+ if organizations:
+  table=Table(displayName='GamoCustomerPortfolio',ref=f'A{row0}:P{row0+len(organizations)}'); table.tableStyleInfo=TableStyleInfo(name='TableStyleMedium2',showRowStripes=True,showFirstColumn=False,showLastColumn=False); ws.add_table(table)
+ ws.freeze_panes='A6'
+ widths=[13,30,14,15,15,15,9,13,10,10,18,16,12,10,15,10]
+ for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+ ws.page_setup.orientation='landscape'; ws.sheet_properties.pageSetUpPr.fitToPage=True; ws.page_setup.fitToWidth=1
+ summary=wb.create_sheet('Súhrn'); summary.sheet_view.showGridLines=False
+ summary['A1']='GAMO PLATFORM OVERVIEW'; summary['A1'].font=Font(size=18,bold=True,color=white); summary['A1'].fill=PatternFill('solid',fgColor=brand); summary.merge_cells('A1:D2')
+ for row in summary['A1:D2']:
+  for cell in row: cell.fill=PatternFill('solid',fgColor=brand)
+ metrics=[('Zákazníci',len(organizations)),('Aktívni',sum(1 for o in organizations if o['commercial_active'])),('Licencie ≤30 dní',sum(1 for o in organizations if o['license_expiring'])),('Security <70',sum(1 for o in organizations if o['security_score']<70)),('Unread tickety',sum(int(o['unread_tickets_count'] or 0) for o in organizations)),('Aktívny support',sum(1 for o in organizations if o['support_active']))]
+ for idx,(label,value) in enumerate(metrics,4): summary.cell(idx,1,label).font=Font(bold=True,color=gray); summary.cell(idx,2,value).font=Font(bold=True,size=14)
+ summary.column_dimensions['A'].width=24; summary.column_dimensions['B'].width=16
+ stream=io.BytesIO(); wb.save(stream); stream.seek(0)
+ audit('PLATFORM_CUSTOMERS_EXPORT',f'{len(organizations)} zákazníkov')
+ return send_file(stream,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name=f'GAMO_customer_portfolio_{date.today().isoformat()}.xlsx')
+
 
 def audit_for_org(target_org_id,action,detail=''):
  try:
