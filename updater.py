@@ -271,7 +271,7 @@ try {
   try { Remove-Item -LiteralPath $Installer -Force -ErrorAction SilentlyContinue } catch {}
 }
 '''
-    helper.write_text(script, encoding='utf-8')
+    helper.write_text(script, encoding='utf-8-sig')
 
     creationflags = (
         getattr(subprocess, 'CREATE_NO_WINDOW', 0)
