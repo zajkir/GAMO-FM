@@ -1,6 +1,6 @@
 #define MyAppName "GAMO a.s."
 #ifndef MyAppVersion
-#define MyAppVersion "9.0.0.18"
+#define MyAppVersion "9.0.0.19"
 #endif
 #define MyAppPublisher "GAMO a.s."
 #define MyAppExeName "GAMO_FM.exe"
@@ -20,7 +20,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog commandline
 CloseApplications=yes
 CloseApplicationsFilter={#MyAppExeName};{#MyLauncherExeName}
 RestartApplications=no
@@ -57,10 +58,11 @@ Filename: "{app}\{#MyLauncherExeName}"; Description: "Spustiť GAMO a.s. Launche
 [Code]
 function ShouldLaunchAfterInstall(): Boolean;
 begin
-  { Old launchers do not pass NOLAUNCH, so silent upgrades from those versions
-    automatically start the newly installed launcher. New launchers pass
-    /NOLAUNCH=1 because their detached helper owns result reporting + relaunch. }
-  Result := CompareText(ExpandConstant('{param:NOLAUNCH|0}'), '1') <> 0;
+  { Always relaunch the newly installed launcher. This is intentional even for
+    silent upgrades: it provides a second recovery path if an older update
+    helper exits before it can relaunch GAMO. The launcher single-instance guard
+    safely ignores a duplicate relaunch attempt. }
+  Result := True;
 end;
 
 procedure ForceCloseDesktop();

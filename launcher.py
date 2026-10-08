@@ -17,7 +17,12 @@ from updater import (
     check_for_update,
     current_version,
     download_update,
+    download_launcher_update,
+    can_self_update_install_dir,
+    launch_launcher_self_update,
     launch_installer_after_process_exit,
+    run_launcher_self_update_helper,
+    cleanup_stale_update_files,
     consume_update_result,
 )
 
@@ -678,15 +683,48 @@ class Launcher(tk.Tk):
 
     def _update_worker(self):
         try:
-            installer = download_update(
-                self.update_manifest,
-                progress=lambda value: self._post(0, lambda v=value: self.progress_var.set(v)),
-            )
+            manifest = self.update_manifest or {}
+            version = str(manifest.get("version", "")).strip()
+            progress = lambda value: self._post(0, lambda v=value: self.progress_var.set(v))
+            launcher_url = str(manifest.get("launcher_url", "")).strip()
+            launcher_sha = str(manifest.get("launcher_sha256", "")).strip().lower()
+
+            # Preferred path: update the one-file launcher directly. A trusted
+            # temporary copy of the currently running launcher performs the file
+            # replacement after this process exits, then starts the new version.
+            if (
+                os.name == "nt"
+                and getattr(sys, "frozen", False)
+                and launcher_url.startswith("https://")
+                and len(launcher_sha) == 64
+                and can_self_update_install_dir(APP_DIR)
+            ):
+                payload = download_launcher_update(manifest, progress=progress)
+                backup_user_data("pre_update")
+                self._post(0, lambda: self.set_status(
+                    "Aktualizácia je pripravená",
+                    "Launcher sa bezpečne vymení, overí a automaticky znovu spustí.",
+                    "update",
+                ))
+                if not launch_launcher_self_update(
+                    payload,
+                    os.getpid(),
+                    install_dir=APP_DIR,
+                    version=version,
+                    expected_sha256=launcher_sha,
+                ):
+                    raise RuntimeError("Priamy self-update launcheru sa nepodarilo pripraviť.")
+                write_log(f"Direct launcher self-update handoff · target=v{version} · payload={payload}")
+                self._post(450, self._close)
+                return
+
+            # Fallback for older manifests or protected install directories:
+            # use the signed/packaged installer path.
+            installer = download_update(manifest, progress=progress)
             backup_user_data("pre_update")
-            version = str(self.update_manifest.get("version", "")).strip()
             self._post(0, lambda: self.set_status(
                 "Aktualizácia je pripravená",
-                "Launcher sa zavrie, nainštaluje aktualizáciu a automaticky sa znovu spustí.",
+                "Spustí sa systémový inštalátor a po dokončení sa GAMO automaticky otvorí.",
                 "update",
             ))
             relaunch = APP_DIR / "GAMO_Launcher.exe"
@@ -696,7 +734,7 @@ class Launcher(tk.Tk):
                 relaunch_path=relaunch,
                 version=version,
             )
-            write_log(f"Update handoff created · target=v{version} · installer={installer}")
+            write_log(f"Installer fallback handoff · target=v{version} · installer={installer}")
             self._post(450, self._close)
         except Exception as exc:
             write_log(f"Update failed: {exc}")
@@ -855,6 +893,11 @@ def open_cloud_client(url):
 
 
 def main():
+    # Self-update helper mode must run before the single-instance mutex/UI.
+    if len(sys.argv) >= 3 and sys.argv[1] == "--gamo-update-helper":
+        raise SystemExit(run_launcher_self_update_helper(sys.argv[2]))
+
+    cleanup_stale_update_files()
     enable_high_dpi()
     mutex = single_instance_guard()
     if mutex is False:

@@ -10,9 +10,10 @@ assert '/F /T /IM "{#MyLauncherExeName}"' in iss
 assert '/F /T /IM "{#MyAppExeName}"' in iss
 assert 'restartreplace' in iss
 assert 'function ShouldLaunchAfterInstall(): Boolean;' in iss
-assert "{param:NOLAUNCH|0}" in iss
+assert 'Result := True;' in iss
+assert 'PrivilegesRequired=admin' in iss
+assert 'PrivilegesRequiredOverridesAllowed=dialog commandline' in iss
 assert 'Check: ShouldLaunchAfterInstall' in iss
-assert 'skipifsilent' not in [line for line in iss.splitlines() if line.startswith('Filename: "{app}\\{#MyLauncherExeName}"')][0]
 assert 'function PrepareToInstall(var NeedsRestart: Boolean): String;' in iss
 assert 'ForceCloseLauncher();' in iss
 assert 'Source: "..\\dist\\GAMO_FM\\*"' not in iss
@@ -24,4 +25,4 @@ assert 'Type: files; Name: "{autoprograms}\\GAMO a.s..lnk"' in iss
 assert 'Type: filesandordirs; Name: "{app}\\_internal"' in iss
 assert f'#define MyAppVersion "{version}"' in iss
 
-print("Installer self-update regression checks OK")
+print("Installer fallback regression checks OK")

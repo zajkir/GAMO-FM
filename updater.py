@@ -6,6 +6,8 @@ import tempfile
 import urllib.request
 import os
 import shutil
+import ctypes
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -36,6 +38,14 @@ def _version_tuple(value):
     return tuple((parts + [0, 0, 0, 0])[:4])
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest().lower()
+
+
 def check_for_update():
     cfg = _load_json('update_config.json', {})
     if not cfg.get('enabled'):
@@ -50,10 +60,14 @@ def check_for_update():
     remote = str(manifest.get('version', '0.0.0'))
     if _version_tuple(remote) <= _version_tuple(current_version()):
         return None
+    launcher_url = str(manifest.get('launcher_url', '')).strip()
+    launcher_sha = str(manifest.get('launcher_sha256', '')).strip().lower()
     installer_url = str(manifest.get('installer_url', '')).strip()
-    sha256 = str(manifest.get('sha256', '')).strip().lower()
-    if not installer_url.startswith('https://') or len(sha256) != 64:
-        raise ValueError('Aktualizačný manifest nemá platnú HTTPS adresu alebo SHA-256.')
+    installer_sha = str(manifest.get('sha256', '')).strip().lower()
+    launcher_valid = launcher_url.startswith('https://') and len(launcher_sha) == 64
+    installer_valid = installer_url.startswith('https://') and len(installer_sha) == 64
+    if not launcher_valid and not installer_valid:
+        raise ValueError('Aktualizačný manifest nemá platný launcher ani installer payload.')
     return manifest
 
 
@@ -87,6 +101,42 @@ def download_update(manifest, progress=None):
         actual = digest.hexdigest().lower()
         if actual != expected:
             raise ValueError('Kontrola aktualizácie zlyhala: SHA-256 nesedí.')
+        partial.replace(target)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+    if progress:
+        progress(100)
+    return target
+
+
+def download_launcher_update(manifest, progress=None):
+    """Download the preferred one-file launcher payload and verify SHA-256."""
+    version = str(manifest['version'])
+    url = str(manifest['launcher_url'])
+    expected = str(manifest['launcher_sha256']).lower()
+    target = update_state_dir() / f'GAMO_Launcher_{version}.new.exe'
+    partial = target.with_suffix(target.suffix + '.part')
+    partial.unlink(missing_ok=True)
+    digest = hashlib.sha256()
+    downloaded = 0
+    if progress:
+        progress(0)
+    req = urllib.request.Request(url, headers={'User-Agent': f'GAMO-FM/{current_version()}'})
+    try:
+        with urllib.request.urlopen(req, timeout=45) as src, partial.open('wb') as dst:
+            total = int(src.headers.get('Content-Length') or 0)
+            while True:
+                chunk = src.read(512 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+                digest.update(chunk)
+                downloaded += len(chunk)
+                if progress and total:
+                    progress(min(99, int(downloaded * 100 / total)))
+        if digest.hexdigest().lower() != expected:
+            raise ValueError('Kontrola launcher aktualizácie zlyhala: SHA-256 nesedí.')
         partial.replace(target)
     except Exception:
         partial.unlink(missing_ok=True)
@@ -170,6 +220,186 @@ def consume_update_result():
         pass
     return data
 
+
+
+def cleanup_stale_update_files():
+    base = update_state_dir()
+    current = Path(sys.executable).resolve()
+    now = time.time()
+    for pattern in ('GAMO_Update_Helper_*.exe', 'GAMO_Launcher_*.new.exe', 'self_update_*.json'):
+        for path in base.glob(pattern):
+            try:
+                if path.resolve() == current:
+                    continue
+                if now - path.stat().st_mtime > 60:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _wait_for_process_exit(pid, timeout_seconds=120):
+    if os.name != 'nt' or not pid:
+        return True
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x00100000, False, int(pid))
+    if not handle:
+        return True
+    try:
+        return kernel32.WaitForSingleObject(handle, int(timeout_seconds * 1000)) == 0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _replace_launcher_targets(payload, targets, expected_sha256):
+    """Replace launcher aliases only after the old launcher has exited."""
+    payload = Path(payload)
+    expected = str(expected_sha256).lower()
+    if not payload.exists():
+        raise FileNotFoundError(f'Update payload neexistuje: {payload}')
+    if file_sha256(payload) != expected:
+        raise ValueError('Launcher payload neprešiel SHA-256 kontrolou.')
+
+    rollback_dir = update_state_dir() / 'rollback'
+    rollback_dir.mkdir(parents=True, exist_ok=True)
+    backups = {}
+    replaced = []
+    try:
+        for raw_target in targets:
+            target = Path(raw_target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            backup = rollback_dir / f'{target.name}.previous'
+            if target.exists():
+                shutil.copy2(target, backup)
+                backups[target] = backup
+            staged = target.with_name(target.name + '.gamo-new')
+            staged.unlink(missing_ok=True)
+            shutil.copy2(payload, staged)
+            if file_sha256(staged) != expected:
+                raise ValueError(f'Staged launcher neprešiel kontrolou: {target.name}')
+            last_error = None
+            for _ in range(80):
+                try:
+                    os.replace(staged, target)
+                    last_error = None
+                    break
+                except (PermissionError, OSError) as exc:
+                    last_error = exc
+                    time.sleep(0.25)
+            if last_error is not None:
+                raise last_error
+            if file_sha256(target) != expected:
+                raise ValueError(f'Nainštalovaný launcher neprešiel kontrolou: {target.name}')
+            replaced.append(target)
+        return replaced
+    except Exception:
+        for target in reversed(replaced):
+            backup = backups.get(target)
+            try:
+                if backup and backup.exists():
+                    shutil.copy2(backup, target)
+                else:
+                    target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def can_self_update_install_dir(install_dir=None):
+    """Return True only if the installed launcher directory is writable now."""
+    directory = Path(install_dir or APP_DIR).resolve()
+    probe = directory / f'.gamo_update_probe_{os.getpid()}'
+    try:
+        probe.write_bytes(b'GAMO')
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def launch_launcher_self_update(payload, process_id, install_dir=None, version='', expected_sha256=''):
+    """Run a detached trusted copy of the current launcher as update helper."""
+    if os.name != 'nt' or not getattr(sys, 'frozen', False):
+        return False
+    install_dir = Path(install_dir or APP_DIR).resolve()
+    canonical = install_dir / 'GAMO_Launcher.exe'
+    compatibility = install_dir / 'GAMO_FM.exe'
+    payload = Path(payload).resolve()
+    expected = str(expected_sha256 or file_sha256(payload)).lower()
+
+    state = update_state_dir()
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+    helper = state / f'GAMO_Update_Helper_{stamp}.exe'
+    job = state / f'self_update_{stamp}.json'
+    shutil.copy2(Path(sys.executable).resolve(), helper)
+    job.write_text(json.dumps({
+        'parent_pid': int(process_id),
+        'payload': str(payload),
+        'targets': [str(canonical), str(compatibility)],
+        'relaunch': str(canonical),
+        'expected_sha256': expected,
+        'version': str(version or ''),
+    }, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    subprocess.Popen(
+        [str(helper), '--gamo-update-helper', str(job)],
+        close_fds=True,
+        creationflags=flags,
+        cwd=str(state),
+    )
+    return True
+
+
+def run_launcher_self_update_helper(job_path):
+    """Apply a downloaded launcher payload, verify it, then relaunch GAMO."""
+    job_path = Path(job_path)
+    relaunch = None
+    version = ''
+    try:
+        job = json.loads(job_path.read_text(encoding='utf-8-sig'))
+        version = str(job.get('version', ''))
+        relaunch = Path(job['relaunch'])
+        if not _wait_for_process_exit(int(job['parent_pid']), 120):
+            raise TimeoutError('Pôvodný launcher sa do 120 sekúnd neukončil.')
+        time.sleep(0.7)
+        _replace_launcher_targets(
+            Path(job['payload']),
+            [Path(x) for x in job['targets']],
+            str(job['expected_sha256']),
+        )
+        update_result_path().write_text(json.dumps({
+            'status': 'success',
+            'message': f'Aktualizácia {version} bola úspešne nainštalovaná a overená.',
+            'exit_code': 0,
+            'version': version,
+            'finished_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        }, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception as exc:
+        try:
+            update_result_path().write_text(json.dumps({
+                'status': 'failed',
+                'message': str(exc),
+                'exit_code': -1,
+                'version': version,
+                'finished_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+            }, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+    finally:
+        try:
+            if relaunch and relaunch.exists():
+                subprocess.Popen([str(relaunch)], close_fds=True)
+        except Exception:
+            pass
+        try:
+            job_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return 0
 
 def launch_installer(path):
     flags = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/CLOSEAPPLICATIONS', '/NORESTART']
