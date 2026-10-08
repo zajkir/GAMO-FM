@@ -14,6 +14,7 @@ on:
       - 'tests/launcher_ui_static.py'
       - 'tests/desktop_window_static.py'
       - 'tests/installer_regression.py'
+      - 'tests/release_workflow_static.py'
       - '.github/workflows/build-windows.yml'
   push:
     branches:
@@ -57,6 +58,7 @@ jobs:
           python tests/launcher_ui_static.py
           python tests/desktop_window_static.py
           python tests/installer_regression.py
+          python tests/release_workflow_static.py
 
       - name: Build desktop application
         run: pyinstaller --noconfirm --clean --windowed --name GAMO_FM --add-data "templates;templates" --add-data "static;static" --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
