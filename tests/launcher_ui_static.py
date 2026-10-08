@@ -39,8 +39,14 @@ assert 'self._schedule_retry(15000)' in source
 assert 'def open_diagnostics(self):' in source
 assert 'os.startfile(str(folder))' in source
 assert 'launcher.previous.log' in source
-assert 'def _verify_app_started(self, process):' in source
-assert 'code = process.poll()' in source
-assert 'self._post(1800, lambda p=process: self._verify_app_started(p))' in source
-print("Launcher retry, diagnostics and startup verification checks OK")
+print("Launcher retry and diagnostics checks OK")
+
+assert 'def open_cloud_client(url):' in source
+assert 'webview.create_window(' in source
+assert 'webview.start(_show_cloud_window, window, debug=False)' in source
+assert 'webbrowser.open(url, new=1)' in source
+assert 'self._cloud_target = self.server_url' in source
+assert 'subprocess.Popen' not in source
+assert 'GAMO_FM.exe' not in source
+print("Launcher single-process cloud client checks OK")
 
