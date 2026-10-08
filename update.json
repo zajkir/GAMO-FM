@@ -1,10 +1,10 @@
 {
-  "version": "9.0.0.26",
+  "version": "9.0.0.27",
   "update_mode": "installer",
-  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.26/GAMO_FM_Setup_9.0.0.26.exe",
-  "sha256": "2a8f701eb2f15131a07f93e40e1c63bb50d5883d658a65f73f400293af53aed9",
-  "portable_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.26/GAMO_FM_9.0.0.26.exe",
-  "portable_sha256": "e6eae9ae2163c98cc28dded08bc65646365eede086edc744c9ada46328bdb69a",
-  "notes": "GAMO a.s. 9.0.0.26 - stable Windows renderer and login input crash fix",
-  "published_at": "2026-10-08T20:39:37Z"
+  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.27/GAMO_FM_Setup_9.0.0.27.exe",
+  "sha256": "e3cfdafa55aee6ed8d804c3cf50ee542922f4e5ab8f189bcfe99b3c64e15924f",
+  "portable_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.27/GAMO_FM_9.0.0.27.exe",
+  "portable_sha256": "f6a25c2899216b820e69d8c724f4efa9eab9b370456184904ef1bb5d1627b3a3",
+  "notes": "GAMO a.s. 9.0.0.27 - final production hardening, deployment health and verified Windows release",
+  "published_at": "2026-10-08T21:27:37Z"
 }
