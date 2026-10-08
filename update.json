@@ -1,7 +1,7 @@
 {
-  "version": "9.0.0.13",
-  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.13/GAMO_FM_Setup_9.0.0.13.exe",
-  "sha256": "7365591dcf3a05fb83006935b845153c3b34441a870736c3849965d2d8a3faae",
-  "notes": "GAMO a.s. 9.0.0.13 - automatic update via GAMO Launcher",
-  "published_at": "2026-10-08T10:18:18Z"
+  "version": "9.0.0.14",
+  "installer_url": "https://github.com/zajkir/GAMO-FM/releases/download/v9.0.0.14/GAMO_FM_Setup_9.0.0.14.exe",
+  "sha256": "f69127768025729ddfe7d3e998a4742ea158c6ea74c2289b59f1cdc181bdacf5",
+  "notes": "GAMO a.s. 9.0.0.14 - automatic update via GAMO Launcher",
+  "published_at": "2026-10-08T13:01:32Z"
 }
