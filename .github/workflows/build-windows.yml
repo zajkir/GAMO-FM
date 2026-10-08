@@ -127,7 +127,8 @@ jobs:
           $notes = @"
           GAMO a.s. $version
 
-          - Direct self-update of GAMO_Launcher.exe without PowerShell dependency
+          - Legacy 9.0.0.17 installer bridge keeps the original launcher directory
+          - Direct self-update of GAMO_Launcher.exe for modern launchers
           - Automatic rollback copy and SHA-256 verification after replacement
           - Installer fallback for protected installation directories
           - Automatic launcher relaunch after successful update
@@ -152,7 +153,7 @@ jobs:
             launcher_sha256 = $launcherSha
             installer_url = $installerDownload
             sha256 = $installerSha
-            notes = "GAMO a.s. $version - direct verified launcher self-update"
+            notes = "GAMO a.s. $version - legacy updater bridge + verified direct self-update"
             published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json
 
