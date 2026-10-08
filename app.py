@@ -1349,7 +1349,7 @@ def upload_building_document(i):
  if ext not in allowed:
   flash('Nepodporovaný typ súboru.','error'); return redirect(f'/building/{i}#documents')
  data=f.read()
- x('insert into documents(building_id,name,category,mime,size,data) values(?,?,?,?,?,?)',(i,os.path.basename(f.filename),category,f.mimetype or 'application/octet-stream',len(data),data))
+ x('insert into documents(building_id,name,category,mime,size,data,organization_id) values(?,?,?,?,?,?,?)',(i,os.path.basename(f.filename),category,f.mimetype or 'application/octet-stream',len(data),data,org_id()))
  audit('DOCUMENT_UPLOAD',f.filename); flash('Dokument bol nahratý.','success'); return redirect(f'/building/{i}#documents')
 
 @app.get('/document/<int:i>/download')
@@ -1965,13 +1965,13 @@ def add(what):
     owner=one('select name from organizations where id=?',(org_id(),))
     customer_name=(owner['name'] if owner else 'GAMO a.s.')
     bid=x('insert into buildings(code,name,address,manager,customer,organization_id) values(?,?,?,?,?,?)',(code,name,f.get('address','').strip(),f.get('manager','').strip(),customer_name,org_id()))
-    for n in range(1,floor_count+1): x('insert into floors(building_id,code,name) values(?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie'))
+    for n in range(1,floor_count+1): x('insert into floors(building_id,code,name,organization_id) values(?,?,?,?)',(bid,f'{n}.NP',f'{n}. nadzemné podlažie',org_id()))
     audit('BUILDING_CREATE',f'{name} · {floor_count} podlaží'); flash('Budova a jej základná 3D štruktúra boli vytvorené.','success')
   elif what=='floor':
    building_id=f.get('building_id'); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
    if not owns_building(building_id): abort(404)
    if not code or not name or one('select id from floors where building_id=? and upper(code)=?',(building_id,code)): raise ValueError()
-   x('insert into floors(building_id,code,name) values(?,?,?)',(building_id,code,name)); audit('FLOOR_CREATE',f'{code} · {name}'); flash('Podlažie bolo pridané.','success')
+   x('insert into floors(building_id,code,name,organization_id) values(?,?,?,?)',(building_id,code,name,org_id())); audit('FLOOR_CREATE',f'{code} · {name}'); flash('Podlažie bolo pridané.','success')
   elif what=='room':
    floor_id=f.get('floor_id'); code=(f.get('code') or '').strip().upper(); name=(f.get('name') or '').strip()
    floor=one('select f.id from floors f join buildings b on b.id=f.building_id where f.id=? and b.organization_id=?',(floor_id,org_id()))
@@ -1979,7 +1979,7 @@ def add(what):
    if not code or not name or one('select id from rooms where floor_id=? and upper(code)=?',(floor_id,code)): raise ValueError()
    try: area=max(0,float(f.get('area') or 0))
    except (TypeError,ValueError): raise ValueError()
-   x('insert into rooms(floor_id,code,name,area,tenant,zone) values(?,?,?,?,?,?)',(floor_id,code,name,area,f.get('tenant','').strip(),f.get('zone','').strip())); audit('ROOM_CREATE',f'{code} · {name}'); flash('Miestnosť bola pridaná.','success')
+   x('insert into rooms(floor_id,code,name,area,tenant,zone,organization_id) values(?,?,?,?,?,?,?)',(floor_id,code,name,area,f.get('tenant','').strip(),f.get('zone','').strip(),org_id())); audit('ROOM_CREATE',f'{code} · {name}'); flash('Miestnosť bola pridaná.','success')
   elif what=='asset':
    if not plan_allows('assets'):
     flash('Licenčný limit počtu assetov bol dosiahnutý. GAMO môže upraviť licenčný plán.','error'); return redirect('/assets')
@@ -2002,8 +2002,15 @@ def add(what):
    if one('select id from assets where organization_id=? and upper(asset_id)=?',(org_id(),aid)):
     if manual_aid: raise ValueError(f'Asset ID {aid} už v tvojej organizácii existuje. Zmeň ho alebo nechaj pole prázdne pre automatické ID.')
     aid=next_asset_id(profession)
-   values=(aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip() or None,(f.get('model') or '').strip() or None,(f.get('serial') or '').strip() or None,(f.get('system_id') or '').strip() or None,parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip() or None,(f.get('protocol') or '').strip() or None,(f.get('notes') or '').strip() or None,org_id())
-   new_asset=x('insert into assets(asset_id,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values)
+   asset_tag=(f.get('asset_tag') or '').strip() or None
+   if asset_tag and one('select id from assets where organization_id=? and asset_tag=?',(org_id(),asset_tag)): raise ValueError('Asset Tag / QR už v tvojej organizácii existuje.')
+   installed=(f.get('installed') or '').strip() or None; warranty=(f.get('warranty') or '').strip() or None
+   for date_value,label in ((installed,'Dátum inštalácie'),(warranty,'Záruka do')):
+    if date_value:
+     try: datetime.strptime(date_value[:10],'%Y-%m-%d')
+     except ValueError: raise ValueError(f'{label} nemá platný dátum.')
+   values=(aid,asset_tag,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip() or None,(f.get('model') or '').strip() or None,(f.get('serial') or '').strip() or None,(f.get('system_id') or '').strip() or None,parent_id,status,criticality,service,revision,price,installed,warranty,(f.get('ip') or '').strip() or None,(f.get('protocol') or '').strip() or None,(f.get('notes') or '').strip() or None,org_id())
+   new_asset=x('insert into assets(asset_id,asset_tag,name,building_id,floor_id,room_id,profession,grp,type,manufacturer,model,serial,system_id,parent_id,status,criticality,service_months,revision_months,purchase_price,installed,warranty,ip,protocol,notes,organization_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values)
    asset_event(new_asset,'ASSET_CREATE','Asset vytvorený',f"{aid} · {name}"); audit('ASSET_CREATE',f'{aid} · {name}')
    flash(f'Asset {aid} bol vytvorený.','success')
   elif what=='workorder':
@@ -2015,7 +2022,7 @@ def add(what):
     except ValueError: raise ValueError('Termín pracovného príkazu nemá platný dátum.')
    try: cost=max(0,float(f.get('cost') or 0))
    except (TypeError,ValueError): raise ValueError('Náklad pracovného príkazu musí byť platné číslo.')
-   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip()))
+   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description,organization_id) values(?,?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip(),org_id()))
    asset_event(asset_id,'WORKORDER_CREATE','Nový pracovný príkaz',f"{f.get('kind','')} · {title}")
    audit('WORKORDER_CREATE',title); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident':
@@ -2027,7 +2034,7 @@ def add(what):
     except ValueError: raise ValueError('Dátum nahlásenia incidentu nie je platný.')
    try: cost=max(0,float(f.get('cost') or 0))
    except (TypeError,ValueError): raise ValueError('Náklad incidentu musí byť platné číslo.')
-   x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,cost) values(?,?,?,?,?,?,?,?)',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),cost))
+   x('insert into incidents(asset_id,title,severity,status,reported,impact,cause,solution,cost,organization_id) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),(f.get('solution') or '').strip(),cost,org_id()))
    asset_event(asset_id,'INCIDENT_CREATE','Incident zaevidovaný',f"{f.get('severity','')} · {title}")
    audit('INCIDENT_CREATE',title); flash('Incident bol zaevidovaný.','success')
   elif what=='user':
@@ -2128,9 +2135,13 @@ def edit_record(what,i):
    if parent_id and (not owns_asset(parent_id) or not asset_parent_allowed(i,parent_id)): raise ValueError()
    if one('select id from assets where organization_id=? and upper(asset_id)=? and id<>?',(org_id(),aid,i)): raise IntegrityError()
    service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+   asset_tag=(f.get('asset_tag') or '').strip() or None; installed=(f.get('installed') or '').strip() or None; warranty=(f.get('warranty') or '').strip() or None
+   if asset_tag and one('select id from assets where organization_id=? and asset_tag=? and id<>?',(org_id(),asset_tag,i)): raise IntegrityError()
+   for date_value in (installed,warranty):
+    if date_value: datetime.strptime(date_value[:10],'%Y-%m-%d')
    old=one('select asset_id,status from assets where id=?',(i,))
-   x('''update assets set asset_id=?,name=?,building_id=?,floor_id=?,room_id=?,profession=?,grp=?,type=?,manufacturer=?,model=?,serial=?,system_id=?,parent_id=?,status=?,criticality=?,service_months=?,revision_months=?,purchase_price=?,ip=?,protocol=?,notes=? where id=? and organization_id=?''',
-    (aid,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip(),(f.get('model') or '').strip(),(f.get('serial') or '').strip(),(f.get('system_id') or '').strip(),parent_id,status,criticality,service,revision,price,(f.get('ip') or '').strip(),(f.get('protocol') or '').strip(),(f.get('notes') or '').strip(),i,org_id()))
+   x('''update assets set asset_id=?,asset_tag=?,name=?,building_id=?,floor_id=?,room_id=?,profession=?,grp=?,type=?,manufacturer=?,model=?,serial=?,system_id=?,parent_id=?,status=?,criticality=?,service_months=?,revision_months=?,purchase_price=?,installed=?,warranty=?,ip=?,protocol=?,notes=? where id=? and organization_id=?''',
+    (aid,asset_tag,name,building_id,floor_id,room_id,profession,grp,asset_type,(f.get('manufacturer') or '').strip(),(f.get('model') or '').strip(),(f.get('serial') or '').strip(),(f.get('system_id') or '').strip(),parent_id,status,criticality,service,revision,price,installed,warranty,(f.get('ip') or '').strip(),(f.get('protocol') or '').strip(),(f.get('notes') or '').strip(),i,org_id()))
    detail=f"{old['asset_id']} → {aid} · {old['status']} → {status}" if old else f'{aid} · {status}'
    asset_event(i,'ASSET_UPDATE','Asset upravený',detail); audit('ASSET_UPDATE',detail); flash('Asset bol upravený.','success')
    return redirect(f'/asset/{i}')
@@ -2155,7 +2166,7 @@ def edit_record(what,i):
    reported=(f.get('reported') or '').strip()
    if reported: datetime.strptime(reported[:10],'%Y-%m-%d')
    cost=max(0,float(f.get('cost') or 0)); old=one('select status from incidents where id=?',(i,))
-   x('update incidents set asset_id=?,title=?,severity=?,status=?,reported=?,impact=?,cause=?,cost=? where id=?',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),cost,i))
+   x('update incidents set asset_id=?,title=?,severity=?,status=?,reported=?,impact=?,cause=?,solution=?,cost=? where id=? and organization_id=?',(asset_id,title,f.get('severity'),f.get('status'),reported,(f.get('impact') or '').strip(),(f.get('cause') or '').strip(),(f.get('solution') or '').strip(),cost,i,org_id()))
    asset_event(asset_id,'INCIDENT_UPDATE','Incident upravený',f"{title} · {(old['status'] if old else '—')} → {f.get('status')}")
    audit('INCIDENT_UPDATE',f'{i} · {title}'); flash('Incident bol upravený.','success')
    return redirect(safe_referrer_url('/incidents'))
