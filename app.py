@@ -959,8 +959,10 @@ def ticket_detail(i):
    from ticket_messages m left join users u on u.id=m.sender_user_id
    where m.ticket_id=? and m.organization_id=? order by m.id""",(oid,i,oid))
  messages=[dict(m) for m in messages]
- for m in messages:
-  m['attachments']=read_all('select id,name,mime,size,uploaded from ticket_attachments where message_id=? and ticket_id=? and organization_id=? order by id',(m['id'],i,oid))
+ attachment_rows=read_all('select id,message_id,name,mime,size,uploaded from ticket_attachments where ticket_id=? and organization_id=? order by message_id,id',(i,oid))
+ attachments_by_message={}
+ for a in attachment_rows: attachments_by_message.setdefault(a['message_id'],[]).append(a)
+ for m in messages: m['attachments']=attachments_by_message.get(m['id'],[])
  last_message_id=messages[-1]['id'] if messages else 0
  if platform_view:
   write('update tickets set platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(last_message_id,i,oid))
@@ -1006,10 +1008,16 @@ def api_ticket_messages(i):
  else:
   last_id=after
  fresh=(one_system if platform_view else one)('select status,priority,updated from tickets where id=? and organization_id=?',(i,oid))
+ message_ids=[r['id'] for r in rows]
+ attachments_by_message={}
+ if message_ids:
+  placeholders=','.join('?' for _ in message_ids)
+  attachment_rows=read_all(f'select id,message_id,name,mime,size,uploaded from ticket_attachments where ticket_id=? and organization_id=? and message_id in ({placeholders}) order by message_id,id',(i,oid,*message_ids))
+  for a in attachment_rows: attachments_by_message.setdefault(a['message_id'],[]).append(a)
  messages=[]
  for r in rows:
   external_support=bool(r['is_support'])
-  attachments=read_all('select id,name,mime,size,uploaded from ticket_attachments where message_id=? and ticket_id=? and organization_id=? order by id',(r['id'],i,oid))
+  attachments=attachments_by_message.get(r['id'],[])
   messages.append({
    'id':r['id'],
    'sender_name':r['sender_name'] or 'Systém',
