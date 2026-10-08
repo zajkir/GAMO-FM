@@ -2291,6 +2291,103 @@ def edit_record(what,i):
   flash('Pri úprave nastala chyba. Pôvodné dáta zostali zachované.','error')
  return redirect(safe_referrer_url('/'))
 
+def delete_impact_data(what,i):
+ oid=org_id()
+ if what=='building':
+  row=one('select id,code,name from buildings where id=? and organization_id=?',(i,oid))
+  if not row: return None
+  counts={
+   'Podlažia':one('select count(*) n from floors where building_id=?',(i,))['n'],
+   'Miestnosti':one('select count(*) n from rooms r join floors f on f.id=r.floor_id where f.building_id=?',(i,))['n'],
+   'Assety':one('select count(*) n from assets where building_id=? and organization_id=?',(i,oid))['n'],
+   'Dokumenty':one('select count(*) n from documents where building_id=?',(i,))['n'],
+   'Servisné záznamy':one('select count(*) n from workorders w join assets a on a.id=w.asset_id where a.building_id=?',(i,))['n'],
+   'Incidenty':one('select count(*) n from incidents x join assets a on a.id=x.asset_id where a.building_id=?',(i,))['n'],
+   'Tickety':one('select count(*) n from tickets where organization_id=? and building_id=?',(oid,i))['n']
+  }
+  area=float(one('select coalesce(sum(r.area),0) n from rooms r join floors f on f.id=r.floor_id where f.building_id=?',(i,))['n'] or 0)
+  blocked=counts['Assety']>0 or counts['Tickety']>0
+  note='Budova sa dá odstrániť až po odpojení všetkých assetov a ticketov.' if blocked else 'Podlažia, miestnosti a dokumenty budovy sa odstránia spolu s objektom.'
+  return {'type':'Budova','name':f"{row['code']} · {row['name']}",'blocked':blocked,'counts':counts,'extra':f'Plocha priestorov: {area:.1f} m²','note':note}
+
+ if what=='floor':
+  row=one("""select f.id,f.code,f.name,b.id building_id,b.code building_code from floors f join buildings b on b.id=f.building_id
+   where f.id=? and b.organization_id=?""",(i,oid))
+  if not row: return None
+  counts={
+   'Miestnosti':one('select count(*) n from rooms where floor_id=?',(i,))['n'],
+   'Assety':one('select count(*) n from assets where floor_id=? and organization_id=?',(i,oid))['n'],
+   'Servisné záznamy':one('select count(*) n from workorders w join assets a on a.id=w.asset_id where a.floor_id=?',(i,))['n'],
+   'Incidenty':one('select count(*) n from incidents x join assets a on a.id=x.asset_id where a.floor_id=?',(i,))['n']
+  }
+  area=float(one('select coalesce(sum(area),0) n from rooms where floor_id=?',(i,))['n'] or 0)
+  blocked=counts['Assety']>0
+  note='Podlažie sa dá odstrániť až po presunutí alebo odstránení jeho assetov.' if blocked else 'Miestnosti na podlaží sa odstránia spolu s podlažím.'
+  return {'type':'Podlažie','name':f"{row['building_code']} / {row['code']} · {row['name']}",'blocked':blocked,'counts':counts,'extra':f'Plocha priestorov: {area:.1f} m²','note':note}
+
+ if what=='room':
+  row=one("""select r.id,r.code,r.name,r.area,f.code floor_code,b.code building_code from rooms r
+   join floors f on f.id=r.floor_id join buildings b on b.id=f.building_id
+   where r.id=? and b.organization_id=?""",(i,oid))
+  if not row: return None
+  counts={
+   'Assety':one('select count(*) n from assets where room_id=? and organization_id=?',(i,oid))['n'],
+   'Otvorené incidenty':one("""select count(*) n from incidents x join assets a on a.id=x.asset_id
+    where a.room_id=? and x.status not in ('Ukončená','Vyriešená')""",(i,))['n']
+  }
+  blocked=counts['Assety']>0
+  note='Miestnosť sa dá odstrániť až po presunutí alebo odstránení jej assetov.' if blocked else 'Miestnosť nemá priradené assety a môže byť bezpečne odstránená.'
+  return {'type':'Miestnosť','name':f"{row['building_code']} / {row['floor_code']} / {row['code']} · {row['name']}",'blocked':blocked,'counts':counts,'extra':f"Plocha: {float(row['area'] or 0):.1f} m²",'note':note}
+
+ if what=='asset':
+  row=one('select id,asset_id,name from assets where id=? and organization_id=?',(i,oid))
+  if not row: return None
+  counts={
+   'Podriadené assety':one('select count(*) n from assets where parent_id=? and organization_id=?',(i,oid))['n'],
+   'Servisné záznamy':one('select count(*) n from workorders where asset_id=?',(i,))['n'],
+   'Incidenty':one('select count(*) n from incidents where asset_id=?',(i,))['n'],
+   'Dokumenty':one('select count(*) n from asset_documents where organization_id=? and asset_id=?',(oid,i))['n'],
+   'Tickety':one('select count(*) n from tickets where organization_id=? and asset_id=?',(oid,i))['n']
+  }
+  blocked=any(counts[k]>0 for k in ('Podriadené assety','Servisné záznamy','Incidenty','Tickety'))
+  note='Asset sa dá odstrániť až po vyriešení väzieb, histórie a ticketov.' if blocked else ('Dokumenty assetu sa odstránia spolu s assetom.' if counts['Dokumenty'] else 'Asset nemá blokujúce väzby a môže byť odstránený.')
+  return {'type':'Asset','name':f"{row['asset_id']} · {row['name']}",'blocked':blocked,'counts':counts,'extra':'Asset ID je permanentná identita; odstránenie je nezvratná operácia.','note':note}
+
+ if what=='workorder':
+  row=one("""select w.id,w.title,a.asset_id from workorders w join assets a on a.id=w.asset_id
+   where w.id=? and a.organization_id=?""",(i,oid))
+  if not row: return None
+  return {'type':'Servisná úloha','name':f"{row['asset_id']} · {row['title']}",'blocked':False,'counts':{},'extra':'Záznam zmizne zo servisnej histórie a reportov.','note':'Odstránenie sa zapíše do auditu assetu.'}
+
+ if what=='incident':
+  row=one("""select x.id,x.title,a.asset_id from incidents x join assets a on a.id=x.asset_id
+   where x.id=? and a.organization_id=?""",(i,oid))
+  if not row: return None
+  return {'type':'Incident','name':f"{row['asset_id']} · {row['title']}",'blocked':False,'counts':{},'extra':'Záznam zmizne z incidentnej histórie a reportov.','note':'Odstránenie sa zapíše do auditu assetu.'}
+
+ if what=='user':
+  row=one('select id,name,email,role,status from users where id=? and organization_id=?',(i,oid))
+  if not row: return None
+  counts={
+   'Vytvorené tickety':one('select count(*) n from tickets where organization_id=? and created_by=?',(oid,i))['n'],
+   'Priradené tickety':one('select count(*) n from tickets where organization_id=? and assigned_to=?',(oid,i))['n']
+  }
+  self_block=i==session.get('user_id')
+  last_admin=bool(row['role']=='Administrator' and row['status']=='Aktívny' and one("select count(*) n from users where organization_id=? and role='Administrator' and status='Aktívny'",(oid,))['n']<=1)
+  blocked=self_block or last_admin
+  note='Aktuálne prihlásený alebo posledný aktívny administrátor sa nedá odstrániť.' if blocked else 'Tickety používateľa zostanú zachované; väzba na účet sa bezpečne odpojí.'
+  return {'type':'Používateľ','name':f"{row['name']} · {row['email']}",'blocked':blocked,'counts':counts,'extra':f"Rola: {row['role']}",'note':note}
+ return None
+
+@app.get('/api/delete-impact/<what>/<int:i>')
+def api_delete_impact(what,i):
+ permissions={'building':'facility_write','floor':'facility_write','room':'facility_write','asset':'asset_write','workorder':'maintenance_write','incident':'incident_write','user':'users_manage'}
+ if what not in permissions: abort(404)
+ if not can(permissions[what]): abort(403)
+ impact=delete_impact_data(what,i)
+ if not impact: abort(404)
+ return jsonify(impact)
+
 @app.post('/delete/<what>/<int:i>')
 def delete(what,i):
  ownership={
@@ -2302,8 +2399,9 @@ def delete(what,i):
  if not can(required[what]): abort(403)
  if not ownership[what](i): abort(404)
  if what=='building':
-  if one('select id from assets where building_id=? limit 1',(i,)):
-   flash('Budovu nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
+  impact=delete_impact_data('building',i)
+  if impact and impact['blocked']:
+   flash('Budovu nie je možné odstrániť, kým obsahuje assety alebo naviazané tickety.','error'); return redirect(safe_referrer_url('/buildings'))
   x('delete from buildings where id=?',(i,)); audit('BUILDING_DELETE',str(i))
  elif what=='floor':
   if one('select id from assets where floor_id=? limit 1',(i,)):
@@ -2314,8 +2412,9 @@ def delete(what,i):
    flash('Miestnosť nie je možné odstrániť, kým obsahuje assety.','error'); return redirect(safe_referrer_url('/buildings'))
   x('delete from rooms where id=?',(i,)); audit('ROOM_DELETE',str(i))
  elif what=='asset':
-  if one('select id from assets where parent_id=? limit 1',(i,)) or one('select id from workorders where asset_id=? limit 1',(i,)) or one('select id from incidents where asset_id=? limit 1',(i,)):
-   flash('Asset nie je možné odstrániť, kým má podriadené assety, servisnú históriu alebo incidenty.','error'); return redirect(safe_referrer_url('/assets'))
+  impact=delete_impact_data('asset',i)
+  if impact and impact['blocked']:
+   flash('Asset nie je možné odstrániť, kým má podriadené assety, servisnú históriu, incidenty alebo tickety.','error'); return redirect(safe_referrer_url('/assets'))
   x('delete from assets where id=?',(i,)); audit('ASSET_DELETE',str(i))
  elif what=='workorder':
   row=one('select asset_id,title from workorders where id=?',(i,))
