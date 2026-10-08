@@ -76,7 +76,7 @@ def check_for_update():
     installer_url = str(manifest.get("installer_url", "")).strip()
     installer_sha = str(manifest.get("sha256", "")).strip().lower()
     if not installer_url.startswith("https://") or len(installer_sha) != 64:
-        raise ValueError("Aktualizačný manifest nemá platný podpísaný installer payload.")
+        raise ValueError("Aktualizačný manifest nemá platnú HTTPS adresu alebo SHA-256 kontrolný súčet.")
     return manifest
 
 

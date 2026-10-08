@@ -62,7 +62,391 @@ jobs:
           python tests/update_flow_regression.py
 
       - name: Build GAMO direct Windows application
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_FM --distpath dist_app --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name GAMO_FM --distpath dist_app --version-file version_info.txt --collect-all webview --add-data "version.json;." --add-data "update_config.json;." --add-data "desktop_config.json;." desktop.py
+
+      - name: Sign application when certificate is configured
+        shell: pwsh
+        env:
+          GAMO_SIGNING_PFX_BASE64: ${{ secrets.GAMO_SIGNING_PFX_BASE64 }}
+          GAMO_SIGNING_PFX_PASSWORD: ${{ secrets.GAMO_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GAMO_SIGNING_PFX_BASE64)) {
+            Write-Host "Authenticode signing is not configured; build remains unsigned."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "gamo-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:GAMO_SIGNING_PFX_BASE64))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe
+        shell: pwsh
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          Copy-Item "dist_app\GAMO_FM.exe" "dist_app\GAMO_FM_$version.exe" -Force
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\GAMO_FM.iss
+
+      - name: Sign installer when certificate is configured
+        shell: pwsh
+        env:
+          GAMO_SIGNING_PFX_BASE64: ${{ secrets.GAMO_SIGNING_PFX_BASE64 }}
+          GAMO_SIGNING_PFX_PASSWORD: ${{ secrets.GAMO_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GAMO_SIGNING_PFX_BASE64)) {
+            Write-Host "Authenticode signing is not configured; installer remains unsigned."
+            exit 0
+          }
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $installer = "dist_installer\GAMO_FM_Setup_$version.exe"
+          $pfx = Join-Path $env:RUNNER_TEMP "gamo-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:GAMO_SIGNING_PFX_BASE64))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $expected = "dist_installer\GAMO_FM_Setup_$version.exe"
+          if (-not (Test-Path $expected)) {
+            Write-Error "Expected installer was not created: $expected"
+            exit 1
+          }
+          $size = (Get-Item $expected).Length
+          if ($size -lt 1000000) {
+            Write-Error "Installer is unexpectedly small: $size bytes"
+            exit 1
+          }
+          if (-not (Test-Path "dist_app\GAMO_FM.exe")) {
+            Write-Error "Direct application executable is missing."
+            exit 1
+          }
+          Write-Host "Installer OK: $expected ($size bytes)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAMO-FM-Windows-Release
+          path: |
+            dist_installer/*.exe
+            dist_app/GAMO_FM_*.exe
+          if-no-files-found: error
+
+      - name: Publish versioned GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $tag = "v$version"
+          $installer = Get-ChildItem dist_installer\GAMO_FM_Setup_$version.exe | Select-Object -First 1
+          $portable = Get-ChildItem dist_app\GAMO_FM_$version.exe | Select-Object -First 1
+          if (-not $installer) { throw "Installer for version $version was not found." }
+          if (-not $portable) { throw "Portable application for version $version was not found." }
+
+          $notes = @"
+          GAMO a.s. $version
+
+          - Direct Windows application: no launcher
+          - One click opens the GAMO Facility Platform immediately
+          - Stable Microsoft Edge application renderer prevents embedded WebView2 keyboard/input freezes
+          - Dedicated persistent application profile keeps remembered login
+          - Verified installer updates with SHA-256
+          - Optional Authenticode signing when the GAMO signing certificate is configured
+          - Final production hardening: persistent sessions, atomic ticket writes and deployment health checks
+          - Tenant-isolated cloud application with MFA, Privacy Center and ticket messaging
+          "@
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer.FullName $portable.FullName --clobber
+          } else {
+            gh release create $tag $installer.FullName $portable.FullName --target "${{ github.sha }}" --title "GAMO a.s. $version" --notes $notes
+          }
+
+          $installerSha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          $portableSha = (Get-FileHash $portable.FullName -Algorithm SHA256).Hash.ToLower()
+          $installerDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($installer.Name)"
+          $portableDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($portable.Name)"
+          $manifest = [ordered]@{
+            version = $version
+            update_mode = "installer"
+            installer_url = $installerDownload
+            sha256 = $installerSha
+            portable_url = $portableDownload
+            portable_sha256 = $portableSha
+            notes = "GAMO a.s. $version - final production hardening, deployment health and verified Windows release"
+            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json
+
+          $manifest | Set-Content -Path update.json -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update.json
+
+          if (git diff --cached --quiet) {
+            Write-Host "Update manifest is already current."
+          } else {
+            git commit -m "Publish update manifest for $version"
+            git push origin HEAD:main
+          }
+
+      - name: Release summary
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          "### GAMO a.s. Windows $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installed app: GAMO_FM.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installer: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Portable app: GAMO_FM_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Primary renderer: Microsoft Edge application mode (no browser address bar)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Embedded WebView is emergency fallback only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- No launcher process or launcher screen." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Authenticode: signed automatically when GAMO_SIGNING_PFX_BASE64/PASSWORD secrets are configured." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+ } |
+            Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /f $pfx /p $env:GAMO_SIGNING_PFX_PASSWORD "dist_app\GAMO_FM.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Application signing failed." }
+          & $signtool verify /pa /v "dist_app\GAMO_FM.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Application signature verification failed." }
+          Remove-Item $pfx -Force
+
+      - name: Prepare versioned portable application
+        shell: pwsh
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          Copy-Item "dist_app\GAMO_FM.exe" "dist_app\GAMO_FM_$version.exe" -Force
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" installer\GAMO_FM.iss
+
+      - name: Validate installer output
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $expected = "dist_installer\GAMO_FM_Setup_$version.exe"
+          if (-not (Test-Path $expected)) {
+            Write-Error "Expected installer was not created: $expected"
+            exit 1
+          }
+          $size = (Get-Item $expected).Length
+          if ($size -lt 1000000) {
+            Write-Error "Installer is unexpectedly small: $size bytes"
+            exit 1
+          }
+          if (-not (Test-Path "dist_app\GAMO_FM.exe")) {
+            Write-Error "Direct application executable is missing."
+            exit 1
+          }
+          Write-Host "Installer OK: $expected ($size bytes)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAMO-FM-Windows-Release
+          path: |
+            dist_installer/*.exe
+            dist_app/GAMO_FM_*.exe
+          if-no-files-found: error
+
+      - name: Publish versioned GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $tag = "v$version"
+          $installer = Get-ChildItem dist_installer\GAMO_FM_Setup_$version.exe | Select-Object -First 1
+          $portable = Get-ChildItem dist_app\GAMO_FM_$version.exe | Select-Object -First 1
+          if (-not $installer) { throw "Installer for version $version was not found." }
+          if (-not $portable) { throw "Portable application for version $version was not found." }
+
+          $notes = @"
+          GAMO a.s. $version
+
+          - Direct Windows application: no launcher
+          - One click opens the GAMO Facility Platform immediately
+          - Stable Microsoft Edge application renderer prevents embedded WebView2 keyboard/input freezes
+          - Dedicated persistent application profile keeps remembered login
+          - Verified installer updates with SHA-256
+          - Tenant-isolated cloud application with MFA, Privacy Center and ticket messaging
+          "@
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer.FullName $portable.FullName --clobber
+          } else {
+            gh release create $tag $installer.FullName $portable.FullName --target "${{ github.sha }}" --title "GAMO a.s. $version" --notes $notes
+          }
+
+          $installerSha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          $portableSha = (Get-FileHash $portable.FullName -Algorithm SHA256).Hash.ToLower()
+          $installerDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($installer.Name)"
+          $portableDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($portable.Name)"
+          $manifest = [ordered]@{
+            version = $version
+            update_mode = "installer"
+            installer_url = $installerDownload
+            sha256 = $installerSha
+            portable_url = $portableDownload
+            portable_sha256 = $portableSha
+            notes = "GAMO a.s. $version - stable Windows renderer and login input crash fix"
+            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json
+
+          $manifest | Set-Content -Path update.json -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update.json
+
+          if (git diff --cached --quiet) {
+            Write-Host "Update manifest is already current."
+          } else {
+            git commit -m "Publish update manifest for $version"
+            git push origin HEAD:main
+          }
+
+      - name: Release summary
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          "### GAMO a.s. Windows $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installed app: GAMO_FM.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installer: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Portable app: GAMO_FM_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Primary renderer: Microsoft Edge application mode (no browser address bar)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Embedded WebView is emergency fallback only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- No launcher process or launcher screen." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+ } |
+            Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /f $pfx /p $env:GAMO_SIGNING_PFX_PASSWORD $installer
+          if ($LASTEXITCODE -ne 0) { throw "Installer signing failed." }
+          & $signtool verify /pa /v $installer
+          if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed." }
+          Remove-Item $pfx -Force
+
+      - name: Validate installer output
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $expected = "dist_installer\GAMO_FM_Setup_$version.exe"
+          if (-not (Test-Path $expected)) {
+            Write-Error "Expected installer was not created: $expected"
+            exit 1
+          }
+          $size = (Get-Item $expected).Length
+          if ($size -lt 1000000) {
+            Write-Error "Installer is unexpectedly small: $size bytes"
+            exit 1
+          }
+          if (-not (Test-Path "dist_app\GAMO_FM.exe")) {
+            Write-Error "Direct application executable is missing."
+            exit 1
+          }
+          Write-Host "Installer OK: $expected ($size bytes)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GAMO-FM-Windows-Release
+          path: |
+            dist_installer/*.exe
+            dist_app/GAMO_FM_*.exe
+          if-no-files-found: error
+
+      - name: Publish versioned GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          $tag = "v$version"
+          $installer = Get-ChildItem dist_installer\GAMO_FM_Setup_$version.exe | Select-Object -First 1
+          $portable = Get-ChildItem dist_app\GAMO_FM_$version.exe | Select-Object -First 1
+          if (-not $installer) { throw "Installer for version $version was not found." }
+          if (-not $portable) { throw "Portable application for version $version was not found." }
+
+          $notes = @"
+          GAMO a.s. $version
+
+          - Direct Windows application: no launcher
+          - One click opens the GAMO Facility Platform immediately
+          - Stable Microsoft Edge application renderer prevents embedded WebView2 keyboard/input freezes
+          - Dedicated persistent application profile keeps remembered login
+          - Verified installer updates with SHA-256
+          - Tenant-isolated cloud application with MFA, Privacy Center and ticket messaging
+          "@
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer.FullName $portable.FullName --clobber
+          } else {
+            gh release create $tag $installer.FullName $portable.FullName --target "${{ github.sha }}" --title "GAMO a.s. $version" --notes $notes
+          }
+
+          $installerSha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          $portableSha = (Get-FileHash $portable.FullName -Algorithm SHA256).Hash.ToLower()
+          $installerDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($installer.Name)"
+          $portableDownload = "https://github.com/${{ github.repository }}/releases/download/$tag/$($portable.Name)"
+          $manifest = [ordered]@{
+            version = $version
+            update_mode = "installer"
+            installer_url = $installerDownload
+            sha256 = $installerSha
+            portable_url = $portableDownload
+            portable_sha256 = $portableSha
+            notes = "GAMO a.s. $version - stable Windows renderer and login input crash fix"
+            published_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json
+
+          $manifest | Set-Content -Path update.json -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update.json
+
+          if (git diff --cached --quiet) {
+            Write-Host "Update manifest is already current."
+          } else {
+            git commit -m "Publish update manifest for $version"
+            git push origin HEAD:main
+          }
+
+      - name: Release summary
+        shell: powershell
+        run: |
+          $version = (Get-Content version.json | ConvertFrom-Json).version
+          "### GAMO a.s. Windows $version" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installed app: GAMO_FM.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Installer: GAMO_FM_Setup_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Portable app: GAMO_FM_$version.exe" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Primary renderer: Microsoft Edge application mode (no browser address bar)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- Embedded WebView is emergency fallback only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "- No launcher process or launcher screen." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+ } |
+            Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /f $pfx /p $env:GAMO_SIGNING_PFX_PASSWORD "dist_app\GAMO_FM.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Application signing failed." }
+          & $signtool verify /pa /v "dist_app\GAMO_FM.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Application signature verification failed." }
+          Remove-Item $pfx -Force
 
       - name: Prepare versioned portable application
         shell: pwsh
