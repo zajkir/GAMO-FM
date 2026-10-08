@@ -1163,6 +1163,21 @@ def _migration_15(db, using_postgres):
                 WITH CHECK ({platform} OR organization_id={tenant})"""
         )
 
+
+def _migration_16(db, using_postgres):
+    """Complete asset identity fields without changing existing Asset IDs."""
+    cols = _columns(db, "assets", using_postgres)
+    if "asset_tag" not in cols:
+        db.execute("ALTER TABLE assets ADD COLUMN asset_tag TEXT")
+
+    # Asset Tag is optional, but if supplied it must be unique inside one tenant.
+    # Existing rows remain untouched and Asset ID never changes.
+    db.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_org_asset_tag
+           ON assets(organization_id, lower(asset_tag))
+           WHERE asset_tag IS NOT NULL AND asset_tag<>''"""
+    )
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -1179,6 +1194,7 @@ MIGRATIONS = (
     (13, "platform_ticket_inbox", _migration_13),
     (14, "asset_documents_and_ticket_attachments", _migration_14),
     (15, "remembered_devices_and_performance_indexes", _migration_15),
+    (16, "asset_tag_identity", _migration_16),
 )
 
 
