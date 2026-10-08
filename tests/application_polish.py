@@ -12,6 +12,15 @@ os.environ["GAMO_HTTPS"] = "0"
 
 import app
 
+# Fresh PostgreSQL bootstraps intentionally require a first password change.
+# That policy is covered in the main smoke suite; this focused polish suite
+# starts after the administrator has completed the rotation.
+if app.USING_POSTGRES:
+    app.x_system(
+        "update users set must_change_password=? where lower(email)=?",
+        (False, "admin@gamo.sk"),
+    )
+
 client = app.app.test_client()
 
 
