@@ -566,24 +566,31 @@ def one_system(sql,a=()):
  with con(system=True) as c:return c.execute(_sql(sql),a).fetchone()
 def q_system(sql,a=()):
  with con(system=True) as c:return c.execute(_sql(sql),a).fetchall()
+def _write_on(db,sql,a=()):
+ statement=_sql(sql)
+ lower=statement.lstrip().lower()
+ no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
+ if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
+  statement+=' RETURNING id'
+  r=db.execute(statement,a); row=r.fetchone(); return row['id'] if row else None
+ r=db.execute(statement,a)
+ return r.lastrowid if not USING_POSTGRES else r.rowcount
+
 def x(sql,a=()):
  with con() as c:
-  statement=_sql(sql)
-  lower=statement.lstrip().lower()
-  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
-  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
-   statement+=' RETURNING id'
-   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
-  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+  result=_write_on(c,sql,a); c.commit(); return result
+
 def x_system(sql,a=()):
  with con(system=True) as c:
-  statement=_sql(sql)
-  lower=statement.lstrip().lower()
-  no_id_tables=('insert into settings','insert into organization_settings','insert into platform_meta','insert into schema_migrations')
-  if USING_POSTGRES and lower.startswith('insert into') and not lower.startswith(no_id_tables) and ' returning ' not in lower:
-   statement+=' RETURNING id'
-   r=c.execute(statement,a); row=r.fetchone(); c.commit(); return row['id'] if row else None
-  r=c.execute(statement,a); c.commit(); return r.lastrowid if not USING_POSTGRES else r.rowcount
+  result=_write_on(c,sql,a); c.commit(); return result
+
+def _bootstrap_admin_password():
+ value=(os.environ.get('GAMO_ADMIN_PASSWORD') or '').strip()
+ if value: return value
+ if USING_POSTGRES:
+  raise RuntimeError('GAMO_ADMIN_PASSWORD must be set before bootstrapping a new production database.')
+ return 'GamoFM2026!'
+
 def init_postgres():
  schema=[
   """CREATE TABLE IF NOT EXISTS buildings(id BIGSERIAL PRIMARY KEY,code TEXT UNIQUE,name TEXT,address TEXT,manager TEXT,customer TEXT DEFAULT 'GAMO a.s.',status TEXT DEFAULT 'Aktívna')""",
@@ -613,7 +620,8 @@ def init_postgres():
   db.commit()
  run_migrations(lambda: con(system=True), True)
  if not one_system('select count(*) n from users')['n']:
-  x_system('insert into users(name,email,role,status,password_hash,organization_id) values(?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(os.environ.get('GAMO_ADMIN_PASSWORD','GamoFM2026!')),gamo_org))
+  password=_bootstrap_admin_password()
+  x_system('insert into users(name,email,role,status,password_hash,organization_id,must_change_password) values(?,?,?,?,?,?,?)',('GAMO Administrator','admin@gamo.sk','Administrator','Aktívny',generate_password_hash(password),gamo_org,True if USING_POSTGRES else 1))
 def init():
  os.makedirs(DATA_DIR,exist_ok=True)
  if USING_POSTGRES:
