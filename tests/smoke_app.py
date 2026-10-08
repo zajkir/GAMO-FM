@@ -269,6 +269,43 @@ assert r.status_code in (302, 303)
 incident = app.one("select * from incidents where asset_id=? and title=?", (asset["id"], "QA incident"))
 assert incident and incident["solution"] == "Reset riadenia a kontrola napájania"
 
+# Maintenance/incident attachments are tenant-owned, downloadable and shown in the workflow.
+r = client.post(
+    f"/workorder/{workorder['id']}/attachment",
+    data={"_csrf": csrf(), "attachment": (io.BytesIO(b"maintenance protocol"), "maintenance-protocol.pdf")},
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+workorder_attachment = app.one(
+    "select * from workorder_attachments where organization_id=? and workorder_id=? and name=?",
+    (gamo_org_id, workorder["id"], "maintenance-protocol.pdf"),
+)
+assert workorder_attachment and workorder_attachment["size"] == len(b"maintenance protocol")
+r = client.get(f"/workorder-attachment/{workorder_attachment['id']}/download")
+assert r.status_code == 200 and r.data == b"maintenance protocol"
+
+r = client.post(
+    f"/incident/{incident['id']}/attachment",
+    data={"_csrf": csrf(), "attachment": (io.BytesIO(b"incident photo"), "incident-photo.jpg")},
+    content_type="multipart/form-data",
+    follow_redirects=False,
+)
+assert r.status_code in (302, 303)
+incident_attachment = app.one(
+    "select * from incident_attachments where organization_id=? and incident_id=? and name=?",
+    (gamo_org_id, incident["id"], "incident-photo.jpg"),
+)
+assert incident_attachment and incident_attachment["size"] == len(b"incident photo")
+r = client.get(f"/incident-attachment/{incident_attachment['id']}/download")
+assert r.status_code == 200 and r.data == b"incident photo"
+
+maintenance_page = client.get("/maintenance")
+incident_page = client.get("/incidents")
+assert b"maintenance-protocol.pdf" in maintenance_page.data
+assert b"incident-photo.jpg" in incident_page.data
+assert "Reset riadenia".encode("utf-8") in incident_page.data
+
 # Regression: resolved incidents and cancelled workorders are not active,
 # overdue or notification-worthy anywhere in the application.
 r = client.post(
@@ -593,6 +630,14 @@ private_building = app.one_system(
     (customer["id"], "PRIVATE"),
 )
 assert private_building
+impact = client.get(f"/api/delete-impact/building/{private_building['id']}")
+assert impact.status_code == 200
+impact_json = impact.get_json()
+assert impact_json["type"] == "building" and impact_json["blocked"] is False
+assert any(x["label"] == "Podlažia" and x["count"] == 1 for x in impact_json["items"])
+r = client.post(f"/delete/building/{private_building['id']}", data={"_csrf": csrf()}, follow_redirects=False)
+assert r.status_code == 400
+assert app.one_system("select id from buildings where id=?", (private_building["id"],))
 
 # ----- Customer ticket + in-app manager conversation -----
 # Create a normal customer requester and a Facility Manager. Their sessions are
@@ -629,7 +674,7 @@ r = client.post(
     data={
         "_csrf": csrf(),
         "subject": "Nefunguje klimatizácia",
-        "category": "Porucha",
+        "category": "Facility problém",
         "priority": "Vysoká",
         "building_id": str(private_building["id"]),
         "asset_id": "",
@@ -654,7 +699,7 @@ assert first_ticket_attachment and first_ticket_attachment["size"] == len(b"cust
 assert client.get(f"/ticket/{ticket['id']}").status_code == 200
 assert client.post(
     f"/ticket/{ticket['id']}/manage",
-    data={"_csrf": csrf(), "status": "Rieši sa", "priority": "Vysoká"},
+    data={"_csrf": csrf(), "status": "V riešení", "priority": "Vysoká"},
 ).status_code == 403
 
 force_user_session(manager)
@@ -753,6 +798,8 @@ assert client.get(f"/building/{building['id']}").status_code == 404
 assert client.get(f"/asset/{asset['id']}").status_code == 404
 assert client.get(f"/document/{document['id']}/download").status_code == 404
 assert client.get(f"/asset-document/{asset_document['id']}/download").status_code == 404
+assert client.get(f"/workorder-attachment/{workorder_attachment['id']}/download").status_code == 404
+assert client.get(f"/incident-attachment/{incident_attachment['id']}/download").status_code == 404
 r = client.post(f"/asset-document/{asset_document['id']}/delete", data={"_csrf": csrf()}, follow_redirects=False)
 assert r.status_code == 404
 assert app.one_system("select id from asset_documents where id=?", (asset_document["id"],))
@@ -813,6 +860,13 @@ if app.USING_POSTGRES:
         flask_session["user_role"] = "Administrator"
         assert app.one("select count(*) n from buildings")["n"] == 1
         assert app.one("select * from buildings where id=?", (building["id"],)) is None
+        assert app.one("select * from floors where id=?", (floor["id"],)) is None
+        assert app.one("select * from rooms where id=?", (room["id"],)) is None
+        assert app.one("select * from workorders where id=?", (workorder["id"],)) is None
+        assert app.one("select * from incidents where id=?", (incident["id"],)) is None
+        assert app.one("select * from documents where id=?", (document["id"],)) is None
+        assert app.one("select * from workorder_attachments where id=?", (workorder_attachment["id"],)) is None
+        assert app.one("select * from incident_attachments where id=?", (incident_attachment["id"],)) is None
         blocked = False
         try:
             app.x(
