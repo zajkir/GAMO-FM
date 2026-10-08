@@ -72,7 +72,7 @@ inline_code = re.findall(r'(?:onclick|onsubmit|onchange|oninput)="([^"]+)"', tem
 calls = []
 for code in inline_code:
     calls.extend(re.findall(r"\b([A-Za-z_$][\w$]*)\s*\(", code))
-builtins = {"submit", "reload", "toUpperCase", "querySelector", "scrollIntoView", "confirm"}
+builtins = {"if", "submit", "reload", "toUpperCase", "querySelector", "scrollIntoView", "confirm"}
 missing = sorted({name for name in calls if name not in functions and name not in builtins})
 assert not missing, missing
 
