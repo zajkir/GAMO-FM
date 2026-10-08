@@ -1,6 +1,6 @@
 from flask import Flask,render_template,request,redirect,url_for,jsonify,flash,session,abort,send_file,has_request_context,make_response
 from sqlite3 import IntegrityError
-import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib
+import sqlite3, os, json, secrets, time, io, zipfile, base64, hashlib, re
 try:
  import psycopg
  from psycopg.rows import dict_row
@@ -87,19 +87,61 @@ def owns_asset(asset_id):
  oid=org_id()
  return bool(oid and one('select a.id from assets a join buildings b on b.id=a.building_id where a.id=? and b.organization_id=?',(asset_id,oid)))
 
+def org_config_values(section,oid=None):
+ oid=oid or org_id()
+ if not oid: return {}
+ try:
+  row=one('select v from organization_settings where organization_id=? and k=?',(oid,section))
+  raw=json.loads(row['v']) if row and row['v'] else {}
+  return raw if isinstance(raw,dict) else {}
+ except Exception:
+  return {}
+
+def org_runtime_defaults(oid=None):
+ asset_cfg=org_config_values('Asset ID generátor',oid)
+ service_cfg=org_config_values('Servis & SLA',oid)
+ role_cfg=org_config_values('Role & bezpečnosť',oid)
+ def num(value,default,minimum=0,maximum=9999):
+  try: return max(minimum,min(maximum,int(str(value).split()[0])))
+  except Exception: return default
+ return {
+  'asset_id':{
+   'mask':str(asset_cfg.get('0') or '{PROF}-000001')[:80],
+   'start':num(asset_cfg.get('1'),1,0,999999999),
+   'length':num(asset_cfg.get('2'),6,1,12),
+   'automatic':str(asset_cfg.get('3') or 'Zapnuté')!='Vypnuté'
+  },
+  'asset':{
+   'service_months':num(service_cfg.get('0'),6,0,1200),
+   'revision_months':num(service_cfg.get('1'),12,0,1200)
+  },
+  'workorder':{
+   'priority':str(service_cfg.get('2') or 'Stredná') if str(service_cfg.get('2') or 'Stredná') in {'Nízka','Stredná','Vysoká','Kritická'} else 'Stredná'
+  },
+  'user':{
+   'role':str(role_cfg.get('0') or 'Viewer') if str(role_cfg.get('0') or 'Viewer') in {'Administrator','Facility Manager','Technik','Servisný technik','Viewer'} else 'Viewer'
+  }
+ }
+
 def next_asset_id(profession,oid=None):
  oid=oid or org_id()
+ cfg=org_runtime_defaults(oid)['asset_id']
  prefix=''.join(ch for ch in (profession or 'ASSET').upper() if ch.isalnum())[:10] or 'ASSET'
- rows=q('select asset_id from assets where organization_id=? and upper(asset_id) like ?',(oid,f'{prefix}-%'))
- used=set()
- for row in rows:
-  value=str(row['asset_id'] or '').upper()
-  if value.startswith(prefix+'-'):
-   tail=value[len(prefix)+1:]
-   if tail.isdigit(): used.add(int(tail))
- n=1
- while n in used: n+=1
- return f'{prefix}-{n:06d}'
+ mask=(cfg['mask'] or '{PROF}-000001').replace('{PROF}',prefix)
+ width=max(1,min(12,int(cfg['length'] or 6)))
+ zero_match=re.search(r'0+',mask)
+ used={str(r['asset_id'] or '').upper() for r in q('select asset_id from assets where organization_id=?',(oid,))}
+ n=max(0,int(cfg['start'] or 0))
+ for _ in range(1000000):
+  if zero_match:
+   digits=max(width,len(zero_match.group(0)))
+   candidate=mask[:zero_match.start()]+str(n).zfill(digits)+mask[zero_match.end():]
+  else:
+   candidate=f'{mask}{str(n).zfill(width)}'
+  candidate=candidate.upper()
+  if candidate not in used: return candidate
+  n+=1
+ raise RuntimeError('Nie je možné nájsť voľné Asset ID podľa zvolenej masky.')
 
 def ticket_staff():
  return session.get('user_role') in {'Administrator','Facility Manager','Technik','Servisný technik'}
@@ -781,7 +823,7 @@ def ctx():
  unread_tickets=0
  try: unread_tickets=ticket_unread_count()
  except Exception: unread_tickets=0
- return dict(today=date.today(),app_version=APP_VERSION,csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
+ return dict(today=date.today(),app_version=APP_VERSION,runtime_defaults=org_runtime_defaults() if org_id() else {},csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
@@ -1995,10 +2037,13 @@ def add(what):
    status=(f.get('status') or 'Prevádzka').strip(); criticality=(f.get('criticality') or 'B').strip()
    if status not in {'Prevádzka','Mimo prevádzky','Servis','Porucha','Vyradené'}: raise ValueError('Neplatný stav assetu.')
    if criticality not in {'A','B','C'}: raise ValueError('Neplatná kritickosť assetu.')
+   defaults=org_runtime_defaults()
    try:
-    service=max(0,int(f.get('service_months') or 0)); revision=max(0,int(f.get('revision_months') or 0)); price=max(0,float(f.get('purchase_price') or 0))
+    service=max(0,int(f.get('service_months') or defaults['asset']['service_months'])); revision=max(0,int(f.get('revision_months') or defaults['asset']['revision_months'])); price=max(0,float(f.get('purchase_price') or 0))
    except (TypeError,ValueError): raise ValueError('Servisný interval, revízia a cena musia byť platné čísla.')
-   manual_aid=(f.get('asset_id') or '').strip().upper(); aid=manual_aid or next_asset_id(profession)
+   manual_aid=(f.get('asset_id') or '').strip().upper()
+   if not manual_aid and not defaults['asset_id']['automatic']: raise ValueError('Automatické Asset ID je vypnuté. Zadaj Asset ID ručne.')
+   aid=manual_aid or next_asset_id(profession)
    if one('select id from assets where organization_id=? and upper(asset_id)=?',(org_id(),aid)):
     if manual_aid: raise ValueError(f'Asset ID {aid} už v tvojej organizácii existuje. Zmeň ho alebo nechaj pole prázdne pre automatické ID.')
     aid=next_asset_id(profession)
@@ -2009,13 +2054,14 @@ def add(what):
   elif what=='workorder':
    allowed_priority={'Nízka','Stredná','Vysoká','Kritická'}; allowed_status={'Plánované','Pridelené','Prebieha','Pozastavené','Ukončené','Zrušené'}; allowed_kind={'PM','REV','OPR','VYM'}
    title=(f.get('title') or '').strip(); asset_id=f.get('asset_id'); due=(f.get('due') or '').strip()
-   if not title or f.get('priority') not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(asset_id): raise ValueError('Skontroluj asset, typ, prioritu, stav a názov pracovného príkazu.')
+   priority=(f.get('priority') or org_runtime_defaults()['workorder']['priority']).strip()
+   if not title or priority not in allowed_priority or f.get('status') not in allowed_status or f.get('kind') not in allowed_kind or not owns_asset(asset_id): raise ValueError('Skontroluj asset, typ, prioritu, stav a názov pracovného príkazu.')
    if due:
     try: datetime.strptime(due[:10],'%Y-%m-%d')
     except ValueError: raise ValueError('Termín pracovného príkazu nemá platný dátum.')
    try: cost=max(0,float(f.get('cost') or 0))
    except (TypeError,ValueError): raise ValueError('Náklad pracovného príkazu musí byť platné číslo.')
-   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),f.get('priority'),f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip()))
+   x('insert into workorders(asset_id,title,kind,priority,status,due,supplier,technician,cost,description) values(?,?,?,?,?,?,?,?,?,?)',(asset_id,title,f.get('kind'),priority,f.get('status'),due,(f.get('supplier') or '').strip(),(f.get('technician') or '').strip(),cost,(f.get('description') or '').strip()))
    asset_event(asset_id,'WORKORDER_CREATE','Nový pracovný príkaz',f"{f.get('kind','')} · {title}")
    audit('WORKORDER_CREATE',title); flash('Pracovný príkaz bol vytvorený.','success')
   elif what=='incident':
@@ -2340,7 +2386,7 @@ def api_health():
  ok=db_ok
  return jsonify({
   'status':'online' if ok else 'degraded','database':'online' if db_ok else 'offline','api':'online',
-  'database_ms':db_ms,'response_ms':round((time.time()-started)*1000,1),'version':APP_VERSION,'counts':counts,
+  'database_ms':db_ms,'version':APP_VERSION,'response_ms':round((time.time()-started)*1000,1),'version':APP_VERSION,'counts':counts,
   'database_engine':'PostgreSQL' if USING_POSTGRES else 'SQLite','checked_at':datetime.now().isoformat(timespec='seconds')
  }), (200 if ok else 503)
 
