@@ -481,8 +481,12 @@ def security_headers(response):
  response.headers['Content-Security-Policy']="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
  if app.config.get('SESSION_COOKIE_SECURE'):
   response.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
- if request.path.startswith('/backup') or request.path.endswith('/backup') or request.path.startswith('/privacy'):
+ if request.endpoint=='static':
+  response.headers['Cache-Control']='public, max-age=31536000, immutable'
+ elif request.path.startswith('/backup') or request.path.endswith('/backup') or request.path.startswith('/privacy'):
   response.headers['Cache-Control']='no-store, private'
+ else:
+  response.headers.setdefault('Cache-Control','private, no-cache')
  return response
 
 @app.before_request
@@ -704,7 +708,7 @@ def ctx():
  unread_tickets=0
  try: unread_tickets=ticket_unread_count()
  except Exception: unread_tickets=0
- return dict(today=date.today(),csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
+ return dict(today=date.today(),app_version=APP_VERSION,csrf_token=session.get('csrf',''),current_user={'id':session.get('user_id'),'name':session.get('user_name',''),'role':session.get('user_role',''),'organization_id':actor_org_id()},current_org=org,brand_name=brand_name,brand_color=brand_color,brand_tagline=brand_tagline,is_gamo_admin=is_gamo_admin(),support_mode=support_mode(),support_customer_name=session.get('support_target_name',''),ticket_unread_count=unread_tickets,can=can)
 
 @app.route('/onboarding',methods=['GET','POST'])
 def onboarding():
