@@ -1163,6 +1163,209 @@ def _migration_15(db, using_postgres):
                 WITH CHECK ({platform} OR organization_id={tenant})"""
         )
 
+
+def _migration_16(db, using_postgres):
+    """Complete tenant ownership for operational tables and enrich core FM records."""
+    # New business fields required by the product model.
+    asset_cols = _columns(db, "assets", using_postgres)
+    if "asset_tag" not in asset_cols:
+        db.execute("ALTER TABLE assets ADD COLUMN asset_tag TEXT")
+    incident_cols = _columns(db, "incidents", using_postgres)
+    if "solution" not in incident_cols:
+        db.execute("ALTER TABLE incidents ADD COLUMN solution TEXT")
+
+    # Put explicit tenant ownership on every operational hierarchy table.
+    table_owners = {
+        "floors": "INTEGER" if not using_postgres else "BIGINT",
+        "rooms": "INTEGER" if not using_postgres else "BIGINT",
+        "workorders": "INTEGER" if not using_postgres else "BIGINT",
+        "incidents": "INTEGER" if not using_postgres else "BIGINT",
+        "documents": "INTEGER" if not using_postgres else "BIGINT",
+    }
+    for table, typ in table_owners.items():
+        cols = _columns(db, table, using_postgres)
+        if "organization_id" not in cols:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN organization_id {typ}")
+
+    # Safe backfill from already-owned parents.
+    db.execute(
+        """UPDATE floors SET organization_id=(
+               SELECT b.organization_id FROM buildings b WHERE b.id=floors.building_id
+           ) WHERE organization_id IS NULL"""
+    )
+    db.execute(
+        """UPDATE rooms SET organization_id=(
+               SELECT f.organization_id FROM floors f WHERE f.id=rooms.floor_id
+           ) WHERE organization_id IS NULL"""
+    )
+    db.execute(
+        """UPDATE workorders SET organization_id=(
+               SELECT a.organization_id FROM assets a WHERE a.id=workorders.asset_id
+           ) WHERE organization_id IS NULL"""
+    )
+    db.execute(
+        """UPDATE incidents SET organization_id=(
+               SELECT a.organization_id FROM assets a WHERE a.id=incidents.asset_id
+           ) WHERE organization_id IS NULL"""
+    )
+    db.execute(
+        """UPDATE documents SET organization_id=(
+               SELECT b.organization_id FROM buildings b WHERE b.id=documents.building_id
+           ) WHERE organization_id IS NULL"""
+    )
+
+    # Ambiguous rows are never guessed. Stop before constraints if one remains.
+    checks = (
+        ("floors", "SELECT count(*) n FROM floors WHERE organization_id IS NULL"),
+        ("rooms", "SELECT count(*) n FROM rooms WHERE organization_id IS NULL"),
+        ("workorders", "SELECT count(*) n FROM workorders WHERE organization_id IS NULL"),
+        ("incidents", "SELECT count(*) n FROM incidents WHERE organization_id IS NULL"),
+        ("documents", "SELECT count(*) n FROM documents WHERE organization_id IS NULL"),
+    )
+    for label, sql in checks:
+        row = db.execute(sql).fetchone()
+        count = row["n"] if isinstance(row, dict) else row[0]
+        if count:
+            raise RuntimeError(f"Tenant ownership migration blocked: {label} contains {count} rows without an organization")
+
+    # Optional Asset Tag is unique inside one organization.
+    db.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_org_asset_tag
+           ON assets(organization_id,asset_tag)
+           WHERE asset_tag IS NOT NULL AND asset_tag<>''"""
+    )
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_floors_org_building ON floors(organization_id,building_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rooms_org_floor ON rooms(organization_id,floor_id)",
+        "CREATE INDEX IF NOT EXISTS idx_workorders_org_due ON workorders(organization_id,status,due)",
+        "CREATE INDEX IF NOT EXISTS idx_incidents_org_status ON incidents(organization_id,status)",
+        "CREATE INDEX IF NOT EXISTS idx_documents_org_building ON documents(organization_id,building_id)",
+    ):
+        db.execute(sql)
+
+    if using_postgres:
+        for table in ("floors","rooms","workorders","incidents","documents"):
+            db.execute(f"ALTER TABLE {table} ALTER COLUMN organization_id SET NOT NULL")
+
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_floors_id_org ON floors(id,organization_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_rooms_id_org ON rooms(id,organization_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_workorders_id_org ON workorders(id,organization_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_id_org ON incidents(id,organization_id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_id_org ON documents(id,organization_id)")
+
+        constraints = (
+            ("fk_floors_building_org", "floors", "FOREIGN KEY(building_id,organization_id) REFERENCES buildings(id,organization_id) ON DELETE CASCADE"),
+            ("fk_rooms_floor_org", "rooms", "FOREIGN KEY(floor_id,organization_id) REFERENCES floors(id,organization_id) ON DELETE CASCADE"),
+            ("fk_workorders_asset_org", "workorders", "FOREIGN KEY(asset_id,organization_id) REFERENCES assets(id,organization_id) ON DELETE RESTRICT"),
+            ("fk_incidents_asset_org", "incidents", "FOREIGN KEY(asset_id,organization_id) REFERENCES assets(id,organization_id) ON DELETE RESTRICT"),
+            ("fk_documents_building_org", "documents", "FOREIGN KEY(building_id,organization_id) REFERENCES buildings(id,organization_id) ON DELETE CASCADE"),
+        )
+        for name, table, clause in constraints:
+            db.execute(
+                f"""DO $$ BEGIN
+                     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='{name}') THEN
+                       ALTER TABLE {table} ADD CONSTRAINT {name} {clause};
+                     END IF;
+                   END $$"""
+            )
+
+        platform = "current_setting('gamo.platform_admin', true) = '1'"
+        tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+        for table in ("floors","rooms","workorders","incidents","documents"):
+            predicate = f"({platform} OR organization_id={tenant})"
+            db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+            db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+            db.execute(f"DROP POLICY IF EXISTS gamo_tenant_{table} ON {table}")
+            db.execute(
+                f"""CREATE POLICY gamo_tenant_{table} ON {table}
+                    USING ({predicate}) WITH CHECK ({predicate})"""
+            )
+
+    # Attachments for maintenance and incident workflows.
+    if using_postgres:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS workorder_attachments(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                workorder_id BIGINT NOT NULL,
+                uploader_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                mime TEXT,
+                size BIGINT DEFAULT 0,
+                uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                data BYTEA NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS incident_attachments(
+                id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                incident_id BIGINT NOT NULL,
+                uploader_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                mime TEXT,
+                size BIGINT DEFAULT 0,
+                uploaded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                data BYTEA NOT NULL
+            )"""
+        )
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_workorder_attachments_owner') THEN
+                   ALTER TABLE workorder_attachments ADD CONSTRAINT fk_workorder_attachments_owner
+                   FOREIGN KEY(workorder_id,organization_id)
+                   REFERENCES workorders(id,organization_id) ON DELETE CASCADE;
+                 END IF;
+               END $$"""
+        )
+        db.execute(
+            """DO $$ BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_incident_attachments_owner') THEN
+                   ALTER TABLE incident_attachments ADD CONSTRAINT fk_incident_attachments_owner
+                   FOREIGN KEY(incident_id,organization_id)
+                   REFERENCES incidents(id,organization_id) ON DELETE CASCADE;
+                 END IF;
+               END $$"""
+        )
+        platform = "current_setting('gamo.platform_admin', true) = '1'"
+        tenant = "NULLIF(current_setting('gamo.organization_id', true),'')::bigint"
+        for table in ("workorder_attachments","incident_attachments"):
+            predicate = f"({platform} OR organization_id={tenant})"
+            db.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+            db.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+            db.execute(f"DROP POLICY IF EXISTS gamo_tenant_{table} ON {table}")
+            db.execute(f"CREATE POLICY gamo_tenant_{table} ON {table} USING ({predicate}) WITH CHECK ({predicate})")
+    else:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS workorder_attachments(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                workorder_id INTEGER NOT NULL REFERENCES workorders(id) ON DELETE CASCADE,
+                uploader_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                mime TEXT,
+                size INTEGER DEFAULT 0,
+                uploaded TEXT DEFAULT CURRENT_TIMESTAMP,
+                data BLOB NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS incident_attachments(
+                id INTEGER PRIMARY KEY,
+                organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+                uploader_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                mime TEXT,
+                size INTEGER DEFAULT 0,
+                uploaded TEXT DEFAULT CURRENT_TIMESTAMP,
+                data BLOB NOT NULL
+            )"""
+        )
+
+    db.execute("CREATE INDEX IF NOT EXISTS idx_workorder_attachments_owner ON workorder_attachments(organization_id,workorder_id,uploaded)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_incident_attachments_owner ON incident_attachments(organization_id,incident_id,uploaded)")
+
 MIGRATIONS = (
     (1, "tenant_settings_and_audit_scope", _migration_1),
     (2, "onboarding_and_asset_events", _migration_2),
@@ -1179,6 +1382,7 @@ MIGRATIONS = (
     (13, "platform_ticket_inbox", _migration_13),
     (14, "asset_documents_and_ticket_attachments", _migration_14),
     (15, "remembered_devices_and_performance_indexes", _migration_15),
+    (16, "complete_fm_tenant_ownership_and_attachments", _migration_16),
 )
 
 
