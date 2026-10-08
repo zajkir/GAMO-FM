@@ -10,9 +10,15 @@ config = json.loads((root / "desktop_config.json").read_text(encoding="utf-8"))
 assert config.get("start_maximized") is True
 assert config.get("renderer") == "edge_app"
 assert config.get("embedded_fallback") is True
+assert config.get("health_path") == "/healthz"
+assert int(config.get("health_timeout_seconds", 0)) > 0
 
 # Primary renderer: full Microsoft Edge in application mode, not embedded
 # WebView2. This avoids the keyboard/focus freeze class seen in the old shell.
+assert "def cloud_health(server_url):" in source
+assert 'server_url.rstrip("/") + health_path' in source
+assert "def confirm_open_when_offline(server_url):" in source
+assert "confirm_open_when_offline(server_url)" in source
 assert "def find_edge_executable():" in source
 assert "def launch_edge_app(server_url):" in source
 assert 'f"--app={server_url}"' in source
