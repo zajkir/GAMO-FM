@@ -1151,16 +1151,23 @@ def ticket_create():
  if not assigned:
   manager=one("select id from users where organization_id=? and status='Aktívny' and id<>? and role in ('Facility Manager','Administrator') order by case role when 'Facility Manager' then 0 else 1 end,id limit 1",(oid,uid))
   assigned=manager['id'] if manager else None
- no=next_ticket_no(); now=datetime.utcnow().isoformat(timespec='seconds')+'Z'
- try:
-  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- except DB_INTEGRITY_ERRORS:
+ now=datetime.utcnow().isoformat(timespec='seconds')+'Z'; tid=None; mid=None; no=None
+ for _attempt in range(3):
   no=next_ticket_no()
-  tid=x('insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
- mid=x('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
- if attachment:
-  x('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
- x('update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
+  try:
+   with con() as db:
+    tid=_write_on(db,'insert into tickets(organization_id,ticket_no,created_by,assigned_to,subject,category,priority,status,building_id,asset_id,customer_last_read_at) values(?,?,?,?,?,?,?,?,?,?,?)',(oid,no,uid,assigned,subject,category,priority,'Nový',building_id,asset_id,now))
+    mid=_write_on(db,'insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(tid,oid,uid,session.get('user_name','Používateľ'),body))
+    if attachment:
+     _write_on(db,'insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,tid,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+    _write_on(db,'update tickets set customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(mid,tid,oid))
+    db.commit()
+   break
+  except DB_INTEGRITY_ERRORS:
+   tid=None; mid=None
+ if tid is None or mid is None:
+  flash('Ticket sa nepodarilo vytvoriť pre súbežný konflikt. Skús to prosím znova.','error')
+  return redirect('/tickets')
  audit('TICKET_CREATE',f'{no} · {subject}'); flash(f'Ticket {no} bol vytvorený.','success')
  return redirect(f'/ticket/{tid}')
 
@@ -1272,23 +1279,28 @@ def ticket_message(i):
   flash('Správa nemôže byť prázdna.','error'); return redirect(f'/ticket/{i}')
  uid=session.get('user_id'); platform_view=platform_ticket_mode()
  oid=t['organization_id'] if platform_view else org_id()
- write=x_system if platform_view else x
- mid=write('insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
- if attachment:
-  write('insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+ is_creator=(t['created_by']==uid)
  if platform_view:
   new_status='Otvorený' if t['status'] in {'Nový','Uzavretý'} else t['status']
-  write('update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+ elif is_creator:
+  new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
+ else:
+  new_status='Otvorený' if t['status']=='Nový' else t['status']
+ with con(system=platform_view) as db:
+  mid=_write_on(db,'insert into ticket_messages(ticket_id,organization_id,sender_user_id,sender_name,body) values(?,?,?,?,?)',(i,oid,uid,session.get('user_name','Používateľ'),body))
+  if attachment:
+   _write_on(db,'insert into ticket_attachments(organization_id,ticket_id,message_id,sender_user_id,name,mime,size,data) values(?,?,?,?,?,?,?,?)',(oid,i,mid,uid,attachment['name'],attachment['mime'],attachment['size'],attachment['data']))
+  if platform_view:
+   _write_on(db,'update tickets set status=?,updated=CURRENT_TIMESTAMP,platform_last_read_message_id=?,platform_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  elif is_creator:
+   _write_on(db,'update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  else:
+   _write_on(db,'update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
+  db.commit()
+ if platform_view:
   customer_access(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
   audit_for_org(oid,'TICKET_SUPPORT_REPLY',f"{t['ticket_no']} · GAMO odpoveď")
  else:
-  is_creator=t['created_by']==uid
-  if is_creator:
-   new_status='Otvorený' if t['status'] in {'Vyriešený','Uzavretý','Čaká na zákazníka'} else t['status']
-   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,customer_last_read_message_id=?,customer_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
-  else:
-   new_status='Otvorený' if t['status']=='Nový' else t['status']
-   write('update tickets set status=?,updated=CURRENT_TIMESTAMP,staff_last_read_message_id=?,staff_last_read_at=CURRENT_TIMESTAMP where id=? and organization_id=?',(new_status,mid,i,oid))
   audit('TICKET_MESSAGE',f"{t['ticket_no']} · nová správa")
  if request.headers.get('X-Requested-With')=='GAMO-Live-Chat':
   return jsonify({'ok':True,'message_id':mid,'status':new_status})
