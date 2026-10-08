@@ -670,7 +670,7 @@ def open_cloud_client(url):
     """Open GAMO Cloud inside the launcher process.
 
     No second application executable is spawned. This avoids Windows
-    Application Control blocking a child GAMO_FM.exe while preserving the
+    Application Control blocking a legacy child executable while preserving the
     installed desktop experience. The browser fallback does not weaken or
     bypass Windows security policy.
     """
